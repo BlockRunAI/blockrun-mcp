@@ -1,81 +1,82 @@
 # @blockrun/mcp
 
-**Access 30+ AI models in Claude Code with zero API keys.**
+## The Problem
 
-One wallet. Pay-per-request. All major AI models.
+Want to use GPT-5, Gemini, or DeepSeek in Claude Code? Today you need to:
+
+1. Create accounts with 5+ AI providers
+2. Manage 5+ API keys and billing systems
+3. Pay $20-100/month minimums per provider
+4. Configure each provider separately
+
+**That's too much friction.**
+
+## The Solution
+
+BlockRun MCP gives you access to 30+ AI models with:
+
+- **Zero API keys** - No accounts needed with OpenAI, Google, etc.
+- **One wallet** - Single USDC balance for all providers
+- **Pay-per-use** - No minimums, $5 gets you started
+- **One command** - Install and go
 
 ```bash
 claude mcp add blockrun npx @blockrun/mcp
 ```
 
-## Why BlockRun MCP?
-
-| Feature | Other Solutions | BlockRun MCP |
-|---------|-----------------|--------------|
-| **API Keys** | Need 5+ keys (OpenAI, Anthropic, Google...) | **None needed** |
-| **Billing** | Manage 5+ subscriptions | **One wallet, unified balance** |
-| **Setup** | Complex config per provider | **One command, auto-wallet** |
-| **Models** | Usually 1 provider | **30+ models, 6 providers** |
-| **Payment** | Monthly subscriptions | **Pay only what you use** |
-| **Minimum** | $20-100/month per provider | **$0 minimum, start with $5** |
+> **Alternative:** Prefer Python? Try the [BlockRun Skill](https://github.com/BlockRunAI/claude-code-blockrun-agent) (`pip install blockrun-llm`) - same features, different integration style.
 
 ## Quick Start
 
-### 1. Install (30 seconds)
+### 1. Install
 
 ```bash
-# Add to Claude Code
 claude mcp add blockrun npx @blockrun/mcp
 ```
 
-That's it! A wallet is automatically created for you.
+A wallet is automatically created for you.
 
 ### 2. Get Your Wallet Address
 
-In Claude Code, run:
 ```
-Use blockrun_setup to get my wallet address
-```
+You: blockrun setup
 
-Or:
-```
-Use blockrun_wallet to show my wallet info
+Claude: Your wallet address is 0x...
+        Send USDC on Base network to fund it.
 ```
 
 ### 3. Fund Your Wallet
 
 Send USDC to your wallet address on **Base** network. Even $5 gets you hundreds of requests.
 
-**Funding Options:**
-
 | Method | Steps |
 |--------|-------|
 | **From Coinbase** | Send → USDC → Select "Base" network → Paste your address |
-| **Bridge** | Visit [bridge.base.org](https://bridge.base.org) → Bridge USDC to Base |
-| **Buy Direct** | Visit [Coinbase Onramp](https://www.coinbase.com/onramp) → Buy USDC on Base |
+| **Bridge** | [bridge.base.org](https://bridge.base.org) → Bridge USDC to Base |
+| **Buy Direct** | [Coinbase Onramp](https://www.coinbase.com/onramp) → Buy USDC on Base |
 
 ### 4. Start Using
 
+Just ask naturally:
+
 ```
-You: Use blockrun_chat to ask claude-sonnet-4 what is quantum computing
+You: blockrun ask GPT-5 to explain quantum computing
 
-Claude: [calls blockrun_chat]
-        Quantum computing is a type of computation that harnesses...
+You: blockrun chat with Claude Opus about this error
+
+You: blockrun generate an image of a mountain sunset
 ```
 
-## Available Tools
+## Usage Examples
 
-### `blockrun_chat`
-Chat with any AI model.
+### Chat with Any Model
 
-```javascript
-blockrun_chat({
-  model: "anthropic/claude-sonnet-4",  // Required
-  message: "Explain quantum computing", // Required
-  system: "You are a physics professor", // Optional
-  max_tokens: 2000,                      // Optional (default: 1024)
-  temperature: 0.7                       // Optional (default: 1)
-})
+```
+blockrun ask GPT-5 what causes aurora borealis
+
+blockrun chat with Claude Opus about optimizing this algorithm
+
+blockrun ask Gemini Pro to review this code for security issues
 ```
 
 **Popular Models:**
@@ -85,60 +86,47 @@ blockrun_chat({
 - `google/gemini-2.5-pro` - Great for long context (1M tokens)
 - `deepseek/deepseek-chat` - Very affordable
 
-### `blockrun_smart`
-Auto-select the best model for your needs.
+### Smart Model Selection
 
-```javascript
-blockrun_smart({
-  mode: "balanced",  // Required: fast | balanced | powerful | cheap | reasoning
-  message: "Hello!"  // Required
-})
+Let BlockRun pick the best model for your needs:
+
+```
+blockrun smart fast: what's 2+2
+
+blockrun smart powerful: analyze this complex codebase
+
+blockrun smart cheap: summarize this text
 ```
 
-| Mode | Models Used | Best For | Cost |
-|------|-------------|----------|------|
-| `fast` | Gemini Flash, GPT-4o-mini | Quick responses | $ |
-| `balanced` | GPT-4o, Claude Sonnet | Daily tasks | $$ |
-| `powerful` | GPT-5.2, Claude Opus, o3 | Complex work | $$$$ |
-| `cheap` | Gemini Flash, DeepSeek | Budget-conscious | $ |
-| `reasoning` | o3, o1, DeepSeek Reasoner | Logic & math | $$$ |
+| Mode | Models Used | Best For |
+|------|-------------|----------|
+| `fast` | Gemini Flash, GPT-4o-mini | Quick responses |
+| `balanced` | GPT-4o, Claude Sonnet | Daily tasks |
+| `powerful` | GPT-5.2, Claude Opus, o3 | Complex work |
+| `cheap` | Gemini Flash, DeepSeek | Budget-conscious |
+| `reasoning` | o3, o1, DeepSeek Reasoner | Logic & math |
 
-### `blockrun_models`
-List all available models with pricing.
+### Generate Images
 
-```javascript
-blockrun_models({
-  category: "chat",    // Optional: all, chat, reasoning, image, embedding
-  provider: "openai"   // Optional: filter by provider
-})
+```
+blockrun generate an image of a cyberpunk cityscape
+
+blockrun create a watercolor painting of mountains
 ```
 
-### `blockrun_image`
-Generate images with AI.
+### List Available Models
 
-```javascript
-blockrun_image({
-  prompt: "A sunset over mountains",  // Required
-  model: "openai/dall-e-3",           // Optional
-  size: "1024x1024",                  // Optional: 1024x1024, 1792x1024, 1024x1792
-  quality: "hd"                       // Optional: standard, hd
-})
+```
+blockrun list models
+
+blockrun show OpenAI models with pricing
 ```
 
-### `blockrun_wallet`
-Check your wallet information.
+### Wallet Management
 
-```javascript
-blockrun_wallet({})
-// Returns: address, network, balance link, funding options
 ```
-
-### `blockrun_setup`
-Get detailed setup and funding instructions.
-
-```javascript
-blockrun_setup({})
-// Returns: complete setup guide with step-by-step funding instructions
+blockrun setup          # First-time setup instructions
+blockrun wallet         # Check your wallet address
 ```
 
 ## Supported Models & Pricing
@@ -262,16 +250,16 @@ claude mcp add blockrun npx @blockrun/mcp --env BLOCKRUN_WALLET_KEY=0x...
 ## Troubleshooting
 
 ### "Payment was rejected"
-Your wallet needs funding. Run `blockrun_setup` to get your address and funding instructions.
+Your wallet needs funding. Say `blockrun setup` to get your address and funding instructions.
 
 ### "Wallet key required"
 The MCP couldn't find or create a wallet. Check that `~/.blockrun/` directory is writable.
 
 ### Model not responding
-Some models have rate limits. Try `blockrun_smart` with mode `fast` or `cheap` to use alternative models.
+Some models have rate limits. Try `blockrun smart cheap` or `blockrun smart fast` to use alternative models.
 
 ### Check wallet balance
-Visit: `https://basescan.org/address/YOUR_ADDRESS`
+Say `blockrun wallet` or visit: `https://basescan.org/address/YOUR_ADDRESS`
 
 ## Configuration
 
