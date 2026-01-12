@@ -25,9 +25,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
-// Wallet file location
+// Wallet file location (matches Python SDK)
 const WALLET_DIR = path.join(os.homedir(), ".blockrun");
-const WALLET_FILE = path.join(WALLET_DIR, "wallet.key");
+const WALLET_FILE = path.join(WALLET_DIR, ".session");
 
 // Model categories for smart routing
 const MODEL_TIERS = {
@@ -50,7 +50,7 @@ let cachedModels: Model[] | null = null;
  * Get or create wallet private key
  * Priority:
  * 1. Environment variable BLOCKRUN_WALLET_KEY or BASE_CHAIN_WALLET_KEY
- * 2. Existing file at ~/.blockrun/wallet.key
+ * 2. Existing file at ~/.blockrun/.session
  * 3. Generate new wallet and save to file
  */
 function getOrCreateWalletKey(): `0x${string}` {
@@ -153,7 +153,7 @@ PRICING (pay only for what you use):
   - Full pricing: https://blockrun.ai/pricing
 
 SECURITY NOTE:
-  Your private key is stored at: ~/.blockrun/wallet.key
+  Your private key is stored at: ~/.blockrun/.session
   This key NEVER leaves your machine - only used for signing payments locally.
 
 ================================================================================

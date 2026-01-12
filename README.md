@@ -185,7 +185,7 @@ blockrun_setup({})
 
 When you first use BlockRun MCP, a wallet is automatically created and saved to:
 ```
-~/.blockrun/wallet.key
+~/.blockrun/.session
 ```
 
 This wallet is:
@@ -210,7 +210,7 @@ claude mcp add blockrun npx @blockrun/mcp --env BLOCKRUN_WALLET_KEY=0x...
 
 1. Environment variable `BLOCKRUN_WALLET_KEY`
 2. Environment variable `BASE_CHAIN_WALLET_KEY`
-3. File at `~/.blockrun/wallet.key`
+3. File at `~/.blockrun/.session`
 4. Auto-generate new wallet (saved to file)
 
 ## How Payment Works
