@@ -1,0 +1,59 @@
+{
+  "name": "@blockrun/mcp",
+  "version": "0.1.0",
+  "description": "BlockRun MCP Server - Access 30+ AI models via x402 micropayments. No API keys needed.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "blockrun-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "llm",
+    "ai",
+    "x402",
+    "micropayments",
+    "openai",
+    "anthropic",
+    "gemini",
+    "blockrun",
+    "model-context-protocol"
+  ],
+  "author": "BlockRun <hello@blockrun.ai>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blockrunai/blockrun-mcp"
+  },
+  "homepage": "https://blockrun.ai",
+  "bugs": {
+    "url": "https://github.com/blockrunai/blockrun-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@blockrun/llm": "file:../blockrun-llm-ts",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
