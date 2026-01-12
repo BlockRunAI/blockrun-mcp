@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@blockrun/llm": "file:../blockrun-llm-ts",
+    "@blockrun/llm": "^0.1.1",
     "viem": "^2.21.0"
   },
   "devDependencies": {
