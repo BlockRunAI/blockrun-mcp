@@ -12,13 +12,9 @@
  *   claude mcp add blockrun npx @blockrun/mcp --env BLOCKRUN_WALLET_KEY=0x...
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { LLMClient, type Model } from "@blockrun/llm";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as fs from "fs";
@@ -37,6 +33,8 @@ const MODEL_TIERS = {
   cheap: ["google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-4o-mini"],
   reasoning: ["openai/o3", "openai/o1", "deepseek/deepseek-reasoner"],
 } as const;
+
+type RoutingMode = keyof typeof MODEL_TIERS;
 
 // Track if wallet was newly created (for user notification)
 let walletWasCreated = false;
@@ -105,6 +103,27 @@ function getClient(): LLMClient {
 }
 
 /**
+ * Get wallet info object
+ */
+function getWalletInfo() {
+  const llm = getClient();
+  const address = llm.getWalletAddress();
+  return {
+    address,
+    network: "Base",
+    chainId: 8453,
+    currency: "USDC",
+    isNew: walletWasCreated,
+    basescanUrl: `https://basescan.org/address/${address}`,
+    fundingOptions: {
+      coinbase: "Send USDC, select 'Base' network",
+      bridge: "https://bridge.base.org",
+      buy: "https://www.coinbase.com/onramp",
+    },
+  };
+}
+
+/**
  * Get wallet setup instructions for new users
  */
 function getWalletSetupInstructions(): string {
@@ -160,10 +179,20 @@ SECURITY NOTE:
 `;
 }
 
-// Tool definitions
-const tools: Tool[] = [
+// Create the server with modern McpServer class
+const server = new McpServer({
+  name: "blockrun-mcp",
+  version: "0.2.0",
+});
+
+// ============================================================================
+// TOOLS
+// ============================================================================
+
+// blockrun_chat - Main chat tool
+server.registerTool(
+  "blockrun_chat",
   {
-    name: "blockrun_chat",
     description: `Chat with any AI model via BlockRun. Supports 30+ models including GPT-5, Claude Opus 4, Gemini 3, and more.
 Pay-per-request with x402 micropayments - no API keys needed.
 
@@ -176,34 +205,36 @@ Popular models:
 
 Use blockrun_models to see all available models with pricing.`,
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        model: {
-          type: "string",
-          description: "Model ID (e.g., 'anthropic/claude-sonnet-4', 'openai/gpt-4o'). Use blockrun_models to list all.",
-        },
-        message: {
-          type: "string",
-          description: "Your message to the AI",
-        },
-        system: {
-          type: "string",
-          description: "Optional system prompt to set context/behavior",
-        },
-        max_tokens: {
-          type: "number",
-          description: "Maximum tokens in response (default: 1024)",
-        },
-        temperature: {
-          type: "number",
-          description: "Creativity level 0-2 (default: 1)",
-        },
-      },
-      required: ["model", "message"],
+      model: z.string().describe("Model ID (e.g., 'anthropic/claude-sonnet-4', 'openai/gpt-4o'). Use blockrun_models to list all."),
+      message: z.string().describe("Your message to the AI"),
+      system: z.string().optional().describe("Optional system prompt to set context/behavior"),
+      max_tokens: z.number().optional().default(1024).describe("Maximum tokens in response"),
+      temperature: z.number().optional().default(1).describe("Creativity level 0-2"),
     },
   },
+  async ({ model, message, system, max_tokens, temperature }) => {
+    try {
+      const llm = getClient();
+      const response = await llm.chat(model, message, {
+        system,
+        maxTokens: max_tokens,
+        temperature,
+      });
+      return { content: [{ type: "text", text: response }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: formatError(errorMessage) }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// blockrun_smart - Smart model routing
+server.registerTool(
+  "blockrun_smart",
   {
-    name: "blockrun_smart",
     description: `Smart model routing - automatically picks the best model based on your needs.
 
 Modes:
@@ -215,49 +246,124 @@ Modes:
 
 Example: blockrun_smart({ mode: "fast", message: "Hello" })`,
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        mode: {
-          type: "string",
-          enum: ["fast", "balanced", "powerful", "cheap", "reasoning"],
-          description: "Routing mode: fast, balanced, powerful, cheap, or reasoning",
-        },
-        message: {
-          type: "string",
-          description: "Your message to the AI",
-        },
-        system: {
-          type: "string",
-          description: "Optional system prompt",
-        },
-        max_tokens: {
-          type: "number",
-          description: "Maximum tokens in response (default: 1024)",
-        },
-      },
-      required: ["mode", "message"],
+      mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning"]).describe("Routing mode"),
+      message: z.string().describe("Your message to the AI"),
+      system: z.string().optional().describe("Optional system prompt"),
+      max_tokens: z.number().optional().default(1024).describe("Maximum tokens in response"),
+    },
+    outputSchema: {
+      model_used: z.string().describe("The model that was used"),
+      response: z.string().describe("The AI response"),
     },
   },
+  async ({ mode, message, system, max_tokens }) => {
+    const models = MODEL_TIERS[mode as RoutingMode];
+
+    // Try models in order until one succeeds
+    let lastError: Error | null = null;
+    for (const model of models) {
+      try {
+        const llm = getClient();
+        const response = await llm.chat(model, message, {
+          system,
+          maxTokens: max_tokens,
+        });
+        const result = { model_used: model, response };
+        return {
+          content: [{ type: "text", text: `[Used: ${model}]\n\n${response}` }],
+          structuredContent: result,
+        };
+      } catch (error) {
+        lastError = error as Error;
+        continue;
+      }
+    }
+
+    const errorMessage = lastError?.message || "All models failed";
+    return {
+      content: [{ type: "text", text: formatError(errorMessage) }],
+      isError: true,
+    };
+  }
+);
+
+// blockrun_models - List available models
+server.registerTool(
+  "blockrun_models",
   {
-    name: "blockrun_models",
     description: "List all available AI models with pricing. Use this to discover models and compare costs.",
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        category: {
-          type: "string",
-          enum: ["all", "chat", "reasoning", "image", "embedding"],
-          description: "Filter by category (default: all)",
-        },
-        provider: {
-          type: "string",
-          description: "Filter by provider (e.g., 'openai', 'anthropic', 'google')",
-        },
-      },
+      category: z.enum(["all", "chat", "reasoning", "image", "embedding"]).optional().default("all").describe("Filter by category"),
+      provider: z.string().optional().describe("Filter by provider (e.g., 'openai', 'anthropic', 'google')"),
+    },
+    outputSchema: {
+      count: z.number().describe("Number of models returned"),
+      models: z.array(z.object({
+        id: z.string(),
+        name: z.string().optional(),
+        inputPrice: z.number().optional(),
+        outputPrice: z.number().optional(),
+      })).describe("List of available models"),
     },
   },
+  async ({ category, provider }) => {
+    const llm = getClient();
+
+    // Cache models for 5 minutes
+    if (!cachedModels) {
+      cachedModels = await llm.listModels();
+      setTimeout(() => { cachedModels = null; }, 5 * 60 * 1000);
+    }
+
+    let models = cachedModels;
+
+    // Filter by provider
+    if (provider) {
+      const p = provider.toLowerCase();
+      models = models.filter(m => m.id.toLowerCase().startsWith(p + "/"));
+    }
+
+    // Filter by category
+    if (category && category !== "all") {
+      if (category === "image") {
+        models = models.filter(m =>
+          m.id.includes("dall-e") || m.id.includes("flux") || m.id.includes("banana")
+        );
+      } else if (category === "reasoning") {
+        models = models.filter(m =>
+          m.id.includes("/o1") || m.id.includes("/o3") || m.id.includes("reasoner")
+        );
+      } else if (category === "embedding") {
+        models = models.filter(m => m.id.includes("embed"));
+      }
+    }
+
+    // Format output
+    const lines = models.map(m => {
+      const input = m.inputPrice ? `$${m.inputPrice}/M in` : "";
+      const output = m.outputPrice ? `$${m.outputPrice}/M out` : "";
+      const pricing = [input, output].filter(Boolean).join(", ");
+      return `- ${m.id}: ${m.name || ""} ${pricing ? `(${pricing})` : ""}`;
+    });
+
+    const structuredModels = models.map(m => ({
+      id: m.id,
+      name: m.name,
+      inputPrice: m.inputPrice,
+      outputPrice: m.outputPrice,
+    }));
+
+    return {
+      content: [{ type: "text", text: `Available models (${models.length}):\n\n${lines.join("\n")}` }],
+      structuredContent: { count: models.length, models: structuredModels },
+    };
+  }
+);
+
+// blockrun_image - Generate images
+server.registerTool(
+  "blockrun_image",
   {
-    name: "blockrun_image",
     description: `Generate images using AI models. Supports DALL-E 3, Flux, and Nano Banana.
 
 Models:
@@ -265,41 +371,129 @@ Models:
 - together/flux-schnell: Fast generation ($0.02/image)
 - google/nano-banana: Experimental Google model`,
     inputSchema: {
-      type: "object" as const,
-      properties: {
-        prompt: {
-          type: "string",
-          description: "Description of the image to generate",
-        },
-        model: {
-          type: "string",
-          description: "Image model (default: openai/dall-e-3)",
-          enum: ["openai/dall-e-3", "together/flux-schnell", "google/nano-banana"],
-        },
-        size: {
-          type: "string",
-          description: "Image size (default: 1024x1024)",
-          enum: ["1024x1024", "1792x1024", "1024x1792"],
-        },
-        quality: {
-          type: "string",
-          description: "Quality level for DALL-E 3 (default: standard)",
-          enum: ["standard", "hd"],
-        },
-      },
-      required: ["prompt"],
+      prompt: z.string().describe("Description of the image to generate"),
+      model: z.enum(["openai/dall-e-3", "together/flux-schnell", "google/nano-banana"]).optional().default("openai/dall-e-3").describe("Image model"),
+      size: z.enum(["1024x1024", "1792x1024", "1024x1792"]).optional().default("1024x1024").describe("Image size"),
+      quality: z.enum(["standard", "hd"]).optional().default("standard").describe("Quality level for DALL-E 3"),
+    },
+    outputSchema: {
+      url: z.string().describe("URL of the generated image"),
+      prompt: z.string().describe("The prompt used"),
+      model: z.string().describe("The model used"),
     },
   },
+  async ({ prompt, model, size, quality }) => {
+    const apiUrl = "https://blockrun.ai/api/v1/images/generations";
+
+    const body = {
+      model,
+      prompt,
+      size,
+      quality,
+      n: 1,
+    };
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (response.status === 402) {
+      return {
+        content: [{ type: "text", text: `Image generation requires payment. Please ensure your wallet has USDC on Base.\n\nTo generate "${prompt}" with ${model}, the approximate cost is $0.04-0.08 per image.` }],
+        isError: true,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        content: [{ type: "text", text: formatError(`Image generation failed: ${response.status}`) }],
+        isError: true,
+      };
+    }
+
+    const data = await response.json() as { data?: Array<{ url?: string }> };
+    const imageUrl = data.data?.[0]?.url;
+
+    if (!imageUrl) {
+      return {
+        content: [{ type: "text", text: formatError("No image URL in response") }],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: `Image generated successfully!\n\nURL: ${imageUrl}\n\nPrompt: ${prompt}\nModel: ${model}` }],
+      structuredContent: { url: imageUrl, prompt, model: model! },
+    };
+  }
+);
+
+// blockrun_wallet - Get wallet info
+server.registerTool(
+  "blockrun_wallet",
   {
-    name: "blockrun_wallet",
     description: "Get information about your BlockRun wallet address. Shows address, network, and quick funding options.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
+    inputSchema: {},
+    outputSchema: {
+      address: z.string().describe("Wallet address"),
+      network: z.string().describe("Network name"),
+      chainId: z.number().describe("Chain ID"),
+      currency: z.string().describe("Currency"),
+      isNew: z.boolean().describe("Whether this is a newly created wallet"),
+      basescanUrl: z.string().describe("Link to view on Basescan"),
     },
   },
+  async () => {
+    const info = getWalletInfo();
+    const isNewWallet = info.isNew;
+
+    let text = `BlockRun Wallet Information
+============================
+
+Address: ${info.address}
+Network: ${info.network} (Chain ID: ${info.chainId})
+Currency: ${info.currency}
+
+View on Basescan: ${info.basescanUrl}
+`;
+
+    if (isNewWallet) {
+      text += `\nSTATUS: NEW WALLET - NEEDS FUNDING\n${getWalletSetupInstructions()}`;
+    } else {
+      text += `
+HOW TO ADD FUNDS:
+-----------------
+Send USDC to the address above on Base network.
+
+Quick options:
+1. From Coinbase: ${info.fundingOptions.coinbase}
+2. Bridge: ${info.fundingOptions.bridge}
+3. Buy: ${info.fundingOptions.buy}
+
+Full instructions: Run blockrun_setup tool
+`;
+    }
+
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        address: info.address,
+        network: info.network,
+        chainId: info.chainId,
+        currency: info.currency,
+        isNew: info.isNew,
+        basescanUrl: info.basescanUrl,
+      },
+    };
+  }
+);
+
+// blockrun_setup - Detailed setup instructions
+server.registerTool(
+  "blockrun_setup",
   {
-    name: "blockrun_setup",
     description: `Get detailed wallet setup and funding instructions. Use this for first-time setup or if you need help adding funds to your wallet.
 
 Returns:
@@ -307,285 +501,158 @@ Returns:
 - Step-by-step funding instructions (Coinbase, bridge, direct purchase)
 - Pricing information
 - Security details`,
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
-    },
+    inputSchema: {},
   },
-];
-
-// Tool handlers
-async function handleChat(args: {
-  model: string;
-  message: string;
-  system?: string;
-  max_tokens?: number;
-  temperature?: number;
-}): Promise<string> {
-  const llm = getClient();
-
-  const response = await llm.chat(args.model, args.message, {
-    system: args.system,
-    maxTokens: args.max_tokens,
-    temperature: args.temperature,
-  });
-
-  return response;
-}
-
-async function handleSmartRoute(args: {
-  mode: keyof typeof MODEL_TIERS;
-  message: string;
-  system?: string;
-  max_tokens?: number;
-}): Promise<string> {
-  const models = MODEL_TIERS[args.mode];
-  if (!models) {
-    throw new Error(`Invalid mode: ${args.mode}. Use: fast, balanced, powerful, cheap, or reasoning`);
-  }
-
-  // Try models in order until one succeeds
-  let lastError: Error | null = null;
-  for (const model of models) {
-    try {
-      const response = await handleChat({
-        model,
-        message: args.message,
-        system: args.system,
-        max_tokens: args.max_tokens,
-      });
-      return `[Used: ${model}]\n\n${response}`;
-    } catch (error) {
-      lastError = error as Error;
-      continue;
-    }
-  }
-
-  throw lastError || new Error("All models failed");
-}
-
-async function handleListModels(args: {
-  category?: string;
-  provider?: string;
-}): Promise<string> {
-  const llm = getClient();
-
-  // Cache models for 5 minutes
-  if (!cachedModels) {
-    cachedModels = await llm.listModels();
-    setTimeout(() => { cachedModels = null; }, 5 * 60 * 1000);
-  }
-
-  let models = cachedModels;
-
-  // Filter by provider
-  if (args.provider) {
-    const provider = args.provider.toLowerCase();
-    models = models.filter(m => m.id.toLowerCase().startsWith(provider + "/"));
-  }
-
-  // Filter by category (infer from model id/provider)
-  if (args.category && args.category !== "all") {
-    const category = args.category.toLowerCase();
-    if (category === "image") {
-      models = models.filter(m =>
-        m.id.includes("dall-e") || m.id.includes("flux") || m.id.includes("banana")
-      );
-    } else if (category === "reasoning") {
-      models = models.filter(m =>
-        m.id.includes("/o1") || m.id.includes("/o3") || m.id.includes("reasoner")
-      );
-    } else if (category === "embedding") {
-      models = models.filter(m => m.id.includes("embed"));
-    }
-    // "chat" = default, show all non-image/embedding models
-  }
-
-  // Format output
-  const lines = models.map(m => {
-    const input = m.inputPrice ? `$${m.inputPrice}/M in` : "";
-    const output = m.outputPrice ? `$${m.outputPrice}/M out` : "";
-    const pricing = [input, output].filter(Boolean).join(", ");
-    return `- ${m.id}: ${m.name || ""} ${pricing ? `(${pricing})` : ""}`;
-  });
-
-  return `Available models (${models.length}):\n\n${lines.join("\n")}`;
-}
-
-async function handleImageGeneration(args: {
-  prompt: string;
-  model?: string;
-  size?: string;
-  quality?: string;
-}): Promise<string> {
-  const model = args.model || "openai/dall-e-3";
-  const llm = getClient();
-
-  // For image generation, we need to call the image endpoint
-  // The SDK currently doesn't have a dedicated image method, so we'll use the API directly
-  const apiUrl = "https://blockrun.ai/api/v1/images/generations";
-
-  const body = {
-    model,
-    prompt: args.prompt,
-    size: args.size || "1024x1024",
-    quality: args.quality || "standard",
-    n: 1,
-  };
-
-  // Use the chat method's payment handling by making a direct request
-  // This is a simplified version - in production, you'd want to add proper payment handling
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (response.status === 402) {
-    // For now, return instructions - full implementation would handle payment
-    return `Image generation requires payment. Please ensure your wallet has USDC on Base.\n\nTo generate "${args.prompt}" with ${model}, the approximate cost is $0.04-0.08 per image.`;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Image generation failed: ${response.status}`);
-  }
-
-  const data = await response.json() as { data?: Array<{ url?: string }> };
-  const imageUrl = data.data?.[0]?.url;
-
-  if (!imageUrl) {
-    throw new Error("No image URL in response");
-  }
-
-  return `Image generated successfully!\n\nURL: ${imageUrl}\n\nPrompt: ${args.prompt}\nModel: ${model}`;
-}
-
-function handleWalletInfo(): string {
-  const llm = getClient();
-  const address = llm.getWalletAddress();
-
-  const isNewWallet = walletWasCreated;
-
-  let response = `BlockRun Wallet Information
-============================
-
-Address: ${address}
-Network: Base (Chain ID: 8453)
-Currency: USDC
-
-View on Basescan: https://basescan.org/address/${address}
-`;
-
-  if (isNewWallet) {
-    response += `
-STATUS: NEW WALLET - NEEDS FUNDING
-${getWalletSetupInstructions()}`;
-  } else {
-    response += `
-HOW TO ADD FUNDS:
------------------
-Send USDC to the address above on Base network.
-
-Quick options:
-1. From Coinbase: Send USDC, select "Base" network
-2. Bridge: https://bridge.base.org
-3. Buy: https://www.coinbase.com/onramp
-
-Full instructions: Run blockrun_setup tool
-`;
-  }
-
-  return response;
-}
-
-function handleSetup(): string {
-  getClient(); // Initialize wallet
-  return getWalletSetupInstructions();
-}
-
-// Create and start the server
-const server = new Server(
-  {
-    name: "blockrun-mcp",
-    version: "0.1.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
+  async () => {
+    getClient(); // Initialize wallet
+    return { content: [{ type: "text", text: getWalletSetupInstructions() }] };
   }
 );
 
-// Register tool list handler
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools,
-}));
+// ============================================================================
+// RESOURCES
+// ============================================================================
 
-// Register tool call handler
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  try {
-    let result: string;
-
-    switch (name) {
-      case "blockrun_chat":
-        result = await handleChat(args as Parameters<typeof handleChat>[0]);
-        break;
-      case "blockrun_smart":
-        result = await handleSmartRoute(args as Parameters<typeof handleSmartRoute>[0]);
-        break;
-      case "blockrun_models":
-        result = await handleListModels(args as Parameters<typeof handleListModels>[0]);
-        break;
-      case "blockrun_image":
-        result = await handleImageGeneration(args as Parameters<typeof handleImageGeneration>[0]);
-        break;
-      case "blockrun_wallet":
-        result = handleWalletInfo();
-        break;
-      case "blockrun_setup":
-        result = handleSetup();
-        break;
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
-
+// Wallet resource - read wallet info as structured data
+server.registerResource(
+  "wallet",
+  "blockrun://wallet",
+  {
+    description: "Your BlockRun wallet address and status",
+    mimeType: "application/json",
+  },
+  async () => {
+    const info = getWalletInfo();
     return {
-      content: [{ type: "text", text: result }],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    // Check if it's a payment-related error
-    const isPaymentError = message.toLowerCase().includes("payment") ||
-                           message.toLowerCase().includes("402") ||
-                           message.toLowerCase().includes("balance") ||
-                           message.toLowerCase().includes("insufficient");
-
-    let errorText = `Error: ${message}`;
-
-    if (isPaymentError) {
-      errorText += `\n\n` +
-        `This error usually means your wallet needs funding.\n` +
-        `Run the blockrun_setup tool to get your wallet address and funding instructions.\n\n` +
-        `Quick fix: Send USDC to your wallet on Base network.`;
-    }
-
-    return {
-      content: [{ type: "text", text: errorText }],
-      isError: true,
+      contents: [{
+        uri: "blockrun://wallet",
+        mimeType: "application/json",
+        text: JSON.stringify(info, null, 2),
+      }],
     };
   }
-});
+);
 
-// Start the server
+// Models resource - list all available models
+server.registerResource(
+  "models",
+  "blockrun://models",
+  {
+    description: "List of all available AI models with pricing",
+    mimeType: "application/json",
+  },
+  async () => {
+    const llm = getClient();
+    if (!cachedModels) {
+      cachedModels = await llm.listModels();
+      setTimeout(() => { cachedModels = null; }, 5 * 60 * 1000);
+    }
+    return {
+      contents: [{
+        uri: "blockrun://models",
+        mimeType: "application/json",
+        text: JSON.stringify(cachedModels, null, 2),
+      }],
+    };
+  }
+);
+
+// ============================================================================
+// PROMPTS
+// ============================================================================
+
+// Quick chat prompt
+server.registerPrompt(
+  "quick_chat",
+  {
+    description: "Start a quick chat with a recommended model",
+    argsSchema: {
+      message: z.string().describe("Your message"),
+      style: z.enum(["concise", "detailed", "creative"]).optional().default("concise").describe("Response style"),
+    },
+  },
+  async ({ message, style }) => {
+    const systemPrompts: Record<string, string> = {
+      concise: "Be concise and direct. Give short, focused answers.",
+      detailed: "Provide thorough, comprehensive answers with examples.",
+      creative: "Be creative and imaginative in your responses.",
+    };
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `[System: ${systemPrompts[style || "concise"]}]\n\n${message}`,
+          },
+        },
+      ],
+    };
+  }
+);
+
+// Code review prompt
+server.registerPrompt(
+  "code_review",
+  {
+    description: "Get a code review from a powerful model",
+    argsSchema: {
+      code: z.string().describe("The code to review"),
+      language: z.string().optional().describe("Programming language"),
+      focus: z.enum(["bugs", "performance", "style", "all"]).optional().default("all").describe("What to focus on"),
+    },
+  },
+  async ({ code, language, focus }) => {
+    const focusInstructions: Record<string, string> = {
+      bugs: "Focus on potential bugs, errors, and edge cases.",
+      performance: "Focus on performance issues and optimization opportunities.",
+      style: "Focus on code style, readability, and best practices.",
+      all: "Review for bugs, performance, and style.",
+    };
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Please review this ${language || ""} code. ${focusInstructions[focus || "all"]}\n\n\`\`\`${language || ""}\n${code}\n\`\`\``,
+          },
+        },
+      ],
+    };
+  }
+);
+
+// ============================================================================
+// ERROR HANDLING
+// ============================================================================
+
+function formatError(message: string): string {
+  const isPaymentError = message.toLowerCase().includes("payment") ||
+    message.toLowerCase().includes("402") ||
+    message.toLowerCase().includes("balance") ||
+    message.toLowerCase().includes("insufficient");
+
+  let errorText = `Error: ${message}`;
+
+  if (isPaymentError) {
+    errorText += `\n\n` +
+      `This error usually means your wallet needs funding.\n` +
+      `Run the blockrun_setup tool to get your wallet address and funding instructions.\n\n` +
+      `Quick fix: Send USDC to your wallet on Base network.`;
+  }
+
+  return errorText;
+}
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("BlockRun MCP Server started");
+  console.error("BlockRun MCP Server started (v0.1.0)");
 }
 
 main().catch((error) => {
