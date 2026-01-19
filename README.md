@@ -122,11 +122,34 @@ blockrun list models
 blockrun show OpenAI models with pricing
 ```
 
-### Wallet Management
+### Real-Time X/Twitter Search
+
+Get live data from X/Twitter using Grok's real-time search:
+
+```
+blockrun twitter: what is @elonmusk posting about today
+
+blockrun twitter: trending AI news
+
+blockrun twitter: reactions to [recent event]
+```
+
+### Wallet & Balance
 
 ```
 blockrun setup          # First-time setup instructions
 blockrun wallet         # Check your wallet address
+blockrun balance        # Check on-chain USDC balance
+```
+
+### Budget Management
+
+Control your session spending:
+
+```
+blockrun budget check              # View current spending
+blockrun budget set $1.00          # Set $1.00 limit
+blockrun budget clear              # Remove limit
 ```
 
 ## Supported Models & Pricing
@@ -259,7 +282,10 @@ The MCP couldn't find or create a wallet. Check that `~/.blockrun/` directory is
 Some models have rate limits. Try `blockrun smart cheap` or `blockrun smart fast` to use alternative models.
 
 ### Check wallet balance
-Say `blockrun wallet` or visit: `https://basescan.org/address/YOUR_ADDRESS`
+Say `blockrun balance` to check your on-chain USDC balance, or visit: `https://basescan.org/address/YOUR_ADDRESS`
+
+### Budget limit reached
+If you've set a session budget and hit the limit, use `blockrun budget clear` to remove it or `blockrun budget set $X` to increase it.
 
 ## Configuration
 

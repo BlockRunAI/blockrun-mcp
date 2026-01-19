@@ -44,6 +44,22 @@ let walletAddress: string | null = null;
 let client: LLMClient | null = null;
 let cachedModels: Model[] | null = null;
 
+// Session budget tracking
+interface BudgetState {
+  limit: number | null;  // USD limit, null = unlimited
+  spent: number;         // Total spent this session
+  calls: number;         // Number of API calls
+}
+let sessionBudget: BudgetState = { limit: null, spent: 0, calls: 0 };
+
+// USDC contract on Base
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_RPC_URLS = [
+  "https://mainnet.base.org",
+  "https://base.llamarpc.com",
+  "https://1rpc.io/base",
+];
+
 /**
  * Get or create wallet private key
  * Priority:
@@ -179,10 +195,80 @@ SECURITY NOTE:
 `;
 }
 
+/**
+ * Get USDC balance for a wallet address on Base chain
+ */
+async function getUsdcBalance(address: string): Promise<number | null> {
+  // balanceOf(address) function selector: 0x70a08231
+  const data = {
+    jsonrpc: "2.0",
+    method: "eth_call",
+    params: [{
+      to: USDC_ADDRESS,
+      data: `0x70a08231000000000000000000000000${address.slice(2)}`,
+    }, "latest"],
+    id: 1,
+  };
+
+  // Try each RPC endpoint with fallback
+  for (const rpcUrl of BASE_RPC_URLS) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const result = await response.json() as { result?: string };
+      if (result.result) {
+        // USDC has 6 decimals
+        return parseInt(result.result, 16) / 1e6;
+      }
+    } catch {
+      continue; // Try next RPC
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a prompt requires real-time data (Twitter/X)
+ */
+function isRealtimeQuery(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const keywords = [
+    "twitter", "x.com", "trending", "elon", "musk",
+    "breaking news", "latest posts", "live updates",
+    "what are people saying", "current events", "tweet",
+  ];
+  if (keywords.some(kw => lower.includes(kw))) return true;
+  // Twitter handle pattern: @ not preceded by word char (excludes emails)
+  if (/(?<!\w)@\w+/.test(prompt)) return true;
+  return false;
+}
+
+/**
+ * Record spending for budget tracking
+ */
+function recordSpending(cost: number): void {
+  sessionBudget.spent += cost;
+  sessionBudget.calls += 1;
+}
+
+/**
+ * Check if within budget
+ */
+function checkBudget(): { allowed: boolean; remaining: number | null } {
+  if (sessionBudget.limit === null) {
+    return { allowed: true, remaining: null };
+  }
+  const remaining = sessionBudget.limit - sessionBudget.spent;
+  return { allowed: remaining > 0, remaining };
+}
+
 // Create the server with modern McpServer class
 const server = new McpServer({
   name: "blockrun-mcp",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 // ============================================================================
@@ -506,6 +592,201 @@ Returns:
   async () => {
     getClient(); // Initialize wallet
     return { content: [{ type: "text", text: getWalletSetupInstructions() }] };
+  }
+);
+
+// blockrun_twitter - Real-time X/Twitter search via Grok
+server.registerTool(
+  "blockrun_twitter",
+  {
+    description: `Search real-time X/Twitter data using Grok's live search.
+
+Use this tool for:
+- Checking what people are saying about a topic
+- Finding recent tweets from specific accounts
+- Getting trending discussions
+- Real-time news and events
+
+Example queries:
+- "what is @elonmusk posting about today"
+- "trending AI news"
+- "reactions to [event]"`,
+    inputSchema: {
+      query: z.string().describe("Search query - can include @handles, topics, or natural language questions"),
+      max_results: z.number().optional().default(10).describe("Maximum number of results to return (1-25)"),
+    },
+    outputSchema: {
+      query: z.string(),
+      model: z.string(),
+      response: z.string(),
+    },
+  },
+  async ({ query, max_results }) => {
+    // Check budget first
+    const budget = checkBudget();
+    if (!budget.allowed) {
+      return {
+        content: [{ type: "text", text: `Budget limit reached. Spent $${sessionBudget.spent.toFixed(4)} of $${sessionBudget.limit?.toFixed(2)} limit.\n\nUse blockrun_budget to check or adjust your budget.` }],
+        isError: true,
+      };
+    }
+
+    try {
+      const llm = getClient();
+      const model = "xai/grok-3";
+
+      // System prompt for structured Twitter search
+      const system = `You are a real-time X/Twitter search assistant.
+When searching, focus on:
+- Recent and relevant posts
+- Key accounts and verified sources
+- Engagement metrics when relevant
+Format your response clearly with sources when available.
+Max results requested: ${max_results}`;
+
+      // Use type assertion - search is supported by Grok but not in SDK types yet
+      const response = await llm.chat(model, query, {
+        system,
+        search: true,
+      } as Parameters<typeof llm.chat>[2] & { search?: boolean });
+
+      // Estimate cost (Grok is ~$0.002/call)
+      recordSpending(0.002);
+
+      return {
+        content: [{ type: "text", text: `[X/Twitter Search via Grok]\n\n${response}` }],
+        structuredContent: { query, model, response },
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: formatError(errorMessage) }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// blockrun_balance - Get on-chain USDC balance
+server.registerTool(
+  "blockrun_balance",
+  {
+    description: `Check your on-chain USDC balance on Base network.
+
+Returns:
+- Current USDC balance
+- Wallet address
+- Link to view on Basescan
+
+Use this to see how much funding you have available for BlockRun API calls.`,
+    inputSchema: {},
+    outputSchema: {
+      address: z.string(),
+      balance: z.number().nullable(),
+      network: z.string(),
+      basescanUrl: z.string(),
+    },
+  },
+  async () => {
+    const llm = getClient();
+    const address = llm.getWalletAddress();
+    const balance = await getUsdcBalance(address);
+
+    const balanceStr = balance !== null ? `$${balance.toFixed(6)} USDC` : "Unable to fetch (try again)";
+
+    const text = `BlockRun Wallet Balance
+=======================
+
+Address: ${address}
+Balance: ${balanceStr}
+Network: Base (Chain ID: 8453)
+
+View on Basescan: https://basescan.org/address/${address}
+
+${balance !== null && balance < 1 ? "⚠️  Low balance. Consider adding funds to continue using BlockRun." : ""}`;
+
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        address,
+        balance,
+        network: "Base",
+        basescanUrl: `https://basescan.org/address/${address}`,
+      },
+    };
+  }
+);
+
+// blockrun_budget - Session budget management
+server.registerTool(
+  "blockrun_budget",
+  {
+    description: `Manage your session spending budget.
+
+Actions:
+- check: View current spending and budget status
+- set: Set a spending limit (e.g., $1.00)
+- clear: Remove spending limit (unlimited)
+
+Use this to control how much you spend per session on BlockRun API calls.`,
+    inputSchema: {
+      action: z.enum(["check", "set", "clear"]).describe("Budget action to perform"),
+      amount: z.number().optional().describe("Budget limit in USD (required for 'set' action)"),
+    },
+    outputSchema: {
+      limit: z.number().nullable(),
+      spent: z.number(),
+      calls: z.number(),
+      remaining: z.number().nullable(),
+    },
+  },
+  async ({ action, amount }) => {
+    switch (action) {
+      case "set":
+        if (amount === undefined || amount <= 0) {
+          return {
+            content: [{ type: "text", text: "Error: Please provide a positive amount for the budget limit (e.g., amount: 1.00 for $1.00)" }],
+            isError: true,
+          };
+        }
+        sessionBudget.limit = amount;
+        break;
+
+      case "clear":
+        sessionBudget.limit = null;
+        break;
+
+      case "check":
+      default:
+        // Just report status
+        break;
+    }
+
+    const remaining = sessionBudget.limit !== null ? sessionBudget.limit - sessionBudget.spent : null;
+    const limitStr = sessionBudget.limit !== null ? `$${sessionBudget.limit.toFixed(2)}` : "Unlimited";
+    const remainingStr = remaining !== null ? `$${remaining.toFixed(4)}` : "N/A";
+
+    const text = `BlockRun Session Budget
+=======================
+
+Limit: ${limitStr}
+Spent: $${sessionBudget.spent.toFixed(4)}
+Calls: ${sessionBudget.calls}
+Remaining: ${remainingStr}
+
+${action === "set" ? `✅ Budget set to $${amount?.toFixed(2)}` : ""}
+${action === "clear" ? "✅ Budget limit removed (unlimited spending)" : ""}
+${remaining !== null && remaining < 0.01 ? "⚠️  Budget nearly exhausted!" : ""}`;
+
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        limit: sessionBudget.limit,
+        spent: sessionBudget.spent,
+        calls: sessionBudget.calls,
+        remaining,
+      },
+    };
   }
 );
 
