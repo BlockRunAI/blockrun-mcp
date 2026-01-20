@@ -1,0 +1,49 @@
+name: BlockRun MCP
+description: Access 30+ AI models (GPT-5, Claude, Gemini, Grok) without API keys. Pay-per-use via x402 micropayments on Base.
+version: 0.4.1
+author: BlockRun
+homepage: https://blockrun.ai
+repository: https://github.com/blockrunai/blockrun-mcp
+license: MIT
+
+install:
+  npx: "@blockrun/mcp"
+
+categories:
+  - ai
+  - llm
+  - payments
+
+keywords:
+  - gpt-5
+  - claude
+  - gemini
+  - grok
+  - deepseek
+  - openai
+  - anthropic
+  - google
+  - x402
+  - usdc
+  - micropayments
+  - no-api-key
+
+tools:
+  - name: blockrun_chat
+    description: Chat with any AI model (GPT-5, Claude, Gemini, etc.)
+  - name: blockrun_smart
+    description: Auto-select best model based on task (fast/balanced/powerful/cheap/reasoning)
+  - name: blockrun_image
+    description: Generate images with DALL-E 3 or Flux
+  - name: blockrun_twitter
+    description: Real-time X/Twitter search via Grok
+  - name: blockrun_models
+    description: List available models with pricing
+  - name: blockrun_balance
+    description: Check on-chain USDC wallet balance
+  - name: blockrun_wallet
+    description: Get wallet address and QR code
+  - name: blockrun_setup
+    description: First-time setup and funding instructions
+  - name: blockrun_budget
+    description: Manage session spending limits
