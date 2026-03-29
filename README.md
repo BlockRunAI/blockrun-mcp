@@ -28,6 +28,10 @@ claude mcp add blockrun npx @blockrun/mcp
 
 > **Alternative:** Prefer Python? Try the [BlockRun Skill](https://github.com/BlockRunAI/claude-code-blockrun-agent) (`pip install blockrun-llm`) - same features, different integration style.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/blockrunai-blockrun-mcp).
+
 ## Quick Start
 
 ### 1. Install
