@@ -13,6 +13,7 @@ import { registerSearchTool } from "./tools/search.js";
 import { registerExaTool } from "./tools/exa.js";
 import { registerMarketsTool } from "./tools/markets.js";
 import { registerDexTool } from "./tools/dex.js";
+import { registerModalTool } from "./tools/modal.js";
 export function initializeMcpServer(server: McpServer): void {
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
   const modelCache: { models: Model[] | null } = { models: null };
@@ -27,6 +28,7 @@ export function initializeMcpServer(server: McpServer): void {
   registerExaTool(server);
   registerMarketsTool(server);
   registerDexTool(server);
+  registerModalTool(server);
 
   // Register resources
   server.registerResource(

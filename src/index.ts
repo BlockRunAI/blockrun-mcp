@@ -12,7 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { initializeMcpServer } from "./mcp-handler.js";
 
-const VERSION = "0.6.8";
+const VERSION = "0.7.1";
 
 async function checkForUpdate() {
   try {
