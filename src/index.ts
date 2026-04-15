@@ -11,6 +11,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { initializeMcpServer } from "./mcp-handler.js";
+import { warnOnLeakedKeys } from "./utils/key-leak-scanner.js";
 
 const VERSION = "0.7.1";
 
@@ -30,6 +31,11 @@ async function checkForUpdate() {
 }
 
 async function main() {
+  // Scan config files for leaked wallet keys BEFORE starting the server.
+  // If the key is in ~/.claude.json (deprecated hosted-auth flow), the user
+  // needs to rotate their wallet — and they shouldn't miss this warning.
+  warnOnLeakedKeys();
+
   const server = new McpServer({
     name: "blockrun-mcp",
     version: VERSION,
