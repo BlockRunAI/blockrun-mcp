@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/blockrunai-blockrun-mcp-badge.png)](https://mseep.ai/app/blockrunai-blockrun-mcp)
+
 # BlockRun MCP
 
 [![npm](https://img.shields.io/npm/v/@blockrun/mcp)](https://www.npmjs.com/package/@blockrun/mcp)
