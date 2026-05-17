@@ -2,6 +2,21 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.14.1
+
+- **fix(wallet): respect `~/.blockrun/.chain` over stale Solana session.** Previously, the mere existence of `~/.blockrun/.solana-session` pinned the MCP to Solana — even when the user had explicitly switched chains by writing `base` to `~/.blockrun/.chain`. Voice calls and other paid actions would 400 on a wallet/chain mismatch with no obvious recovery short of deleting session files. New precedence in `getChain()`: explicit `.chain` (or `payment-chain` alias) wins, then `SOLANA_WALLET_KEY` env var, then `.solana-session` autodetect as a first-run fallback only.
+
+## 0.14.2 (planned, unreleased)
+
+- **BREAKING — `blockrun_x` removed.** AttentionVC partner integration retired. Callers depending on this tool will get tool-not-found and should switch to `blockrun_surf` (`social/user`, `social/tweets`, `social/tweet/replies`, `social/mindshare`) or `blockrun_search` with `sources: ["x"]`.
+- **BREAKING — `blockrun_phone`, `blockrun_exa`, `blockrun_modal`, `blockrun_search` switched to path-based passthrough** matching the `blockrun_surf` / `blockrun_markets` pattern. Old shape `{ action, ... }` no longer accepted; new shape is `{ path, body }`.
+  - Reduces tool description bytes ~14 KB (down from ~21 KB), letting LLMs spend more attention on the actual call
+  - Full endpoint catalogs moved into per-tool skills (`skills/phone/SKILL.md`, `skills/modal/SKILL.md`, `skills/search/SKILL.md`, updated `skills/exa-research/SKILL.md`)
+  - Adding new endpoints to any of these surfaces no longer requires an MCP release
+- **`blockrun_phone` voice/call: `from` is now correctly documented as REQUIRED.** Upstream has always required it (must be a number your wallet owns from `phone/numbers/buy`) but the prior tool description marked it optional, causing silent 400s.
+- **Error surfacing fix.** Gateway 400/422/5xx responses now include the upstream `message`, `hint`, and `missing_params` fields in the error text. Previously the SDK's `APIError` body was swallowed, leaving only bare `API error: 400` with no actionable detail. New helper `extractErrorMessage()` in `src/utils/errors.ts` walks `err.response` and surfaces structured fields.
+- dist/index.js: 85.48 KB → 75.60 KB (-11.5%).
+
 ## 0.14.0
 
 - **`blockrun_surf` — unified crypto data via Surf (asksurf.ai), 84 endpoints behind one tool.** Path-based passthrough mirrors `blockrun_markets`; adding new Surf endpoints no longer requires an MCP release.
