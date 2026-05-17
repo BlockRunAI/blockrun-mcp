@@ -13,12 +13,12 @@ All notable changes to BlockRun MCP will be documented in this file.
 
 ## 0.13.0
 
-- **`blockrun_markets` tool description rewritten for Predexon v2.** All v2 endpoints went live in production on 2026-05-07; the tool spec was missing them and three previously-listed wallet endpoints had wrong paths. The generic `path`-based passthrough was already routing correctly, but agents couldn't discover the new routes from the description.
-  - **New section: CANONICAL CROSS-VENUE (Tier 1)** — `markets`, `markets/listings`, `outcomes/:predexon_id`. Predexon v2 unified data layer with cross-venue IDs (Polymarket, Kalshi, Limitless, Opinion, Predict.Fun). Filter by `?venue=`, `?status=`, `?category=`, `?league=`, `?event_id=`, `?pagination_key=`.
-  - **New section: SPORTS (Tier 1)** — `sports/categories`, `sports/markets`, `sports/markets/:game_id`, `sports/outcomes/:predexon_id`. Sports markets grouped by game with venue listings.
-  - **Polymarket keyset pagination** — `polymarket/markets/keyset` and `polymarket/events/keyset` added alongside their non-keyset counterparts. Use `?pagination_key=` for cursor-based traversal of large result sets.
-  - **WALLET IDENTITY & CLUSTERING (Tier 2) section** — replaces three incorrectly-pathed entries (`polymarket/wallet/identity`, `polymarket/wallet/identities-batch`, `polymarket/wallet/cluster`) with the correct routes: `polymarket/wallet/identity/:wallet` (GET), `polymarket/wallet/identities` (POST `{addresses: [...]}` up to 200 wallets — replaces the retired `identities-batch`), `polymarket/wallet/:address/cluster` (GET).
-- **`prediction-markets` skill rewrite.** Added 4 new sections: Canonical Cross-Venue Markets (v2), Sports Markets (v2), Keyset Pagination (v2), and Wallet Identity & On-Chain Clustering (v2, Tier 2). Quick Decision Table now leads with the canonical cross-venue endpoints. New "Track a smart wallet's identity + cluster" workflow.
+- **`blockrun_markets` — Predexon v2 endpoints surfaced.** All v2 endpoints went live in production on 2026-05-07. The path-based passthrough was already routing correctly, but agents couldn't discover the new routes from the stale description.
+  - Canonical Cross-Venue (T1): `markets`, `markets/listings`, `outcomes/:predexon_id` — unified data layer with cross-venue IDs across Polymarket, Kalshi, Limitless, Opinion, Predict.Fun. Filters: `?venue=`, `?status=`, `?category=`, `?league=`, `?event_id=`, `?pagination_key=`
+  - Sports (T1): `sports/categories`, `sports/markets`, `sports/markets/:game_id`, `sports/outcomes/:predexon_id` — markets grouped by game with venue listings
+  - Keyset pagination: `polymarket/markets/keyset` and `polymarket/events/keyset` — cursor-based traversal via `?pagination_key=`
+  - Wallet Identity & Clustering (T2): correct routes for `polymarket/wallet/identity/:wallet` (GET), `polymarket/wallet/identities` (POST, bulk up to 200 — replaces retired `identities-batch`), `polymarket/wallet/:address/cluster` (GET) — fixes 3 previously-listed wrong paths
+- **`prediction-markets` skill rewrite.** Added 4 sections for v2: Canonical Cross-Venue, Sports, Keyset Pagination, Wallet Identity & On-Chain Clustering (T2). Quick Decision Table now leads with the canonical cross-venue endpoints. New worked example: tracking a smart wallet's identity + cluster.
 
 ## 0.11.0
 

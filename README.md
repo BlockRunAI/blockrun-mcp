@@ -66,6 +66,14 @@ Prompts and a worked example for these are in [`skills/image-prompting/SKILL.md`
 
 ---
 
+## Prerequisites
+
+- **Node.js ≥ 18** (`node -v`)
+- **~$5 USDC** on Base or Solana (the server auto-creates a wallet on first run; see [Fund your wallet](#fund-your-wallet))
+- **An MCP client**: Claude Code, Claude Desktop, Cursor, Windsurf, or ChatGPT Desktop
+
+---
+
 ## Install
 
 **Claude Code (recommended)**
@@ -92,6 +100,23 @@ ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 ```bash
 claude mcp add blockrun -s user --transport http https://mcp.blockrun.ai/mcp
 ```
+
+**Cursor** — add to `~/.cursor/mcp.json` (macOS / Linux) or `%APPDATA%\Cursor\mcp.json` (Windows):
+```json
+{
+  "mcpServers": {
+    "blockrun": {
+      "command": "npx",
+      "args": ["-y", "@blockrun/mcp@latest"]
+    }
+  }
+}
+```
+
+**Windsurf** — same JSON, in:
+- macOS: `~/.codeium/windsurf/mcp_config.json`
+- Linux: `~/.config/.codeium/windsurf/mcp_config.json`
+- Windows: `%APPDATA%\Codeium\windsurf\mcp_config.json`
 
 ---
 
@@ -128,6 +153,49 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 
 ---
 
+## Tips for effective LLMs
+
+> **For LLMs and agents invoking BlockRun MCP tools:**
+
+- **CRITICAL: When any `blockrun_*` tool returns a payment / balance / 402 error, call `blockrun_wallet` *first* to check status, then `action:"setup"` to get funding instructions.** Don't retry the failing tool blindly — the wallet is empty.
+- **CRITICAL: For `blockrun_markets` and `blockrun_surf`, the 80+ endpoint catalog lives in `skills/markets/SKILL.md` and `skills/surf/SKILL.md`, NOT in the tool description.** Browse the skill before guessing endpoint paths.
+- **CRITICAL: `blockrun_chat routing:"smart"` (ClawRouter) only works on Base wallets.** On Solana, pass `mode:` or `model:` to pick a model directly.
+- **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures or client-side timeouts do NOT charge. Don't retry-loop them — they may take 60–180s.
+- **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`. Pass `agent_id:"X"` to every downstream `blockrun_*` call — the child is auto-blocked when the budget hits zero.
+- **Free tier first for drafts**: `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto / FX / commodity), and `blockrun_models` are all $0. Use them to scaffold before paying for premium models.
+
+---
+
+## Key Use Cases
+
+What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP is installed:
+
+1. **Price reads / market data**
+   > *"What's BTC trading at? Compare with last week's average."* → `blockrun_price` (free) or `blockrun_surf` path:`market/price`
+
+2. **Prediction-market consensus**
+   > *"What's Polymarket's odds for the next Fed rate decision?"* → `blockrun_markets` path:`polymarket/events` + filter
+
+3. **On-chain forensics**
+   > *"This wallet (0xabc...) — what's it labeled as? What does it hold? When did it whale up?"* → `blockrun_surf` paths:`wallet/labels/batch`, `wallet/detail`, `wallet/net-worth`
+
+4. **Cited research with sources**
+   > *"Find the 5 most-cited papers on speculative decoding from the last 90 days. Summarize the dominant approach."* → `blockrun_exa` action:`search` then `contents`
+
+5. **Image generation with on-image text**
+   > *"Generate a poster announcing GPT-5.5 on BlockRun, retro-futuristic, with the headline 'NOW LIVE'."* → `blockrun_image` + the `image-prompting` skill 5-section framework
+
+6. **Voice phone-out**
+   > *"Call +1-415-555-... and confirm the appointment on Friday at 3pm."* → `blockrun_phone` action:`voice_call`, then poll `voice_status`
+
+7. **Multi-agent research with budget cap**
+   > *"Spawn 3 research agents on competing L1 narratives. Cap each at $0.50."* → `blockrun_wallet delegate × 3` → children call `blockrun_chat` + `blockrun_exa` with their `agent_id`
+
+8. **Cross-chain SQL forensics**
+   > *"Top 10 tokens by DEX volume on Base in the last 24h."* → `blockrun_surf` path:`onchain/sql`, body: `{ sql: "SELECT..." }`
+
+---
+
 ## Why not just use the APIs directly?
 
 | | Direct APIs | BlockRun |
@@ -142,15 +210,71 @@ One wallet. All sources. No dashboards.
 
 ---
 
+## When NOT to use BlockRun MCP
+
+BlockRun shines when you want **unified billing + many sources + LLM-readable errors**. It is not the right fit for:
+
+- **High-volume single-API workloads (≥10k calls/day to one source).** Direct subscriptions amortize better past the break-even point — Polymarket's free public API plus your own caching beats $0.001 × 10k/day if you don't need cross-source aggregation.
+- **Compliance-sensitive flows that need a fiat invoice / audit trail.** BlockRun settles in USDC; receipts are on-chain (Basescan / Solscan) but are not tax invoices. For enterprise procurement, contract directly with the upstream provider.
+- **Latency-critical sub-100ms reads.** Each x402 call adds ~200–500ms of payment-signing + settlement overhead vs. a direct authenticated request. For HFT-style flows, run your own infra.
+- **You only need one source forever.** If you'll only ever call Polymarket, or only ever Exa, save the indirection — sign up upstream and skip the wallet.
+
+Use BlockRun when you want pay-per-call for *exploration*, *aggregation*, or *agent-driven* workloads where you can't predict which source you'll reach for next.
+
+---
+
 ## Multi-agent budget delegation
 
 Delegate a spending budget to a child agent with `agent_id`. The child is auto-blocked when the budget runs out — useful for autonomous agents that shouldn't run up unbounded costs.
 
 ---
 
+## Troubleshooting
+
+- **`Insufficient balance` / HTTP 402 after retry** → Run `blockrun_wallet action:"setup"`. Send USDC on Base (or Solana — see [Environment Variables](#environment-variables)).
+- **`Smart routing (ClawRouter) is not available on Solana`** → Pass `model:` or `mode:` explicitly to `blockrun_chat`, or switch back to Base by unsetting `SOLANA_WALLET_KEY` and removing `~/.blockrun/.solana-session`.
+- **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥18). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above.
+- **`fetch failed` / timeout when checking wallet balance** → Base RPC transient outage. The tool already falls through 3 public RPCs; retry after 30s. Persistent failures usually = local proxy / firewall blocking outbound RPC.
+- **`ENOENT: ~/.blockrun/.session`** → Expected on first run. The server auto-creates the wallet; check stderr for the `WALLET_CREATED` line confirming the address.
+- **`Video generation timed out` (5-min cap)** → Upstream Seedance / xAI queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model (`bytedance/seedance-1.5-pro`).
+- **`Music generation timed out` (200s cap)** → Same pattern. **No charge**. Retry; if it persists, the upstream model is rate-limited — try off-peak.
+
+---
+
+## Environment Variables
+
+| Variable / File | Default | Effect |
+|---|---|---|
+| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x...). File exists → use Base. |
+| `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana. |
+| `SOLANA_WALLET_KEY` | unset | Env-var override of `.solana-session`. Set → use Solana. |
+
+Chain selection priority (see `src/utils/wallet.ts:24`):
+
+1. `SOLANA_WALLET_KEY` env var present → Solana
+2. `~/.blockrun/.solana-session` exists → Solana
+3. Otherwise → Base (`~/.blockrun/.session` auto-created)
+
+**Switching chains:**
+
+- Base → Solana: `export SOLANA_WALLET_KEY=...`, or `echo "<secret>" > ~/.blockrun/.solana-session`
+- Solana → Base: `unset SOLANA_WALLET_KEY && rm ~/.blockrun/.solana-session` (the existing `.session` is reused, so it's the same Base wallet)
+
+The server also runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` version exists. Upgrade by re-running the install command — no manual `npm update` needed.
+
+---
+
 ## How it works
 
-Pay-per-call via [x402](https://x402.org) micropayments in USDC on Base. Your wallet lives at `~/.blockrun/.session`. Private key never leaves your machine.
+Pay-per-call via [x402](https://x402.org) micropayments in USDC. Your wallet lives at `~/.blockrun/.session` (Base) or `~/.blockrun/.solana-session` (Solana). The private key never leaves your machine.
+
+---
+
+## Contributing
+
+PRs welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, the tool-vs-skill design rule, and how to add a new partner API.
+
+Issues: [github.com/blockrunai/blockrun-mcp/issues](https://github.com/blockrunai/blockrun-mcp/issues)
 
 ---
 
