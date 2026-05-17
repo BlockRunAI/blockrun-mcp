@@ -118,6 +118,7 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform match + search | $0.001–0.005/query |
+| `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX market data, on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, Polymarket + Kalshi side-by-side, social mindshare, news, search, Surf-1.5 chat with citations | $0.001–0.02/call |
 | `blockrun_x` | X/Twitter — profiles, tweets, followers, mentions, search (AttentionVC) | per call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + news with citations | ~$0.025 per source |
@@ -133,6 +134,7 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 |---|---|---|
 | Exa | Sign up, $20/mo minimum | $0.01/call, no subscription |
 | Polymarket | Undocumented, rate-limited | $0.001/call, clean JSON |
+| Surf (asksurf.ai) | Account + monthly plan | $0.001/call, no Surf account, 84 endpoints |
 | Twitter/X API | $100–$5000/month | $0.03/page, no approval |
 | Multiple sources | 4 accounts, 4 API keys, 4 billing pages | 1 wallet |
 

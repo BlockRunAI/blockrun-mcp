@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.14.0
+
+- **`blockrun_surf` — unified crypto data via Surf (asksurf.ai), 84 endpoints behind one tool.** Path-based passthrough mirrors `blockrun_markets`; adding new Surf endpoints no longer requires an MCP release.
+  - CEX market data (16 exchanges), on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, Polymarket + Kalshi side-by-side, social mindshare / CT intel, news, unified search, Surf-1.5 chat with citations
+  - Tier 1 $0.001 / Tier 2 $0.005 / Tier 3 $0.02 — settles directly to Surf's Base treasury, no Surf account required from the caller
+  - Tool description ≤ 20 lines; full 84-endpoint catalog moved to the new `surf` skill
+- **`surf` skill.** Quick Decision Table covering ~50 most-reached endpoints, 7 worked examples (price reads, ClickHouse SQL, wallet-labels triage, PM comparison, Surf-1.5 chat with citations, social mindshare, macro stack), method-routing rule (`body` ⇒ POST, else GET), full catalog organized by category. 26 triggers cover the long tail (`on-chain sql`, `wallet labels`, `mindshare`, `etf flows`, `tokenomics unlock`, ...) so the skill fires without users naming "Surf" explicitly.
+- **Marketplace claim → reality.** `/marketplace/surf` page (line 338) previously advertised `blockrun_surf`; the tool did not exist. Now it does.
+
 ## 0.13.0
 
 - **`blockrun_markets` tool description rewritten for Predexon v2.** All v2 endpoints went live in production on 2026-05-07; the tool spec was missing them and three previously-listed wallet endpoints had wrong paths. The generic `path`-based passthrough was already routing correctly, but agents couldn't discover the new routes from the description.
