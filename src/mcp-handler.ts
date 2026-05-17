@@ -14,7 +14,6 @@ import { registerSearchTool } from "./tools/search.js";
 import { registerExaTool } from "./tools/exa.js";
 import { registerMarketsTool } from "./tools/markets.js";
 import { registerPriceTool } from "./tools/price.js";
-import { registerTwitterTool } from "./tools/twitter.js";
 import { registerDexTool } from "./tools/dex.js";
 import { registerModalTool } from "./tools/modal.js";
 import { registerPhoneTool } from "./tools/phone.js";
@@ -34,7 +33,6 @@ export function initializeMcpServer(server: McpServer): void {
   registerExaTool(server);
   registerMarketsTool(server);
   registerPriceTool(server);
-  registerTwitterTool(server);
   registerDexTool(server);
   registerModalTool(server);
   registerPhoneTool(server);

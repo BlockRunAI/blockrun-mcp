@@ -20,19 +20,32 @@ triggers:
 
 Neural web search via BlockRun. Understands meaning, not keywords. Four distinct actions for different research modes.
 
+## How to Call from MCP
+
+As of v0.14.1 the `blockrun_exa` tool is path-based. Pass the endpoint name as `path` and the request as `body`:
+
+```ts
+blockrun_exa({ path: "search",       body: { query: "AI agent frameworks 2026", numResults: 10 } })
+blockrun_exa({ path: "answer",       body: { query: "What is speculative decoding?" } })
+blockrun_exa({ path: "contents",     body: { urls: ["https://example.com/a", "https://example.com/b"] } })
+blockrun_exa({ path: "find-similar", body: { url: "https://arxiv.org/abs/2401.12345", numResults: 5 } })
+```
+
 ## Quick Decision Table
 
-| User wants... | Action | Cost |
-|--------------|--------|------|
-| Relevant URLs on a topic | `search` | $0.01/call |
-| Cited answer to a question | `answer` | $0.01/call |
-| Full text of URLs | `contents` | $0.002/URL |
-| Pages like a given URL | `similar` | $0.01/call |
-| Recent news | `search` + `category="news"` | $0.01/call |
-| Academic papers | `search` + `category="research paper"` | $0.01/call |
-| Company info | `search` + `category="company"` | $0.01/call |
+| User wants... | Path | Body | Cost |
+|--------------|------|------|------|
+| Relevant URLs on a topic | `search` | `{ query, numResults?, category? }` | $0.01/call |
+| Cited answer to a question | `answer` | `{ query }` | $0.01/call |
+| Full text of URLs | `contents` | `{ urls: [...] }` | $0.002/URL |
+| Pages like a given URL | `find-similar` | `{ url, numResults? }` | $0.01/call |
+| Recent news | `search` + `category: "news"` | – | $0.01/call |
+| Academic papers | `search` + `category: "research paper"` | – | $0.01/call |
+| Company info | `search` + `category: "company"` | – | $0.01/call |
 
-## Instructions
+Valid `category` values for `search`: `"news"`, `"research paper"`, `"company"`, `"tweet"`, `"github"`, `"pdf"`.
+
+## Python SDK Instructions
 
 ### 1. Initialize (Python SDK)
 

@@ -1,46 +1,49 @@
 // src/tools/search.ts
+//
+// Grok Live Search — real-time web, X/Twitter, and news search with AI-summarized
+// results and citations. Path-based passthrough (one endpoint today, future-proof
+// for additional surfaces). Sources, pagination, dates documented in the search
+// skill, not the tool description.
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../utils/wallet.js";
-import { formatError } from "../utils/errors.js";
+import { formatError, extractErrorMessage } from "../utils/errors.js";
+
+type RawClient = {
+  getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
+  requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
+};
 
 export function registerSearchTool(server: McpServer): void {
   server.registerTool(
     "blockrun_search",
     {
-      description: `Real-time web, X/Twitter, and news search with AI-summarized results and citations.
+      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. ~$0.025 per source.
 
-Sources: web, x (X/Twitter), news — defaults to all three.
-Pricing: ~$0.01/search
+Common shape:
+- body: { query: "...", sources: ["web","x","news"], maxResults: 10, fromDate: "YYYY-MM-DD", toDate: "YYYY-MM-DD" }
 
-Returns a summary with cited sources.`,
+\`sources\` accepts any subset of ["web","x","news"] (defaults to all three). For tweet-only searches, use ["x"].
+
+Full request shape + worked examples in the \`search\` skill (\`skills/search/SKILL.md\`).`,
       inputSchema: {
-        query: z.string().describe("Search query"),
-        sources: z.array(z.enum(["web", "x", "news"])).optional().describe("Sources to search (default: web + x + news)"),
-        max_results: z.number().optional().default(10).describe("Max results per source (1-20)"),
-        from_date: z.string().optional().describe("Start date filter (YYYY-MM-DD)"),
-        to_date: z.string().optional().describe("End date filter (YYYY-MM-DD)"),
+        path: z.string().optional().default("").describe("Endpoint sub-path under /v1/search/ (default empty = root /v1/search). Reserved for future surfaces."),
+        body: z.any().optional().describe("Request body. At minimum { query: '...' }. Sent as POST."),
       },
     },
-    async ({ query, sources, max_results, from_date, to_date }) => {
+    async ({ path, body }) => {
       try {
-        const llm = getClient();
-        const result = await llm.search(query, {
-          sources,
-          maxResults: max_results,
-          fromDate: from_date,
-          toDate: to_date,
-        });
+        const client = getClient() as unknown as RawClient;
+        const cleanPath = (path ?? "").replace(/^\/+/, "").replace(/^v1\/search\/?/, "");
+        const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
+        const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: result as unknown as Record<string, unknown>,
+          structuredContent: result as Record<string, unknown>,
         };
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: "text", text: formatError(errMsg) }],
-          isError: true,
-        };
+        return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
       }
     }
   );

@@ -144,7 +144,6 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform match + search | $0.001–0.005/query |
 | `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX market data, on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, Polymarket + Kalshi side-by-side, social mindshare, news, search, Surf-1.5 chat with citations | $0.001–0.02/call |
-| `blockrun_x` | X/Twitter — profiles, tweets, followers, mentions, search (AttentionVC) | per call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + news with citations | ~$0.025 per source |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
@@ -186,7 +185,7 @@ What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP i
    > *"Generate a poster announcing GPT-5.5 on BlockRun, retro-futuristic, with the headline 'NOW LIVE'."* → `blockrun_image` + the `image-prompting` skill 5-section framework
 
 6. **Voice phone-out**
-   > *"Call +1-415-555-... and confirm the appointment on Friday at 3pm."* → `blockrun_phone` action:`voice_call`, then poll `voice_status`
+   > *"Call +1-415-555-... and confirm the appointment on Friday at 3pm."* → `blockrun_phone` path:`voice/call`, body: `{ to, task, from }` (provision `from` first via `phone/numbers/buy`), then poll `voice/call/{call_id}`
 
 7. **Multi-agent research with budget cap**
    > *"Spawn 3 research agents on competing L1 narratives. Cap each at $0.50."* → `blockrun_wallet delegate × 3` → children call `blockrun_chat` + `blockrun_exa` with their `agent_id`
@@ -203,8 +202,7 @@ What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP i
 | Exa | Sign up, $20/mo minimum | $0.01/call, no subscription |
 | Polymarket | Undocumented, rate-limited | $0.001/call, clean JSON |
 | Surf (asksurf.ai) | Account + monthly plan | $0.001/call, no Surf account, 84 endpoints |
-| Twitter/X API | $100–$5000/month | $0.03/page, no approval |
-| Multiple sources | 4 accounts, 4 API keys, 4 billing pages | 1 wallet |
+| Multiple sources | 3 accounts, 3 API keys, 3 billing pages | 1 wallet |
 
 One wallet. All sources. No dashboards.
 

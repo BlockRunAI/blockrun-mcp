@@ -13,7 +13,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getClient } from "../utils/wallet.js";
-import { formatError } from "../utils/errors.js";
+import { formatError, extractErrorMessage } from "../utils/errors.js";
 
 type SurfClient = {
   getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
@@ -64,9 +64,8 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
           structuredContent: result as Record<string, unknown>,
         };
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: formatError(errMsg) }],
+          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
           isError: true,
         };
       }
