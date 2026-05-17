@@ -1,5 +1,7 @@
 // src/utils/wallet.ts
 import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import {
   LLMClient,
   ImageClient,
@@ -15,17 +17,45 @@ import {
 
 export type ApiClient = LLMClient | SolanaLLMClient;
 
+const BLOCKRUN_DIR = path.join(os.homedir(), ".blockrun");
+const CHAIN_PREFERENCE_FILES = [
+  path.join(BLOCKRUN_DIR, ".chain"),
+  path.join(BLOCKRUN_DIR, "payment-chain"),
+];
+
 let _evmClient: LLMClient | null = null;
 let _imageClient: ImageClient | null = null;
 let _priceClient: PriceClient | null = null;
 let _evmWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
 let _solanaClient: SolanaLLMClient | null = null;
 
+function readChainPreference(): "base" | "solana" | null {
+  for (const file of CHAIN_PREFERENCE_FILES) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const value = fs.readFileSync(file, "utf-8").trim().toLowerCase();
+      if (value === "base" || value === "solana") return value;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 export function getChain(): "base" | "solana" {
+  // 1. Explicit user preference (~/.blockrun/.chain) wins over everything else.
+  //    Without this, the mere existence of a stale .solana-session file pins
+  //    the server to Solana even when the user has explicitly switched to Base.
+  const preferred = readChainPreference();
+  if (preferred) return preferred;
+
+  // 2. SOLANA_WALLET_KEY env var implies the operator wants Solana.
   if (process.env.SOLANA_WALLET_KEY) return "solana";
+
+  // 3. Fall back to wallet-file autodetection for first-run users who never
+  //    set a chain preference but already have a Solana session on disk.
   try {
     if (fs.existsSync(SOLANA_WALLET_FILE_PATH)) return "solana";
   } catch { /* ignore */ }
+
   return "base";
 }
 
