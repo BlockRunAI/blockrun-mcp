@@ -6,7 +6,7 @@ All notable changes to BlockRun MCP will be documented in this file.
 
 - **fix(wallet): respect `~/.blockrun/.chain` over stale Solana session.** Previously, the mere existence of `~/.blockrun/.solana-session` pinned the MCP to Solana — even when the user had explicitly switched chains by writing `base` to `~/.blockrun/.chain`. Voice calls and other paid actions would 400 on a wallet/chain mismatch with no obvious recovery short of deleting session files. New precedence in `getChain()`: explicit `.chain` (or `payment-chain` alias) wins, then `SOLANA_WALLET_KEY` env var, then `.solana-session` autodetect as a first-run fallback only.
 
-## 0.14.2 (planned, unreleased)
+## 0.14.2
 
 - **BREAKING — `blockrun_x` removed.** AttentionVC partner integration retired. Callers depending on this tool will get tool-not-found and should switch to `blockrun_surf` (`social/user`, `social/tweets`, `social/tweet/replies`, `social/mindshare`) or `blockrun_search` with `sources: ["x"]`.
 - **BREAKING — `blockrun_phone`, `blockrun_exa`, `blockrun_modal`, `blockrun_search` switched to path-based passthrough** matching the `blockrun_surf` / `blockrun_markets` pattern. Old shape `{ action, ... }` no longer accepted; new shape is `{ path, body }`.
