@@ -1,5 +1,38 @@
 import { getChain } from "./wallet.js";
 
+/**
+ * Pulls a useful message out of any thrown value. For SDK APIError, surfaces
+ * the upstream response body (which carries `error`, `message`, and `hint`
+ * fields the gateway returns on 400/422/5xx) — otherwise just the bare
+ * `API error: 400` from the SDK class swallows the helpful detail.
+ */
+export function extractErrorMessage(err: unknown): string {
+  if (!err || typeof err !== "object") return String(err);
+  const e = err as { message?: unknown; response?: unknown; statusCode?: unknown };
+  const base = typeof e.message === "string" ? e.message : String(err);
+  if (e.response === undefined || e.response === null) return base;
+  try {
+    const body = e.response;
+    if (typeof body === "string") return body.trim() ? `${base} — ${body}` : base;
+    if (typeof body === "object") {
+      const b = body as Record<string, unknown>;
+      // Common gateway error shape: { error, message, hint, missing_params? }
+      const parts: string[] = [];
+      if (typeof b.message === "string") parts.push(b.message);
+      if (typeof b.hint === "string") parts.push(`Hint: ${b.hint}`);
+      if (Array.isArray(b.missing_params) && b.missing_params.length) {
+        parts.push(`Missing: ${b.missing_params.join(", ")}`);
+      }
+      if (parts.length === 0) {
+        // No structured fields — dump the raw body
+        parts.push(JSON.stringify(b));
+      }
+      return `${base}\n${parts.join("\n")}`;
+    }
+  } catch { /* fall through */ }
+  return base;
+}
+
 export function formatError(message: string): string {
   const msgLower = message.toLowerCase();
 
