@@ -1,8 +1,10 @@
 // src/tools/music.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getOrCreateWalletKey } from "../utils/wallet.js";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
+import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -12,8 +14,9 @@ import {
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
 const MUSIC_TIMEOUT = 200_000; // 200s — music gen takes 1-3 min
+const MUSIC_COST = 0.1575;
 
-export function registerMusicTool(server: McpServer): void {
+export function registerMusicTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_music",
     {
@@ -29,13 +32,29 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
         instrumental: z.boolean().optional().default(true).describe("Generate without vocals (default: true)"),
         lyrics: z.string().optional().describe("Custom lyrics. Cannot be used with instrumental: true"),
         model: z.enum(["minimax/music-2.5+", "minimax/music-2.5"]).optional().default("minimax/music-2.5+").describe("Music model to use"),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, instrumental, lyrics, model }) => {
+    async ({ prompt, instrumental, lyrics, model, agent_id }) => {
       try {
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_music currently settles on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
+
         if (instrumental && lyrics?.trim()) {
           return {
             content: [{ type: "text", text: formatError("Cannot specify lyrics when instrumental is true") }],
+            isError: true,
+          };
+        }
+
+        const budgetCheck = checkBudget(budget, agent_id, MUSIC_COST);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
@@ -107,6 +126,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
         if (!track?.url) throw new Error("No track URL in response");
 
         const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
+        recordSpending(budget, MUSIC_COST, agent_id);
 
         const lines = [
           `🎵 Track ready!`,

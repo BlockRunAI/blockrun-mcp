@@ -230,7 +230,7 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 ## Troubleshooting
 
 - **`Insufficient balance` / HTTP 402 after retry** → Run `blockrun_wallet action:"setup"`. Send USDC on Base (or Solana — see [Environment Variables](#environment-variables)).
-- **`Smart routing (ClawRouter) is not available on Solana`** → Pass `model:` or `mode:` explicitly to `blockrun_chat`, or switch back to Base by unsetting `SOLANA_WALLET_KEY` and removing `~/.blockrun/.solana-session`.
+- **`Smart routing (ClawRouter) is not available on Solana`** → Pass `model:` or `mode:` explicitly to `blockrun_chat`, or switch back to Base with `echo base > ~/.blockrun/.chain`.
 - **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥18). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above.
 - **`fetch failed` / timeout when checking wallet balance** → Base RPC transient outage. The tool already falls through 3 public RPCs; retry after 30s. Persistent failures usually = local proxy / firewall blocking outbound RPC.
 - **`ENOENT: ~/.blockrun/.session`** → Expected on first run. The server auto-creates the wallet; check stderr for the `WALLET_CREATED` line confirming the address.
@@ -244,19 +244,23 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 | Variable / File | Default | Effect |
 |---|---|---|
 | `~/.blockrun/.session` | auto-created on first run | EVM private key (0x...). File exists → use Base. |
-| `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana. |
+| `~/.blockrun/.chain` | unset | Optional explicit chain preference: `base` or `solana`. |
+| `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env-var override of `.solana-session`. Set → use Solana. |
 
-Chain selection priority (see `src/utils/wallet.ts:24`):
+Chain selection priority (see `src/utils/wallet.ts`):
 
-1. `SOLANA_WALLET_KEY` env var present → Solana
-2. `~/.blockrun/.solana-session` exists → Solana
-3. Otherwise → Base (`~/.blockrun/.session` auto-created)
+1. `~/.blockrun/.chain` or `~/.blockrun/payment-chain` set to `base` or `solana` → explicit preference wins
+2. `SOLANA_WALLET_KEY` env var present → Solana
+3. `~/.blockrun/.solana-session` exists → Solana
+4. Otherwise → Base (`~/.blockrun/.session` auto-created)
 
 **Switching chains:**
 
-- Base → Solana: `export SOLANA_WALLET_KEY=...`, or `echo "<secret>" > ~/.blockrun/.solana-session`
-- Solana → Base: `unset SOLANA_WALLET_KEY && rm ~/.blockrun/.solana-session` (the existing `.session` is reused, so it's the same Base wallet)
+- Base → Solana: `echo solana > ~/.blockrun/.chain`, then set `SOLANA_WALLET_KEY` or create `~/.blockrun/.solana-session`
+- Solana → Base: `echo base > ~/.blockrun/.chain` (the existing `.session` is reused, so it's the same Base wallet)
+
+Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_video`, and paid stock `blockrun_price` calls. In Solana mode they fail before creating or charging a Base wallet.
 
 The server also runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` version exists. Upgrade by re-running the install command — no manual `npm update` needed.
 

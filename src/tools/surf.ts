@@ -12,15 +12,32 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
 
 type SurfClient = {
   getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-export function registerSurfTool(server: McpServer): void {
+function estimateSurfCost(path: string): number {
+  const p = path.toLowerCase();
+  if (p.includes("onchain/sql") || p.includes("onchain/query") || p.includes("chat/completions")) return 0.02;
+  if (
+    p.includes("search/") ||
+    p.includes("wallet/detail") ||
+    p.includes("social/mindshare") ||
+    p.includes("orderbook") ||
+    p.includes("candles")
+  ) {
+    return 0.005;
+  }
+  return 0.001;
+}
+
+export function registerSurfTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_surf",
     {
@@ -49,16 +66,27 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
         path: z.string().describe("Endpoint path under /v1/surf/, e.g. 'market/price', 'prediction-market/polymarket/ranking', 'wallet/detail', 'onchain/sql', 'chat/completions'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET endpoints, e.g. { symbol: 'BTC' } or { address: '0x...', chain: 'ethereum' }"),
         body: z.any().optional().describe("JSON body for POST endpoints. Provide for: onchain/query, onchain/sql, chat/completions. When set, the call is sent as POST; otherwise GET with params."),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ path, params, body }) => {
+    async ({ path, params, body, agent_id }) => {
       try {
-        const client = getClient() as unknown as SurfClient;
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/surf\//, "").replace(/^api\/v1\/surf\//, "");
+        const estimatedCost = estimateSurfCost(cleanPath);
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
+        const client = getClient() as unknown as SurfClient;
         const endpoint = `/v1/surf/${cleanPath}`;
         const result = body !== undefined
           ? await client.requestWithPaymentRaw(endpoint, body)
           : await client.getWithPaymentRaw(endpoint, params);
+        recordSpending(budget, estimatedCost, agent_id);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

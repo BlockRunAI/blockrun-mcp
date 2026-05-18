@@ -2,10 +2,25 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { getImageClient } from "../utils/wallet.js";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
+import { getChain, getImageClient } from "../utils/wallet.js";
 
-export function registerImageTool(server: McpServer): void {
+const GENERATE_MODEL_COST: Record<string, number> = {
+  "zai/cogview-4": 0.015,
+  "xai/grok-imagine-image": 0.02,
+  "xai/grok-imagine-image-pro": 0.07,
+  "openai/gpt-image-1": 0.04,
+  "openai/gpt-image-2": 0.12,
+  "openai/dall-e-3": 0.08,
+  "google/nano-banana": 0.05,
+  "together/flux-schnell": 0.003,
+};
+
+const EDIT_MODELS = new Set(["openai/gpt-image-1", "openai/gpt-image-2"]);
+
+export function registerImageTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_image",
     {
@@ -31,11 +46,18 @@ Edit models: openai/gpt-image-1, openai/gpt-image-2 (default for edits)`,
         image: z.string().optional().describe("Source image for edit action: base64-encoded image or URL"),
         size: z.enum(["1024x1024", "1792x1024", "1024x1792"]).optional().default("1024x1024"),
         quality: z.enum(["standard", "hd"]).optional().default("standard"),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, action, model, image, size, quality }) => {
+    async ({ prompt, action, model, image, size, quality, agent_id }) => {
       try {
-        const imgClient = getImageClient();
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_image currently settles on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
+
         let response;
 
         if (action === "edit") {
@@ -45,16 +67,42 @@ Edit models: openai/gpt-image-1, openai/gpt-image-2 (default for edits)`,
               isError: true,
             };
           }
-          response = await imgClient.edit(prompt, image, {
-            model: (model || "openai/gpt-image-2") as "openai/gpt-image-1" | "openai/gpt-image-2",
+          const selectedModel = model || "openai/gpt-image-2";
+          if (!EDIT_MODELS.has(selectedModel)) {
+            return {
+              content: [{ type: "text", text: formatError("Image edits support only openai/gpt-image-1 or openai/gpt-image-2") }],
+              isError: true,
+            };
+          }
+          const estimatedCost = selectedModel === "openai/gpt-image-2" ? 0.12 : 0.04;
+          const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+          if (!budgetCheck.allowed) {
+            return {
+              content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+              isError: true,
+            };
+          }
+          response = await getImageClient().edit(prompt, image, {
+            model: selectedModel as "openai/gpt-image-1" | "openai/gpt-image-2",
             size: size as "1024x1024" | "1792x1024" | "1024x1792",
           });
+          recordSpending(budget, estimatedCost, agent_id);
         } else {
-          response = await imgClient.generate(prompt, {
-            model: (model || "openai/dall-e-3") as "openai/dall-e-3" | "together/flux-schnell" | "google/nano-banana" | "zai/cogview-4" | "openai/gpt-image-1" | "openai/gpt-image-2" | "xai/grok-imagine-image" | "xai/grok-imagine-image-pro",
+          const selectedModel = model || "openai/dall-e-3";
+          const estimatedCost = GENERATE_MODEL_COST[selectedModel] ?? 0.05;
+          const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+          if (!budgetCheck.allowed) {
+            return {
+              content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+              isError: true,
+            };
+          }
+          response = await getImageClient().generate(prompt, {
+            model: selectedModel as "openai/dall-e-3" | "together/flux-schnell" | "google/nano-banana" | "zai/cogview-4" | "openai/gpt-image-1" | "openai/gpt-image-2" | "xai/grok-imagine-image" | "xai/grok-imagine-image-pro",
             size: size as "1024x1024" | "1792x1024" | "1024x1792",
             quality: quality as "standard" | "hd",
           });
+          recordSpending(budget, estimatedCost, agent_id);
         }
 
         const imageUrl = response.data?.[0]?.url;
@@ -67,8 +115,8 @@ Edit models: openai/gpt-image-1, openai/gpt-image-2 (default for edits)`,
         }
 
         return {
-          content: [{ type: "text", text: `Image: ${imageUrl}\nPrompt: ${prompt}\nModel: ${model}` }],
-          structuredContent: { url: imageUrl, prompt, model: model! },
+          content: [{ type: "text", text: `Image: ${imageUrl}\nPrompt: ${prompt}\nModel: ${action === "edit" ? (model || "openai/gpt-image-2") : (model || "openai/dall-e-3")}` }],
+          structuredContent: { url: imageUrl, prompt, model: action === "edit" ? (model || "openai/gpt-image-2") : (model || "openai/dall-e-3") },
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);

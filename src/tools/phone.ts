@@ -7,15 +7,28 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
 
 type RawClient = {
   getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-export function registerPhoneTool(server: McpServer): void {
+function estimatePhoneCost(path: string, hasBody: boolean): number {
+  if (!hasBody && path.startsWith("voice/call/")) return 0;
+  if (path === "phone/numbers/release") return 0;
+  if (path === "phone/lookup") return 0.01;
+  if (path === "phone/lookup/fraud") return 0.05;
+  if (path === "phone/numbers/buy" || path === "phone/numbers/renew") return 5;
+  if (path === "phone/numbers/list") return 0.001;
+  if (path === "voice/call") return 0.54;
+  return hasBody ? 0.001 : 0;
+}
+
+export function registerPhoneTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_phone",
     {
@@ -39,16 +52,27 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
       inputSchema: {
         path: z.string().describe("Endpoint after /v1/. Use 'phone/...' for lookup + number ops, 'voice/call' for outbound AI calls, 'voice/call/{id}' (no body) to poll status."),
         body: z.any().optional().describe("JSON body. Sent as POST. Omit for the free GET poll (voice/call/{call_id})."),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ path, body }) => {
+    async ({ path, body, agent_id }) => {
       try {
-        const client = getClient() as unknown as RawClient;
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\//, "");
+        const estimatedCost = estimatePhoneCost(cleanPath, body !== undefined);
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
+        const client = getClient() as unknown as RawClient;
         const endpoint = `/v1/${cleanPath}`;
         const result = body !== undefined
           ? await client.requestWithPaymentRaw(endpoint, body)
           : await client.getWithPaymentRaw(endpoint);
+        if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

@@ -1,10 +1,16 @@
 // src/tools/models.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Model } from "@blockrun/llm";
+import type { ImageModel, Model } from "@blockrun/llm";
 import { getClient } from "../utils/wallet.js";
 
-export function registerModelsTool(server: McpServer, modelCache: { models: Model[] | null }): void {
+type ModelEntry = Model | ImageModel;
+
+function getModelType(model: ModelEntry): "llm" | "image" {
+  return model.type === "image" || "pricePerImage" in model ? "image" : "llm";
+}
+
+export function registerModelsTool(server: McpServer, modelCache: { models: ModelEntry[] | null }): void {
   server.registerTool(
     "blockrun_models",
     {
@@ -18,7 +24,9 @@ export function registerModelsTool(server: McpServer, modelCache: { models: Mode
       const llm = getClient();
 
       if (!modelCache.models) {
-        modelCache.models = await llm.listModels();
+        modelCache.models = "listAllModels" in llm
+          ? await llm.listAllModels()
+          : await llm.listModels();
         setTimeout(() => { modelCache.models = null; }, 5 * 60 * 1000);
       }
 
@@ -31,22 +39,30 @@ export function registerModelsTool(server: McpServer, modelCache: { models: Mode
 
       if (category && category !== "all") {
         if (category === "image") {
-          models = models.filter(m => m.id.includes("dall-e") || m.id.includes("flux") || m.id.includes("banana"));
+          models = models.filter(m => getModelType(m) === "image");
         } else if (category === "embedding") {
           models = models.filter(m => m.id.includes("embed"));
         } else {
           // Use categories from API for chat/reasoning filtering
-          models = models.filter(m => m.categories?.includes(category));
+          models = models.filter(m => "categories" in m && m.categories?.includes(category));
         }
       }
 
       const lines = models.map(m => {
-        const input = m.inputPrice ? `$${m.inputPrice}/M in` : "";
-        const output = m.outputPrice ? `$${m.outputPrice}/M out` : "";
+        if (getModelType(m) === "image") {
+          const image = m as ImageModel;
+          const pricing = image.pricePerImage ? `$${image.pricePerImage}/image` : "";
+          const sizes = image.supportedSizes?.length ? ` | sizes: ${image.supportedSizes.join(", ")}` : "";
+          return `- ${image.id}${pricing ? ` (${pricing})` : ""}${sizes} [image]`;
+        }
+
+        const llmModel = m as Model;
+        const input = llmModel.inputPrice ? `$${llmModel.inputPrice}/M in` : "";
+        const output = llmModel.outputPrice ? `$${llmModel.outputPrice}/M out` : "";
         const pricing = [input, output].filter(Boolean).join(", ");
-        const ctx = m.contextWindow ? ` | ${Math.round(m.contextWindow / 1000)}K ctx` : "";
-        const cats = m.categories?.length ? ` [${m.categories.join(", ")}]` : "";
-        return `- ${m.id}${pricing ? ` (${pricing})` : ""}${ctx}${cats}`;
+        const ctx = llmModel.contextWindow ? ` | ${Math.round(llmModel.contextWindow / 1000)}K ctx` : "";
+        const cats = llmModel.categories?.length ? ` [${llmModel.categories.join(", ")}]` : "";
+        return `- ${llmModel.id}${pricing ? ` (${pricing})` : ""}${ctx}${cats}`;
       });
 
       return {

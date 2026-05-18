@@ -1,10 +1,27 @@
 // src/tools/markets.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
 
-export function registerMarketsTool(server: McpServer): void {
+function estimateMarketCost(path: string, body: unknown): number {
+  if (body !== undefined) return 0.005;
+  const p = path.toLowerCase();
+  if (
+    p.includes("wallet") ||
+    p.includes("smart") ||
+    p.includes("matching-markets") ||
+    p.includes("markets/search") ||
+    p.includes("binance/")
+  ) {
+    return 0.005;
+  }
+  return 0.001;
+}
+
+export function registerMarketsTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_markets",
     {
@@ -63,14 +80,25 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. { limit: '20', active: 'true' })"),
         body: z.any().optional().describe("JSON body for POST queries (triggers pmQuery — most endpoints are GET)"),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ path, params, body }) => {
+    async ({ path, params, body, agent_id }) => {
       try {
+        const estimatedCost = estimateMarketCost(path, body);
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
         const llm = getClient();
-        const result = body
+        const result = body !== undefined
           ? await llm.pmQuery(path, body)
           : await llm.pm(path, params);
+        recordSpending(budget, estimatedCost, agent_id);
 
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

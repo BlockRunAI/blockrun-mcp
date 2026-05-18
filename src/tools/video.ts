@@ -1,8 +1,10 @@
 // src/tools/video.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getOrCreateWalletKey } from "../utils/wallet.js";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
+import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -16,7 +18,21 @@ const BLOCKRUN_API = "https://blockrun.ai/api";
 const TOTAL_BUDGET_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
 
-export function registerVideoTool(server: McpServer): void {
+const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
+  "xai/grok-imagine-video": 0.05,
+  "bytedance/seedance-1.5-pro": 0.03,
+  "bytedance/seedance-2.0-fast": 0.15,
+  "bytedance/seedance-2.0": 0.30,
+};
+
+const VIDEO_DEFAULT_DURATION: Record<string, number> = {
+  "xai/grok-imagine-video": 8,
+  "bytedance/seedance-1.5-pro": 5,
+  "bytedance/seedance-2.0-fast": 5,
+  "bytedance/seedance-2.0": 5,
+};
+
+export function registerVideoTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_video",
     {
@@ -36,15 +52,34 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for (defaults to the model's default — 8s for xAI, 5s for Seedance; Seedance supports up to 10s)."),
         model: z.enum(["xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, image_url, duration_seconds, model }) => {
+    async ({ prompt, image_url, duration_seconds, model, agent_id }) => {
       try {
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_video currently settles on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
+
+        const selectedModel = model || "xai/grok-imagine-video";
+        const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;
+        const estimatedCost = (VIDEO_PRICE_PER_SECOND[selectedModel] ?? 0.05) * billedSeconds;
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
         const privateKey = getOrCreateWalletKey();
         const account = privateKeyToAccount(privateKey);
         const submitUrl = `${BLOCKRUN_API}/v1/videos/generations`;
 
-        const body: Record<string, unknown> = { model, prompt };
+        const body: Record<string, unknown> = { model: selectedModel, prompt };
         if (image_url) body.image_url = image_url;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
 
@@ -192,11 +227,12 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           `🎬 Video ready!`,
           `URL: ${completed.url}`,
           `Duration: ${completed.duration_seconds ? `${completed.duration_seconds}s` : "8s"}`,
-          `Model: ${completed.modelReturned || model}`,
+          `Model: ${completed.modelReturned || selectedModel}`,
           ...(completed.backed_up ? [`Backed up to BlockRun storage (URL is permanent)`] : completed.source_url ? [`Source URL: ${completed.source_url}`] : []),
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),
           ...(completed.txHash ? [`Tx: ${completed.txHash}`] : []),
         ];
+        recordSpending(budget, estimatedCost, agent_id);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
@@ -204,7 +240,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             url: completed.url,
             ...(completed.source_url ? { source_url: completed.source_url } : {}),
             duration_seconds: completed.duration_seconds,
-            model: completed.modelReturned || model,
+            model: completed.modelReturned || selectedModel,
             ...(completed.request_id ? { request_id: completed.request_id } : {}),
             ...(completed.backed_up !== undefined ? { backed_up: completed.backed_up } : {}),
             ...(completed.txHash ? { txHash: completed.txHash } : {}),

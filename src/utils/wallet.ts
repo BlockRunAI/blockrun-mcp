@@ -26,6 +26,7 @@ const CHAIN_PREFERENCE_FILES = [
 let _evmClient: LLMClient | null = null;
 let _imageClient: ImageClient | null = null;
 let _priceClient: PriceClient | null = null;
+let _freePriceClient: PriceClient | null = null;
 let _evmWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
 let _solanaClient: SolanaLLMClient | null = null;
 
@@ -97,7 +98,14 @@ export function getImageClient(): ImageClient {
   return _imageClient;
 }
 
-export function getPriceClient(): PriceClient {
+export function getPriceClient(requireWallet = true): PriceClient {
+  if (!requireWallet) {
+    if (!_freePriceClient) {
+      _freePriceClient = new PriceClient({ requireWallet: false });
+    }
+    return _freePriceClient;
+  }
+
   if (!_priceClient) {
     const privateKey = getOrCreateWalletKey();
     _priceClient = new PriceClient({ privateKey });

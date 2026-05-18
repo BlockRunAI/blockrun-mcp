@@ -6,15 +6,26 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { checkBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
 
 type RawClient = {
   getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-export function registerExaTool(server: McpServer): void {
+function estimateExaCost(path: string, body: unknown): number {
+  const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
+  if (cleanPath === "contents") {
+    const urls = body && typeof body === "object" ? (body as { urls?: unknown }).urls : undefined;
+    return 0.002 * (Array.isArray(urls) && urls.length > 0 ? urls.length : 1);
+  }
+  return 0.01;
+}
+
+export function registerExaTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_exa",
     {
@@ -32,14 +43,25 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
       inputSchema: {
         path: z.string().describe("Endpoint name under /v1/exa/, e.g. 'search', 'answer', 'contents', 'find-similar'"),
         body: z.any().optional().describe("JSON body for the call. Sent as POST. Required for all four endpoints."),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ path, body }) => {
+    async ({ path, body, agent_id }) => {
       try {
+        const estimatedCost = estimateExaCost(path, body);
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
         const client = getClient() as unknown as RawClient;
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
         const endpoint = `/v1/exa/${cleanPath}`;
         const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
+        recordSpending(budget, estimatedCost, agent_id);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

@@ -14,7 +14,9 @@ import type {
   BarResolution,
   MarketSession,
 } from "@blockrun/llm";
-import { getPriceClient } from "../utils/wallet.js";
+import { checkBudget, recordSpending } from "../utils/budget.js";
+import type { BudgetState } from "../types.js";
+import { getChain, getPriceClient } from "../utils/wallet.js";
 import { formatError } from "../utils/errors.js";
 
 const CATEGORY = z.enum(["crypto", "fx", "commodity", "usstock", "stocks"]);
@@ -26,7 +28,11 @@ const RESOLUTION = z.enum(["1", "5", "15", "60", "240", "D", "W", "M"]);
 const SESSION = z.enum(["pre", "post", "on"]);
 const ACTION = z.enum(["price", "history", "list"]);
 
-export function registerPriceTool(server: McpServer): void {
+function isPaidPriceCall(action: "price" | "history" | "list", category: string): boolean {
+  return action !== "list" && (category === "stocks" || category === "usstock");
+}
+
+export function registerPriceTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_price",
     {
@@ -57,12 +63,34 @@ Examples:
         from: z.number().optional().describe("History window start (unix seconds)."),
         to: z.number().optional().describe("History window end (unix seconds)."),
         query: z.string().optional().describe("Free-text filter for list."),
-        limit: z.number().optional().describe("Max items for list (default 100, max 2000)."),
+        limit: z.number().int().positive().max(2000).optional().describe("Max items for list (default 100, max 2000)."),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ action, category, symbol, market, session, resolution, from, to, query, limit }) => {
+    async ({ action, category, symbol, market, session, resolution, from, to, query, limit, agent_id }) => {
       try {
-        const priceClient = getPriceClient();
+        if (category === "stocks" && !market) {
+          throw new Error("market is required when category='stocks'");
+        }
+
+        const paid = isPaidPriceCall(action, category);
+        if (paid && getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("Paid stock price/history calls currently settle on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
+
+        const estimatedCost = paid ? 0.001 : 0;
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
+        const priceClient = getPriceClient(paid);
 
         if (action === "price") {
           if (!symbol) throw new Error("symbol is required for action='price'");
@@ -70,6 +98,7 @@ Examples:
             market: market as StockMarket | undefined,
             session: session as MarketSession | undefined,
           });
+          if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: result as unknown as Record<string, unknown>,
@@ -78,7 +107,7 @@ Examples:
 
         if (action === "history") {
           if (!symbol) throw new Error("symbol is required for action='history'");
-          if (!from) throw new Error("from (unix seconds) is required for action='history'");
+          if (from === undefined) throw new Error("from (unix seconds) is required for action='history'");
           const result = await priceClient.history(category as PriceCategory, symbol, {
             market: market as StockMarket | undefined,
             session: session as MarketSession | undefined,
@@ -86,6 +115,7 @@ Examples:
             from,
             to,
           });
+          if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: result as unknown as Record<string, unknown>,

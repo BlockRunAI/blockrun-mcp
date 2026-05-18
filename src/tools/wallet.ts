@@ -45,10 +45,6 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       },
     },
     async ({ action, budget_action, budget_amount, agent_id, agent_limit }) => {
-      const info = await getWalletInfo();
-      const address = info.address;
-      const chain = getChain();
-
       // Handle budget action
       if (action === "budget") {
         const budgetAct = budget_action || "check";
@@ -133,6 +129,10 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
           structuredContent: { global: { limit: budget.limit, spent: budget.spent, calls: budget.calls }, agents: agentRows },
         };
       }
+
+      const info = await getWalletInfo();
+      const address = info.address;
+      const chain = getChain();
 
       // Handle QR action
       if (action === "qr") {

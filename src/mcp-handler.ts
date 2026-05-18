@@ -1,6 +1,6 @@
 // src/mcp-handler.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Model } from "@blockrun/llm";
+import type { ImageModel, Model } from "@blockrun/llm";
 import type { BudgetState } from "./types.js";
 import { getClient, getWalletInfo } from "./utils/wallet.js";
 
@@ -20,23 +20,23 @@ import { registerPhoneTool } from "./tools/phone.js";
 import { registerSurfTool } from "./tools/surf.js";
 export function initializeMcpServer(server: McpServer): void {
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
-  const modelCache: { models: Model[] | null } = { models: null };
+  const modelCache: { models: Array<Model | ImageModel> | null } = { models: null };
 
   // Register all tools
   registerWalletTool(server, budget);
   registerChatTool(server, budget);
   registerModelsTool(server, modelCache);
-  registerImageTool(server);
-  registerMusicTool(server);
-  registerVideoTool(server);
-  registerSearchTool(server);
-  registerExaTool(server);
-  registerMarketsTool(server);
-  registerPriceTool(server);
+  registerImageTool(server, budget);
+  registerMusicTool(server, budget);
+  registerVideoTool(server, budget);
+  registerSearchTool(server, budget);
+  registerExaTool(server, budget);
+  registerMarketsTool(server, budget);
+  registerPriceTool(server, budget);
   registerDexTool(server);
-  registerModalTool(server);
-  registerPhoneTool(server);
-  registerSurfTool(server);
+  registerModalTool(server, budget);
+  registerPhoneTool(server, budget);
+  registerSurfTool(server, budget);
 
   // Register resources
   server.registerResource(
@@ -62,7 +62,9 @@ export function initializeMcpServer(server: McpServer): void {
     async () => {
       const llm = getClient();
       if (!modelCache.models) {
-        modelCache.models = await llm.listModels();
+        modelCache.models = "listAllModels" in llm
+          ? await llm.listAllModels()
+          : await llm.listModels();
         setTimeout(() => { modelCache.models = null; }, 5 * 60 * 1000);
       }
       return {

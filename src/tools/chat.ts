@@ -45,7 +45,11 @@ Run blockrun_models to see all 41+ models with pricing.`,
       const llm = getClient();
 
       // Budget gate: global + per-agent enforcement
-      const budgetCheck = checkBudget(budget, agent_id);
+      const estimatedCost =
+        (routing === "smart" && routing_profile === "free") || mode === "free" || model?.startsWith("nvidia/")
+          ? 0
+          : 0.001;
+      const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
       if (!budgetCheck.allowed) {
         return {
           content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet with action: "report" to see usage, or action: "delegate" to increase agent budget.` }],
@@ -65,6 +69,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
           const result = await llm.smartChat(message, {
             system,
             maxTokens: max_tokens,
+            maxOutputTokens: max_tokens,
             temperature,
             routingProfile: routing_profile,
           });
@@ -98,7 +103,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
             temperature,
           });
           const reply = result.choices?.[0]?.message?.content || "";
-          recordSpending(budget, 0.001, agent_id); // nominal tracking
+          recordSpending(budget, estimatedCost, agent_id); // local estimate
           return {
             content: [{ type: "text", text: `[${targetModel} | ${fullMessages.length} msgs]\n\n${reply}` }],
             structuredContent: { model_used: targetModel, response: reply, message_count: fullMessages.length },
@@ -117,7 +122,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
             maxTokens: max_tokens,
             temperature,
           });
-          recordSpending(budget, 0.001, agent_id); // nominal tracking
+          recordSpending(budget, estimatedCost, agent_id); // local estimate
           return { content: [{ type: "text", text: response }] };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -138,8 +143,9 @@ Run blockrun_models to see all 41+ models with pricing.`,
           const response = await llm.chat(m, message, {
             system,
             maxTokens: max_tokens,
+            temperature,
           });
-          recordSpending(budget, 0.001, agent_id); // nominal tracking
+          recordSpending(budget, estimatedCost, agent_id); // local estimate
           return {
             content: [{ type: "text", text: `[${m}]\n\n${response}` }],
             structuredContent: { model_used: m, response },
