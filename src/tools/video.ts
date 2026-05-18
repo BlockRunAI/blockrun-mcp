@@ -18,11 +18,14 @@ const BLOCKRUN_API = "https://blockrun.ai/api";
 const TOTAL_BUDGET_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
 
+// Seedance models are token-priced upstream (token360). Display fallback per-second
+// rates are derived from 10,128 tokens/sec × per-1M-token rate × 1.05 margin.
+// Source: blockrun/src/lib/models.ts VIDEO_MODELS.
 const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
   "xai/grok-imagine-video": 0.05,
-  "bytedance/seedance-1.5-pro": 0.03,
-  "bytedance/seedance-2.0-fast": 0.15,
-  "bytedance/seedance-2.0": 0.30,
+  "bytedance/seedance-1.5-pro": 0.046,
+  "bytedance/seedance-2.0-fast": 0.119,
+  "bytedance/seedance-2.0": 0.149,
 };
 
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
@@ -42,9 +45,9 @@ Turns a text prompt (and optional seed image) into a short MP4 clip. The tool su
 
 Models:
 - xai/grok-imagine-video ($0.05/sec, 8s default -> $0.42/clip) — stylized, fast
-- bytedance/seedance-1.5-pro ($0.03/sec, 720p, 5s default up to 10s) — cheapest
-- bytedance/seedance-2.0-fast ($0.15/sec, ~60-80s gen) — sweet-spot price/quality
-- bytedance/seedance-2.0 ($0.30/sec, 720p Pro) — highest quality
+- bytedance/seedance-1.5-pro (~$0.046/sec, 480p, 5s default up to 10s) — cheapest, token-priced upstream
+- bytedance/seedance-2.0-fast (~$0.119/sec text · ~$0.07/sec image-to-video, ~60-80s gen) — sweet-spot price/quality
+- bytedance/seedance-2.0 (~$0.149/sec text · ~$0.092/sec image-to-video, 480p Pro) — highest quality
 
 Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
       inputSchema: {

@@ -2,6 +2,16 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.14.4
+
+- **`fix(search)` — pricing was wrong by ~3×.** Old `estimateSearchCost` multiplied `$0.025 × sources.length` so `sources: ["web","x","news"]` budgeted $0.075 — but upstream actually charges per *returned result*, not per source category. Now `$0.025 × max_results` (default 10 → $0.25, cap 50 → $1.25). Skill + tool description + README aligned.
+  - Also rename body fields to match upstream snake_case: `maxResults`→`max_results`, `fromDate`→`from_date`, `toDate`→`to_date`. Tool/skill examples updated.
+- **`fix(video)` — Seedance prices calibrated to upstream token billing.** Seedance is token-priced (token360) on the gateway, not flat per-second. Display rates updated:
+  - `bytedance/seedance-1.5-pro`: $0.03/sec → **$0.046/sec** (was undercharging)
+  - `bytedance/seedance-2.0-fast`: $0.15/sec → **$0.119/sec** (was overcharging)
+  - `bytedance/seedance-2.0`: $0.30/sec → **$0.149/sec** (was overcharging 2×)
+  - README $5 capacity now correctly reads "~20 Seedance 1.5-pro clips" (was 30).
+
 ## 0.14.3
 
 - **`feat(budget)` — pre-call budget gates on every paid tool.** Previously only `blockrun_chat` ran a budget check, and it recorded post-hoc, so a near-exhausted budget could be overshot by the last expensive call. Now image / music / video / search / exa / markets / price / modal / phone / surf all expose `agent_id` and pre-check the estimated cost against the global + per-agent limit before settling.

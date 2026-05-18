@@ -17,23 +17,29 @@ type RawClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
+// Pricing scales with max_results (capped 1–50, default 10 upstream) at
+// $0.025 per returned source. Mirrors getSearchPrice() in
+// blockrun/src/app/api/v1/search/route.ts.
+const SEARCH_PRICE_PER_SOURCE = 0.025;
+const SEARCH_DEFAULT_MAX_RESULTS = 10;
+
 function estimateSearchCost(body: unknown): number {
-  if (!body || typeof body !== "object") return 0.075;
-  const sources = (body as { sources?: unknown }).sources;
-  if (!Array.isArray(sources) || sources.length === 0) return 0.075;
-  return 0.025 * sources.length;
+  if (!body || typeof body !== "object") return SEARCH_PRICE_PER_SOURCE * SEARCH_DEFAULT_MAX_RESULTS;
+  const raw = (body as { max_results?: unknown }).max_results;
+  const max = typeof raw === "number" && raw > 0 ? Math.min(50, Math.floor(raw)) : SEARCH_DEFAULT_MAX_RESULTS;
+  return SEARCH_PRICE_PER_SOURCE * max;
 }
 
 export function registerSearchTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_search",
     {
-      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. ~$0.025 per source.
+      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. $0.025 per returned source (max_results × $0.025; default max_results=10 → $0.25).
 
 Common shape:
-- body: { query: "...", sources: ["web","x","news"], maxResults: 10, fromDate: "YYYY-MM-DD", toDate: "YYYY-MM-DD" }
+- body: { query: "...", sources: ["web","x","news"], max_results: 10, from_date: "YYYY-MM-DD", to_date: "YYYY-MM-DD" }
 
-\`sources\` accepts any subset of ["web","x","news"] (defaults to all three). For tweet-only searches, use ["x"].
+\`sources\` accepts any subset of ["web","x","news"] (defaults to all three). For tweet-only searches, use ["x"]. \`max_results\` is 1–50 (default 10) and drives the price — pass a smaller value if you want to cap spend.
 
 Full request shape + worked examples in the \`search\` skill (\`skills/search/SKILL.md\`).`,
       inputSchema: {

@@ -17,7 +17,7 @@ triggers:
 
 # Live Search (Grok)
 
-Real-time web + X/Twitter + news search with AI-summarized results and citations. ~$0.025 per source returned. Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
+Real-time web + X/Twitter + news search with AI-summarized results and citations. **$0.025 × `max_results`** (default 10 → $0.25 per call). Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
 
 ## How to Call from MCP
 
@@ -25,7 +25,7 @@ Real-time web + X/Twitter + news search with AI-summarized results and citations
 blockrun_search({ body: {
   query: "what's the consensus on the Fed's next move",
   sources: ["web", "news"],
-  maxResults: 10
+  max_results: 10
 }})
 ```
 
@@ -34,10 +34,10 @@ blockrun_search({ body: {
 | Field | Required | Type | Notes |
 |---|---|---|---|
 | `query` | yes | string | Natural-language search query |
-| `sources` | no | string[] | Subset of `["web","x","news"]`. Default: all three. |
-| `maxResults` | no | number | 1–20 per source. Default 10. |
-| `fromDate` | no | string | `YYYY-MM-DD` lower bound on result date |
-| `toDate` | no | string | `YYYY-MM-DD` upper bound |
+| `sources` | no | string[] | Subset of `["web","x","news"]`. Default: all three. Does NOT multiply price. |
+| `max_results` | no | number | 1–50, default 10. **Drives the price** at $0.025 each. |
+| `from_date` | no | string | `YYYY-MM-DD` lower bound on result date |
+| `to_date` | no | string | `YYYY-MM-DD` upper bound |
 
 ## When to Reach for Which Source
 
@@ -53,14 +53,16 @@ blockrun_search({ body: {
 ### 1. "What's the latest on the ETH ETF approval timeline?"
 
 ```ts
-blockrun_search({ body: { query: "Ethereum ETF approval SEC", sources: ["news","web"], maxResults: 8 } })
+blockrun_search({ body: { query: "Ethereum ETF approval SEC", sources: ["news","web"], max_results: 8 } })
 ```
+**Cost: $0.025 × 8 = $0.20.**
 
 ### 2. "What is X saying about Solana's latest outage?"
 
 ```ts
-blockrun_search({ body: { query: "Solana outage today", sources: ["x"], maxResults: 15 } })
+blockrun_search({ body: { query: "Solana outage today", sources: ["x"], max_results: 15 } })
 ```
+**Cost: $0.025 × 15 = $0.375.**
 
 ### 3. "Background on Pectra upgrade, last 90 days only"
 
@@ -68,9 +70,10 @@ blockrun_search({ body: { query: "Solana outage today", sources: ["x"], maxResul
 blockrun_search({ body: {
   query: "Ethereum Pectra upgrade",
   sources: ["web","news"],
-  fromDate: "2026-02-17"
+  from_date: "2026-02-17"
 }})
 ```
+**Cost: $0.025 × 10 (default) = $0.25.**
 
 ## search vs exa — Pick the Right Tool
 
@@ -84,7 +87,7 @@ blockrun_search({ body: {
 ## Notes
 
 - Returns AI-summarized text + a list of sources with URLs. The summary is one paragraph; sources let you drill in.
-- Sources cost individually — `maxResults: 20` with all three sources can return 60 results and price proportionally.
+- **Price is per result, not per source.** `max_results: 20` with one source or three sources both cost $0.025 × 20 = $0.50. Pass a smaller `max_results` to cap spend.
 - Date filters are strict — results outside the window are dropped, not down-ranked.
 
 ## Reference
