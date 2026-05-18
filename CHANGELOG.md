@@ -2,6 +2,25 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.14.3
+
+- **`feat(budget)` — pre-call budget gates on every paid tool.** Previously only `blockrun_chat` ran a budget check, and it recorded post-hoc, so a near-exhausted budget could be overshot by the last expensive call. Now image / music / video / search / exa / markets / price / modal / phone / surf all expose `agent_id` and pre-check the estimated cost against the global + per-agent limit before settling.
+  - Per-tool cost estimates: image per-model, music flat $0.1575, video per-second × billed-duration, price per stocks tier, phone per-endpoint, exa per-URL for `contents`, markets/surf per-path tier
+  - `checkBudget(budget, agent_id, estimatedCost)` compares `spent + cost` against `limit` with EPSILON-safe float math
+- **`feat(wallet)` — chain-aware fail-fast for Base-only tools.** `blockrun_image`, `blockrun_music`, `blockrun_video`, and paid `blockrun_price` calls return a clear "Switch to Base" error before attempting to create or charge a Base wallet under Solana mode.
+  - Free `blockrun_price` calls (crypto/FX/commodity/list) no longer require a wallet — new cached `_freePriceClient` uses `requireWallet: false`
+  - `blockrun_wallet` action `budget`/`delegate`/`revoke`/`report` no longer reads or creates a wallet, so per-agent budget setup works before funding
+- **`fix(tools)` — assorted correctness fixes.**
+  - `blockrun_models` switches to `listAllModels` when available so image models appear in `category:"image"`; filter uses `type === "image"` instead of fragile substring match (`dall-e`/`flux`/`banana`)
+  - `blockrun_image` default model no longer renders as `undefined`; edit mode restricted to `openai/gpt-image-1|2` (other models fail upstream)
+  - `blockrun_price` `from: 0` no longer misjudged as missing (`!from` → `from === undefined`); validates `market` required when `category="stocks"`; zod `limit` tightened to int positive max 2000
+  - `blockrun_chat` mode-routing path now passes `temperature` (was dropped)
+  - `blockrun_markets` `body ? pmQuery : pm` → `body !== undefined` so falsy bodies don't silently downgrade to GET (matches `blockrun_surf`)
+- **`fix(budget)` — tighter cost estimates for chat smart routing + surf wallet/* endpoints.**
+  - `blockrun_chat routing:"smart"` now estimates by `routing_profile`: free=$0 / eco=$0.002 / auto=$0.01 / premium=$0.05 (was flat $0.001). Stops a single premium-profile call from overshooting a near-empty budget by 50×. `mode:"reasoning"`/`mode:"powerful"` also escalate to $0.01.
+  - `blockrun_surf` cost estimator rewritten from `includes()` heuristic to a Set + prefix lookup keyed off the marketplace catalog. Catches all `wallet/*` T2 endpoints (5 paths were undercharged 5×), `exchange/depth|klines|funding-history|long-short-ratio`, `market/liquidation/*`, `market/onchain-indicator|price-indicator`, `prediction-market/polymarket/positions|activity`, `social/detail|ranking|smart-followers/history`, `token/dex-trades|holders|transfers`, `web/fetch`. Also catches `onchain/schema` as T3 (was undercharged 20×).
+- **`docs(readme)` — env-vars section reflects 0.14.1's `.chain` precedence** and adds explicit "Base-only" note for media tools + paid stock price calls.
+
 ## 0.14.1
 
 - **fix(wallet): respect `~/.blockrun/.chain` over stale Solana session.** Previously, the mere existence of `~/.blockrun/.solana-session` pinned the MCP to Solana — even when the user had explicitly switched chains by writing `base` to `~/.blockrun/.chain`. Voice calls and other paid actions would 400 on a wallet/chain mismatch with no obvious recovery short of deleting session files. New precedence in `getChain()`: explicit `.chain` (or `payment-chain` alias) wins, then `SOLANA_WALLET_KEY` env var, then `.solana-session` autodetect as a first-run fallback only.
