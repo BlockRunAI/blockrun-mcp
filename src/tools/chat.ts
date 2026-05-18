@@ -8,6 +8,43 @@ import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import type { BudgetState } from "../types.js";
 
+/**
+ * Worst-case per-call cost estimate for the budget pre-check. Smart routing
+ * doesn't know which model it'll pick until after the call, so we estimate by
+ * routing_profile; mode-based paths escalate for reasoning/powerful tiers.
+ * The post-call `recordSpending` in the smart path uses the SDK's actual
+ * `costEstimate`, so this only needs to be conservative, not precise.
+ */
+function estimateChatCost(
+  mode: string | undefined,
+  model: string | undefined,
+  routing: string | undefined,
+  routingProfile: string | undefined,
+): number {
+  // Free paths bypass the gate entirely.
+  if (mode === "free") return 0;
+  if (model?.startsWith("nvidia/")) return 0;
+  if (routing === "smart" && routingProfile === "free") return 0;
+
+  // Smart routing: cost varies by profile. Conservative upper-bound so the
+  // gate matches what ClawRouter may actually settle.
+  if (routing === "smart") {
+    switch (routingProfile) {
+      case "eco":     return 0.002;
+      case "premium": return 0.05;
+      case "auto":
+      default:        return 0.01;
+    }
+  }
+
+  // Mode-based: reasoning/powerful tiers pick expensive frontier models.
+  if (mode === "reasoning" || mode === "powerful") return 0.01;
+
+  // Default nominal cost for cheap/balanced/coding/glm/fast and explicit
+  // single-model calls. Matches the local recordSpending convention.
+  return 0.001;
+}
+
 export function registerChatTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_chat",
@@ -44,11 +81,11 @@ Run blockrun_models to see all 41+ models with pricing.`,
     async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, agent_id, messages }) => {
       const llm = getClient();
 
-      // Budget gate: global + per-agent enforcement
-      const estimatedCost =
-        (routing === "smart" && routing_profile === "free") || mode === "free" || model?.startsWith("nvidia/")
-          ? 0
-          : 0.001;
+      // Budget gate: global + per-agent enforcement.
+      // Smart routing picks the model AFTER the gate, so use a per-profile
+      // worst-case estimate so a single premium-profile call cannot blow past
+      // a near-exhausted budget. Mode-based heuristics escalate similarly.
+      const estimatedCost = estimateChatCost(mode, model, routing, routing_profile);
       const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
       if (!budgetCheck.allowed) {
         return {

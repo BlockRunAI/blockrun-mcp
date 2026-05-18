@@ -22,17 +22,51 @@ type SurfClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
+// Tier classification mirrors the catalog at /marketplace/surf. Used only for
+// the local budget pre-check — actual settlement is upstream-authoritative. We
+// list endpoints rather than use loose substring matching so a future T2
+// endpoint under wallet/* or social/* doesn't silently get charged as T1.
+
+// Tier 3 — $0.02. Heavy ClickHouse SQL, structured queries, surf-1.5 chat.
+const SURF_T3_PATHS = new Set([
+  "onchain/sql",
+  "onchain/query",
+  "onchain/schema",
+  "chat/completions",
+]);
+
+// Tier 2 — $0.005. Exact-path matches.
+const SURF_T2_PATHS = new Set([
+  "exchange/depth",
+  "exchange/klines",
+  "exchange/funding-history",
+  "exchange/long-short-ratio",
+  "market/liquidation/exchange-list",
+  "market/liquidation/order",
+  "market/liquidation/chart",
+  "market/onchain-indicator",
+  "market/price-indicator",
+  "prediction-market/polymarket/positions",
+  "prediction-market/polymarket/activity",
+  "social/detail",
+  "social/ranking",
+  "social/smart-followers/history",
+  "social/mindshare",
+  "token/dex-trades",
+  "token/holders",
+  "token/transfers",
+  "web/fetch",
+]);
+
+// Tier 2 — $0.005. Namespace prefixes (every endpoint under these is T2).
+const SURF_T2_PREFIXES = ["search/", "wallet/"];
+
 function estimateSurfCost(path: string): number {
-  const p = path.toLowerCase();
-  if (p.includes("onchain/sql") || p.includes("onchain/query") || p.includes("chat/completions")) return 0.02;
-  if (
-    p.includes("search/") ||
-    p.includes("wallet/detail") ||
-    p.includes("social/mindshare") ||
-    p.includes("orderbook") ||
-    p.includes("candles")
-  ) {
-    return 0.005;
+  const p = path.toLowerCase().replace(/^\/+/, "");
+  if (SURF_T3_PATHS.has(p)) return 0.02;
+  if (SURF_T2_PATHS.has(p)) return 0.005;
+  for (const prefix of SURF_T2_PREFIXES) {
+    if (p.startsWith(prefix)) return 0.005;
   }
   return 0.001;
 }
