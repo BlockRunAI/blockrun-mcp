@@ -19,13 +19,15 @@ const TOTAL_BUDGET_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
 
 // Seedance models are token-priced upstream (token360). Display fallback per-second
-// rates are derived from 10,128 tokens/sec × per-1M-token rate × 1.05 margin.
+// rates are derived from 20,256 tokens/sec × per-1M-token rate × 1.05 margin —
+// the videos route now defaults Seedance to 720p + generate_audio=true (t2v),
+// roughly doubling token throughput vs. the historical 480p baseline.
 // Source: blockrun/src/lib/models.ts VIDEO_MODELS.
 const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
   "xai/grok-imagine-video": 0.05,
-  "bytedance/seedance-1.5-pro": 0.046,
-  "bytedance/seedance-2.0-fast": 0.119,
-  "bytedance/seedance-2.0": 0.149,
+  "bytedance/seedance-1.5-pro": 0.092,
+  "bytedance/seedance-2.0-fast": 0.238,
+  "bytedance/seedance-2.0": 0.298,
 };
 
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
@@ -43,11 +45,11 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
-Models:
+Models (Seedance defaults bumped to 720p + synced audio on the gateway):
 - xai/grok-imagine-video ($0.05/sec, 8s default -> $0.42/clip) — stylized, fast
-- bytedance/seedance-1.5-pro (~$0.046/sec, 480p, 5s default up to 10s) — cheapest, token-priced upstream
-- bytedance/seedance-2.0-fast (~$0.119/sec text · ~$0.07/sec image-to-video, ~60-80s gen) — sweet-spot price/quality
-- bytedance/seedance-2.0 (~$0.149/sec text · ~$0.092/sec image-to-video, 480p Pro) — highest quality
+- bytedance/seedance-1.5-pro (~$0.092/sec, 720p + audio t2v, 5s default up to 10s) — cheapest Seedance, token-priced upstream
+- bytedance/seedance-2.0-fast (~$0.238/sec text · ~$0.140/sec image-to-video, 720p + audio, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
+- bytedance/seedance-2.0 (~$0.298/sec text · ~$0.183/sec image-to-video, 720p + audio Pro) — highest quality; supports BytePlus RealFace assets
 
 Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
       inputSchema: {

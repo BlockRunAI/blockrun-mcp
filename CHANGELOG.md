@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.14.5
+
+- **`fix(video)` — Seedance prices realigned to upstream 720p + audio defaults.** The gateway's `/v1/videos/generations` route now defaults Seedance calls to `resolution: 720p` with `generate_audio: true` for t2v (commit `e6dc1f1` on the main app), which roughly doubles tokens/sec vs. the historical 480p baseline. MCP's per-second display rates and budget pre-check were still calibrated to the old 480p figures, so the pre-call budget gate was under-estimating Seedance cost by ~2× — a near-empty budget could overshoot. Rates and tool description bumped to match upstream's canonical pricebook:
+  - `bytedance/seedance-1.5-pro`: $0.046/sec → **$0.092/sec** (720p + audio t2v)
+  - `bytedance/seedance-2.0-fast`: $0.119/sec → **$0.238/sec** text · **$0.140/sec** image-to-video
+  - `bytedance/seedance-2.0`: $0.149/sec → **$0.298/sec** text · **$0.183/sec** image-to-video
+  - 2.0-fast / 2.0 Pro tool description now flags BytePlus RealFace asset support (see `/docs/video/real-person-ip` on the main app).
+  - README $5-capacity headline updated: was "~20 Seedance 1.5-pro clips" (480p), now "~10 clips" (720p+audio).
+
 ## 0.14.4
 
 - **`fix(search)` — pricing was wrong by ~3×.** Old `estimateSearchCost` multiplied `$0.025 × sources.length` so `sources: ["web","x","news"]` budgeted $0.075 — but upstream actually charges per *returned result*, not per source category. Now `$0.025 × max_results` (default 10 → $0.25, cap 50 → $1.25). Skill + tool description + README aligned.
