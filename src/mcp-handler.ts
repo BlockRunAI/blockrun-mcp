@@ -10,6 +10,7 @@ import { registerModelsTool } from "./tools/models.js";
 import { registerImageTool } from "./tools/image.js";
 import { registerMusicTool } from "./tools/music.js";
 import { registerVideoTool } from "./tools/video.js";
+import { registerRealfaceTool } from "./tools/realface.js";
 import { registerSearchTool } from "./tools/search.js";
 import { registerExaTool } from "./tools/exa.js";
 import { registerMarketsTool } from "./tools/markets.js";
@@ -29,6 +30,7 @@ export function initializeMcpServer(server: McpServer): void {
   registerImageTool(server, budget);
   registerMusicTool(server, budget);
   registerVideoTool(server, budget);
+  registerRealfaceTool(server, budget);
   registerSearchTool(server, budget);
   registerExaTool(server, budget);
   registerMarketsTool(server, budget);

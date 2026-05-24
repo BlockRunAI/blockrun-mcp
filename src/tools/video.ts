@@ -30,6 +30,19 @@ const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
   "bytedance/seedance-2.0": 0.298,
 };
 
+// Image-to-video tier (seed image or RealFace asset). Lower per-second token
+// throughput than text-to-video, so cheaper. Source: blockrun models.ts.
+const VIDEO_PRICE_PER_SECOND_IMAGE: Record<string, number> = {
+  "bytedance/seedance-2.0-fast": 0.140,
+  "bytedance/seedance-2.0": 0.183,
+};
+
+// Models that accept a BytePlus RealFace asset (real_face_asset_id).
+const REALFACE_MODELS = new Set([
+  "bytedance/seedance-2.0",
+  "bytedance/seedance-2.0-fast",
+]);
+
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "xai/grok-imagine-video": 8,
   "bytedance/seedance-1.5-pro": 5,
@@ -51,16 +64,19 @@ Models (Seedance defaults bumped to 720p + synced audio on the gateway):
 - bytedance/seedance-2.0-fast (~$0.238/sec text · ~$0.140/sec image-to-video, 720p + audio, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
 - bytedance/seedance-2.0 (~$0.298/sec text · ~$0.183/sec image-to-video, 720p + audio Pro) — highest quality; supports BytePlus RealFace assets
 
+RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with a Seedance 2.0 model. Mutually exclusive with image_url.
+
 Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
       inputSchema: {
         prompt: z.string().describe("Text description of the video to generate. E.g. 'a red apple slowly spinning on a wooden table', 'a hummingbird hovering near a red flower, ultra slow motion'"),
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
+        real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only. Mutually exclusive with image_url."),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for (defaults to the model's default — 8s for xAI, 5s for Seedance; Seedance supports up to 10s)."),
         model: z.enum(["xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, image_url, duration_seconds, model, agent_id }) => {
+    async ({ prompt, image_url, real_face_asset_id, duration_seconds, model, agent_id }) => {
       try {
         if (getChain() !== "base") {
           return {
@@ -70,8 +86,30 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         }
 
         const selectedModel = model || "xai/grok-imagine-video";
+
+        // RealFace guardrails — fail fast client-side instead of round-tripping a 400.
+        if (real_face_asset_id) {
+          if (!REALFACE_MODELS.has(selectedModel)) {
+            return {
+              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support RealFace assets. Use bytedance/seedance-2.0 or bytedance/seedance-2.0-fast.`) }],
+              isError: true,
+            };
+          }
+          if (image_url) {
+            return {
+              content: [{ type: "text", text: formatError("Pass exactly one of real_face_asset_id or image_url — both seed the first frame.") }],
+              isError: true,
+            };
+          }
+        }
+
         const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;
-        const estimatedCost = (VIDEO_PRICE_PER_SECOND[selectedModel] ?? 0.05) * billedSeconds;
+        // Image-input (seed image or RealFace) uses the cheaper image-to-video tier.
+        const hasImageInput = Boolean(image_url || real_face_asset_id);
+        const perSecond = (hasImageInput ? VIDEO_PRICE_PER_SECOND_IMAGE[selectedModel] : undefined)
+          ?? VIDEO_PRICE_PER_SECOND[selectedModel]
+          ?? 0.05;
+        const estimatedCost = perSecond * billedSeconds;
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {
           return {
@@ -86,6 +124,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         const body: Record<string, unknown> = { model: selectedModel, prompt };
         if (image_url) body.image_url = image_url;
+        if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
 
         // Step 1: get 402 with price + requirements

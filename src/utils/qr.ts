@@ -2,6 +2,7 @@
 import QRCode from "qrcode";
 import open from "open";
 import * as fs from "fs";
+import * as path from "path";
 import sharp from "sharp";
 import { WALLET_DIR, QR_FILE, USDC_ADDRESS, BASE_CHAIN_ID } from "./constants.js";
 
@@ -72,6 +73,28 @@ export async function generateQrPng(address: string, chain: "base" | "solana" = 
   fs.writeFileSync(QR_FILE, finalBuf);
 
   return QR_FILE;
+}
+
+/**
+ * Render an arbitrary URL as a QR PNG (no logo overlay) and return the path.
+ * Used by RealFace enrollment so the real person can scan the upstream H5
+ * liveness link on their phone. `fileName` is written under WALLET_DIR.
+ */
+export async function generateUrlQrPng(url: string, fileName: string = "realface-qr.png"): Promise<string> {
+  if (!fs.existsSync(WALLET_DIR)) {
+    fs.mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
+  }
+
+  const outPath = path.join(WALLET_DIR, fileName);
+  await QRCode.toFile(outPath, url, {
+    type: "png",
+    width: 400,
+    margin: 2,
+    errorCorrectionLevel: "H",
+    color: { dark: "#000000", light: "#FFFFFF" },
+  });
+
+  return outPath;
 }
 
 export async function openQrInViewer(qrPath: string): Promise<void> {

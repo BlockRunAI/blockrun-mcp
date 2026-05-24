@@ -139,7 +139,8 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 |------|-------------|------|
 | `blockrun_chat` | 55+ LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K2.6, GLM, NVIDIA free tier, ...) with `mode` tier routing | per token |
 | `blockrun_image` | DALL-E 3, GPT Image 1/2, Grok Imagine, Flux, CogView-4, Nano Banana — generation + editing | $0.015–0.12 |
-| `blockrun_video` | xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults) | $0.05–0.298/sec |
+| `blockrun_video` | xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.298/sec |
+| `blockrun_realface` | Enroll a real person (phone liveness → `ta_xxxx` asset) for Seedance 2.0 real-person video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform match + search | $0.001–0.005/query |

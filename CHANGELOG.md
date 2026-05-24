@@ -2,6 +2,16 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.15.0
+
+- **`feat(realface)` — new `blockrun_realface` tool + Seedance RealFace video.** BlockRun upgraded Seedance with BytePlus RealFace: enroll a real person once (liveness-verified) and generate video of *that specific person*, not a generic seed image. The MCP now exposes the full flow end-to-end:
+  - `blockrun_realface action:"init"` (free) — creates an asset group and a phone H5 link; the link is rendered as a QR code and opened so the real person can scan it and complete the ~1 min liveness check (nod + blink). Pass `group_id` to refresh an expired link.
+  - `blockrun_realface action:"status" group_id:…` (free) — polls until `ready_to_finalize:true`.
+  - `blockrun_realface action:"enroll" name:… group_id:… image_url:…` (**$0.01 USDC, Base only**) — uploads the face photo, waits for the BytePlus face-match, returns the `ta_xxxx` asset id. Full x402 sign/verify/settle; settles only after the asset is active (group-not-active → 425, face-match-fail → 422, neither charges).
+  - `blockrun_realface action:"list"` (free) — lists the wallet's enrolled `ta_xxxx` assets.
+- **`feat(video)` — `blockrun_video` accepts `real_face_asset_id`.** Pass a `ta_xxxx` asset (Seedance 2.0 / 2.0-fast only) to drive real-person video. Mutually exclusive with `image_url`; client-side guardrails fail fast on model/conflict mismatches. RealFace is image-input, so the cheaper image-to-video price tier (`2.0-fast` $0.140/sec · `2.0` $0.183/sec) is used for the budget pre-check.
+- Privacy: BlockRun stores only the asset id, name, and the photo URL you supply — no face/liveness data.
+
 ## 0.14.5
 
 - **`fix(video)` — Seedance prices realigned to upstream 720p + audio defaults.** The gateway's `/v1/videos/generations` route now defaults Seedance calls to `resolution: 720p` with `generate_audio: true` for t2v (commit `e6dc1f1` on the main app), which roughly doubles tokens/sec vs. the historical 480p baseline. MCP's per-second display rates and budget pre-check were still calibrated to the old 480p figures, so the pre-call budget gate was under-estimating Seedance cost by ~2× — a near-empty budget could overshoot. Rates and tool description bumped to match upstream's canonical pricebook:
