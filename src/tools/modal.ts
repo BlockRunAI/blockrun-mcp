@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
+import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
@@ -43,6 +44,7 @@ Full action shapes + GPU type details in the \`modal\` skill.`,
     },
     async ({ path, body, agent_id }) => {
       try {
+        body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/modal\//, "");
         const estimatedCost = estimateModalCost(cleanPath);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);

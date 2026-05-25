@@ -8,6 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
+import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
@@ -57,6 +58,7 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
     },
     async ({ path, body, agent_id }) => {
       try {
+        body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\//, "");
         const estimatedCost = estimatePhoneCost(cleanPath, body !== undefined);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);

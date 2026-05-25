@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
+import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
@@ -85,6 +86,7 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
     },
     async ({ path, params, body, agent_id }) => {
       try {
+        body = coerceBody(body);
         const estimatedCost = estimateMarketCost(path, body);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {

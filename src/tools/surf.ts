@@ -13,6 +13,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
+import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
@@ -105,6 +106,7 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
     },
     async ({ path, params, body, agent_id }) => {
       try {
+        body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/surf\//, "").replace(/^api\/v1\/surf\//, "");
         const estimatedCost = estimateSurfCost(cleanPath);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
