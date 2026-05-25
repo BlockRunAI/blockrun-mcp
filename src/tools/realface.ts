@@ -184,7 +184,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         // ---- enroll (paid, Base only) ----
         if (action === "enroll") {
           if (getChain() !== "base") {
-            return { content: [{ type: "text", text: formatError("blockrun_realface enroll settles on Base only. Switch BlockRun to Base (write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }], isError: true };
+            return { content: [{ type: "text", text: formatError("blockrun_realface enroll settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
           }
           if (!name || !image_url || !group_id) {
             return { content: [{ type: "text", text: formatError("enroll requires name, image_url, and group_id (from init, after the group is active).") }], isError: true };

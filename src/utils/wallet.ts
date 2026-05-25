@@ -8,6 +8,7 @@ import {
   PriceClient,
   SolanaLLMClient,
   getOrCreateWallet,
+  getOrCreateSolanaWallet,
   loadSolanaWallet,
   getPaymentLinks,
   formatWalletCreatedMessage,
@@ -60,6 +61,66 @@ export function getChain(): "base" | "solana" {
   return "base";
 }
 
+// The canonical file we WRITE the chain preference to (getChain reads either,
+// but a single writer keeps things unambiguous).
+const CHAIN_FILE = path.join(BLOCKRUN_DIR, ".chain");
+
+// Drop every chain-dependent cached client so the next getClient()/getImageClient()
+// rebuilds against the freshly-selected chain. The EVM wallet identity
+// (_evmWalletInfo) is chain-independent and intentionally preserved.
+function resetChainCaches(): void {
+  _evmClient = null;
+  _solanaClient = null;
+  _imageClient = null;
+  _priceClient = null;
+  _freePriceClient = null;
+}
+
+/**
+ * Explicitly switch the active payment chain. Persists to ~/.blockrun/.chain
+ * (which getChain() ranks above env vars and wallet-file autodetection) and
+ * clears cached clients so the change takes effect on the very next call.
+ */
+export function setChain(chain: "base" | "solana"): void {
+  fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+  fs.writeFileSync(CHAIN_FILE, chain, { mode: 0o600 });
+  resetChainCaches();
+}
+
+/**
+ * Provision BOTH wallets so each chain has a fundable address regardless of
+ * which one is currently active. Idempotent — getOrCreate* only generate on
+ * first run. Returns each chain's address + whether it was just created.
+ */
+export async function ensureBothWallets(): Promise<{
+  base: { address: string; isNew: boolean };
+  solana: { address: string; isNew: boolean };
+}> {
+  const evm = ensureEvmWallet();
+  const sol = await getOrCreateSolanaWallet();
+  if (sol.isNew) {
+    console.error(formatWalletCreatedMessage(sol.address));
+  }
+  return {
+    base: { address: evm.address, isNew: evm.isNew },
+    solana: { address: sol.address, isNew: sol.isNew },
+  };
+}
+
+/**
+ * Guard for capabilities the Solana SDK path doesn't cover yet (image
+ * generation, price data, video, music, RealFace). Returns an actionable
+ * message when the active chain is Solana, otherwise null. Tools call this
+ * before paying so they never silently drain the Base wallet while the user
+ * believes they're on Solana.
+ */
+export function baseOnlyMessage(capability: string): string | null {
+  if (getChain() === "solana") {
+    return `${capability} currently supports Base-chain payment only — your active chain is Solana. Switch with: blockrun_wallet action:"chain" chain:"base"  (switch back later with chain:"solana"). Solana support depends on the @blockrun/llm SDK adding this capability.`;
+  }
+  return null;
+}
+
 function ensureEvmWallet() {
   if (!_evmWalletInfo) {
     _evmWalletInfo = getOrCreateWallet();
@@ -75,11 +136,15 @@ export function getOrCreateWalletKey(): `0x${string}` {
   return info.privateKey as `0x${string}`;
 }
 
+function buildSolanaClient(): SolanaLLMClient {
+  const privateKey = process.env.SOLANA_WALLET_KEY || loadSolanaWallet() || undefined;
+  return new SolanaLLMClient(privateKey ? { privateKey } : undefined);
+}
+
 export function getClient(): ApiClient {
   if (getChain() === "solana") {
     if (!_solanaClient) {
-      const privateKey = process.env.SOLANA_WALLET_KEY || loadSolanaWallet() || undefined;
-      _solanaClient = new SolanaLLMClient(privateKey ? { privateKey } : undefined);
+      _solanaClient = buildSolanaClient();
     }
     return _solanaClient;
   }
@@ -142,13 +207,13 @@ export async function getWalletInfo() {
 
 export { formatNeedsFundingMessage };
 
-export async function getUsdcBalance(address: string): Promise<number | null> {
-  if (getChain() === "solana") {
-    try {
-      const client = getClient() as SolanaLLMClient;
-      return await client.getBalance();
-    } catch { return null; }
-  }
+async function getSolanaUsdcBalance(): Promise<number | null> {
+  try {
+    return await buildSolanaClient().getBalance();
+  } catch { return null; }
+}
+
+async function getBaseUsdcBalance(address: string): Promise<number | null> {
   const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
   const BASE_RPC_URLS = [
     "https://mainnet.base.org",
@@ -173,4 +238,13 @@ export async function getUsdcBalance(address: string): Promise<number | null> {
     } catch { continue; }
   }
   return null;
+}
+
+/** USDC balance for an explicit chain — used to show BOTH wallets at once. */
+export async function getChainBalance(chain: "base" | "solana", address: string): Promise<number | null> {
+  return chain === "solana" ? getSolanaUsdcBalance() : getBaseUsdcBalance(address);
+}
+
+export async function getUsdcBalance(address: string): Promise<number | null> {
+  return getChainBalance(getChain(), address);
 }

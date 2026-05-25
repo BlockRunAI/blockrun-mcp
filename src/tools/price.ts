@@ -76,7 +76,7 @@ Examples:
         const paid = isPaidPriceCall(action, category);
         if (paid && getChain() !== "base") {
           return {
-            content: [{ type: "text", text: formatError("Paid stock price/history calls currently settle on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            content: [{ type: "text", text: formatError("Paid stock price/history calls currently settle on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
             isError: true,
           };
         }

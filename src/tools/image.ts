@@ -53,7 +53,7 @@ Edit models: openai/gpt-image-1, openai/gpt-image-2 (default for edits)`,
       try {
         if (getChain() !== "base") {
           return {
-            content: [{ type: "text", text: formatError("blockrun_image currently settles on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            content: [{ type: "text", text: formatError("blockrun_image currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
             isError: true,
           };
         }

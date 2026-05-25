@@ -39,7 +39,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
       try {
         if (getChain() !== "base") {
           return {
-            content: [{ type: "text", text: formatError("blockrun_music currently settles on Base only. Switch BlockRun to Base (for example: write 'base' to ~/.blockrun/.chain) and fund the Base wallet with USDC.") }],
+            content: [{ type: "text", text: formatError("blockrun_music currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
             isError: true,
           };
         }

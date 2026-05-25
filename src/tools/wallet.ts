@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
-import { getWalletInfo, getUsdcBalance, getChain } from "../utils/wallet.js";
+import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance } from "../utils/wallet.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { formatError } from "../utils/errors.js";
 
@@ -16,10 +16,14 @@ Call this FIRST if any other blockrun_* tool returns a payment/balance error.
 Call this to check your current USDC balance before expensive operations.
 Call this to set spending limits before spawning child agents.
 
+The server holds TWO wallets — one on Base, one on Solana — but pays on ONE
+active chain at a time. status shows both addresses/balances and which is active.
+
 Actions:
-- status (default): Current wallet address, USDC balance, total session spending
-- setup: Get funding instructions + QR code (call this when balance is 0)
-- qr: Open QR code in system viewer
+- status (default): Both wallet addresses + USDC balances, active chain, session spending
+- setup: Get funding instructions + QR code for the ACTIVE chain (call this when balance is 0)
+- qr: Open QR code (active chain) in system viewer
+- chain + chain:"base"|"solana": Switch the active payment chain (omit chain: to just see the current one)
 
 Budget controls:
 - budget + budget_action:"set" + budget_amount:1.00 → Set global spend cap
@@ -37,14 +41,15 @@ Usage pattern for multi-agent systems:
 
 Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       inputSchema: {
-        action: z.enum(["status", "setup", "qr", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
+        action: z.enum(["status", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
+        chain: z.enum(["base", "solana"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),
         budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget')"),
         budget_amount: z.number().optional().describe("Budget limit in USD (for budget_action='set')"),
         agent_id: z.string().optional().describe("Agent identifier for delegate/revoke/report actions"),
         agent_limit: z.number().optional().describe("Budget limit in USD for this agent (required for delegate action)"),
       },
     },
-    async ({ action, budget_action, budget_amount, agent_id, agent_limit }) => {
+    async ({ action, chain: targetChain, budget_action, budget_amount, agent_id, agent_limit }) => {
       // Handle budget action
       if (action === "budget") {
         const budgetAct = budget_action || "check";
@@ -127,6 +132,37 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
         return {
           content: [{ type: "text", text: lines.join("\n") }],
           structuredContent: { global: { limit: budget.limit, spent: budget.spent, calls: budget.calls }, agents: agentRows },
+        };
+      }
+
+      // Switch / inspect the active payment chain
+      if (action === "chain") {
+        const both = await ensureBothWallets();
+        if (targetChain && targetChain !== getChain()) {
+          setChain(targetChain);
+        }
+        const active = getChain();
+        const activeWallet = active === "solana" ? both.solana : both.base;
+        const activeBalance = await getChainBalance(active, activeWallet.address);
+        const balStr = activeBalance !== null ? `$${activeBalance.toFixed(6)} USDC` : "balance unavailable";
+        const switched = targetChain ? `Switched active chain → ${active.toUpperCase()}.` : `Active chain: ${active.toUpperCase()}.`;
+        const text = `${switched}
+
+  Active (${active}): ${activeWallet.address}
+    Balance: ${balStr}${activeBalance !== null && activeBalance < 1 ? "  (low — fund this address)" : ""}
+  Base:   ${both.base.address}
+  Solana: ${both.solana.address}
+
+All blockrun_* calls now pay on ${active}. Note: image generation, price, video,
+music and RealFace are Base-only — switch back with chain:"base" for those.`;
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: {
+            activeChain: active,
+            base: both.base.address,
+            solana: both.solana.address,
+            activeBalance,
+          },
         };
       }
 
@@ -234,27 +270,40 @@ SECURITY: Private key stored at ~/.blockrun/.session (never leaves your machine)
         return { content: [{ type: "text", text }] };
       }
 
-      // Default: status action
-      const balance = await getUsdcBalance(address);
-      const balanceStr = balance !== null ? `$${balance.toFixed(6)} USDC` : "Unable to fetch";
-      const lowBalance = balance !== null && balance < 1;
-
+      // Default: status action — show BOTH wallets, mark the active one.
+      const both = await ensureBothWallets();
+      const [baseBal, solBal] = await Promise.all([
+        getChainBalance("base", both.base.address),
+        getChainBalance("solana", both.solana.address),
+      ]);
+      const activeBalance = chain === "solana" ? solBal : baseBal;
+      const fmt = (b: number | null) => (b !== null ? `$${b.toFixed(6)} USDC` : "unavailable");
       const explorerLabel = chain === "solana" ? "Solscan" : "Basescan";
-      const text = `Wallet: ${address}
-Balance: ${balanceStr}${lowBalance ? " (low - add funds)" : ""}
-Network: ${info.network} | View: ${info.explorerUrl}
-${info.isNew ? "\nNEW WALLET - Run with action: 'setup' for funding instructions" : ""}`;
+      const mark = (c: "base" | "solana") => (c === chain ? "→" : " ");
+      const text = `Active chain: ${chain.toUpperCase()}   (switch with action:"chain" chain:"base"|"solana")
+
+${mark("base")} Base:   ${both.base.address}
+            ${fmt(baseBal)}${baseBal !== null && baseBal < 1 ? "  (low)" : ""}
+${mark("solana")} Solana: ${both.solana.address}
+            ${fmt(solBal)}${solBal !== null && solBal < 1 ? "  (low)" : ""}
+
+Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLET on active chain — run action:'setup' for funding instructions" : ""}`;
 
       return {
         content: [{ type: "text", text }],
         structuredContent: {
+          activeChain: chain,
           address: info.address,
-          balance,
+          balance: activeBalance,
           network: info.network,
           chainId: info.chainId,
           isNew: info.isNew,
           explorerUrl: info.explorerUrl,
           explorerLabel,
+          wallets: {
+            base: { address: both.base.address, balance: baseBal },
+            solana: { address: both.solana.address, balance: solBal },
+          },
         },
       };
     }
