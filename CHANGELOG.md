@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.15.1
+
+- **`docs(changelog)`** — clarify that the image-to-video price-tier correction applies to all image-input calls (seed `image_url` or `real_face_asset_id`), not just RealFace. No code change vs. 0.15.0; version bumped so the published package tracks the doc.
+
 ## 0.15.0
 
 - **`feat(realface)` — new `blockrun_realface` tool + Seedance RealFace video.** BlockRun upgraded Seedance with BytePlus RealFace: enroll a real person once (liveness-verified) and generate video of *that specific person*, not a generic seed image. The MCP now exposes the full flow end-to-end:
