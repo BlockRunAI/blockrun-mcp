@@ -28,6 +28,7 @@ const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
   "bytedance/seedance-1.5-pro": 0.092,
   "bytedance/seedance-2.0-fast": 0.238,
   "bytedance/seedance-2.0": 0.298,
+  "azure/sora-2": 0.10,
 };
 
 // Image-to-video tier (seed image or RealFace asset). Lower per-second token
@@ -48,6 +49,7 @@ const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "bytedance/seedance-1.5-pro": 5,
   "bytedance/seedance-2.0-fast": 5,
   "bytedance/seedance-2.0": 5,
+  "azure/sora-2": 4, // Sora 2 accepts only 4 / 8 / 12s
 };
 
 export function registerVideoTool(server: McpServer, budget: BudgetState): void {
@@ -59,6 +61,7 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
 Models (Seedance defaults bumped to 720p + synced audio on the gateway):
+- azure/sora-2 ($0.10/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
 - xai/grok-imagine-video ($0.05/sec, 8s default -> $0.42/clip) — stylized, fast
 - bytedance/seedance-1.5-pro (~$0.092/sec, 720p + audio t2v, 5s default up to 10s) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-fast (~$0.238/sec text · ~$0.140/sec image-to-video, 720p + audio, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
@@ -72,7 +75,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
         real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only. Mutually exclusive with image_url."),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for (defaults to the model's default — 8s for xAI, 5s for Seedance; Seedance supports up to 10s)."),
-        model: z.enum(["xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
+        model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
