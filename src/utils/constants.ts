@@ -20,8 +20,9 @@ export const BASE_RPC_URLS = [
 //   openai/gpt-5.3-codex, openai/o1, openai/o1-mini, openai/o3, openai/o3-mini
 // Anthropic (flagships): anthropic/claude-opus-4.7 (1M context), anthropic/claude-opus-4.6,
 //   anthropic/claude-sonnet-4.6, anthropic/claude-haiku-4.5 (plus opus-4.5, opus-4, sonnet-4 legacy)
-// Google (7): google/gemini-3.1-pro, google/gemini-3-pro-preview, google/gemini-3-flash-preview,
-//   google/gemini-2.5-pro, google/gemini-2.5-flash, google/gemini-3.1-flash-lite, google/gemini-2.5-flash-lite
+// Google (8): google/gemini-3.1-pro, google/gemini-3-pro-preview, google/gemini-3.5-flash
+//   (latest flash, thinking, $0.5/$3), google/gemini-3-flash-preview, google/gemini-2.5-pro,
+//   google/gemini-2.5-flash, google/gemini-3.1-flash-lite, google/gemini-2.5-flash-lite
 // DeepSeek (2): deepseek/deepseek-chat, deepseek/deepseek-reasoner
 // Moonshot (2): moonshot/kimi-k2.6 (flagship, $0.95/$4, vision + reasoning), moonshot/kimi-k2.5 (legacy)
 // NVIDIA (8 visible, all FREE) after 2026-04-21 refresh: nvidia/qwen3-next-80b-a3b-thinking
@@ -34,7 +35,7 @@ export const BASE_RPC_URLS = [
 // MiniMax (1): minimax/minimax-m2.7
 // xAI (hidden, API-routable): xai/grok-4.20-reasoning, xai/grok-4.20-non-reasoning, xai/grok-4-fast-reasoning
 export const MODEL_TIERS = {
-  fast: ["google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
+  fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "moonshot/kimi-k2.6", "openai/gpt-5.3", "google/gemini-3.1-pro"],
   powerful: ["openai/gpt-5.4-pro", "anthropic/claude-opus-4.7", "anthropic/claude-opus-4.6", "openai/o3", "openai/gpt-5.4"],
   cheap: ["zai/glm-5", "zai/glm-5-turbo", "nvidia/gpt-oss-120b", "nvidia/deepseek-v3.2", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],

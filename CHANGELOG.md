@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.16.1
+
+- **`feat(models)` — add `google/gemini-3.5-flash` to routing.** Google's latest-generation Flash (built-in thinking mode, frontier-class quality at Flash speed; $0.5 in / $3 out, 1M context, vision + reasoning + coding). Now leads the `fast` tier in `MODEL_TIERS` so `mode:"fast"` routes to it first, and it's added to the Google model roster in the catalog comment. The live `blockrun_models` catalog already serves it; this aligns the local routing hints.
+
 ## 0.15.1
 
 - **`docs(changelog)`** — clarify that the image-to-video price-tier correction applies to all image-input calls (seed `image_url` or `real_face_asset_id`), not just RealFace. No code change vs. 0.15.0; version bumped so the published package tracks the doc.
