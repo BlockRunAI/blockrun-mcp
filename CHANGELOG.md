@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.16.2
+
+- **`feat(models)` — add `anthropic/claude-opus-4.8` to routing.** Anthropic's most capable Claude for complex reasoning and agentic coding ($5 in / $25 out, 1M context, 128k output, adaptive thinking, vision). Now leads the `powerful`, `reasoning`, and `coding` tiers in `MODEL_TIERS` so those modes route to it first, and it heads the Anthropic flagship roster in the catalog comment. The live `blockrun_models` catalog already serves it; this aligns the local routing hints.
+
 ## 0.16.1
 
 - **`feat(models)` — add `google/gemini-3.5-flash` to routing.** Google's latest-generation Flash (built-in thinking mode, frontier-class quality at Flash speed; $0.5 in / $3 out, 1M context, vision + reasoning + coding). Now leads the `fast` tier in `MODEL_TIERS` so `mode:"fast"` routes to it first, and it's added to the Google model roster in the catalog comment. The live `blockrun_models` catalog already serves it; this aligns the local routing hints.

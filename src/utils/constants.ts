@@ -18,8 +18,9 @@ export const BASE_RPC_URLS = [
 // OpenAI (13): openai/gpt-5.4, openai/gpt-5.4-pro, openai/gpt-5.3, openai/gpt-5.2,
 //   openai/gpt-5.4-mini, openai/gpt-5-mini, openai/gpt-5.4-nano, openai/gpt-5.2-pro,
 //   openai/gpt-5.3-codex, openai/o1, openai/o1-mini, openai/o3, openai/o3-mini
-// Anthropic (flagships): anthropic/claude-opus-4.7 (1M context), anthropic/claude-opus-4.6,
-//   anthropic/claude-sonnet-4.6, anthropic/claude-haiku-4.5 (plus opus-4.5, opus-4, sonnet-4 legacy)
+// Anthropic (flagships): anthropic/claude-opus-4.8 (most capable, 1M context, 128k output),
+//   anthropic/claude-opus-4.7 (1M context), anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.6,
+//   anthropic/claude-haiku-4.5 (plus opus-4.5, opus-4, sonnet-4 legacy)
 // Google (8): google/gemini-3.1-pro, google/gemini-3-pro-preview, google/gemini-3.5-flash
 //   (latest flash, thinking, $0.5/$3), google/gemini-3-flash-preview, google/gemini-2.5-pro,
 //   google/gemini-2.5-flash, google/gemini-3.1-flash-lite, google/gemini-2.5-flash-lite
@@ -37,11 +38,11 @@ export const BASE_RPC_URLS = [
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "moonshot/kimi-k2.6", "openai/gpt-5.3", "google/gemini-3.1-pro"],
-  powerful: ["openai/gpt-5.4-pro", "anthropic/claude-opus-4.7", "anthropic/claude-opus-4.6", "openai/o3", "openai/gpt-5.4"],
+  powerful: ["anthropic/claude-opus-4.8", "openai/gpt-5.4-pro", "anthropic/claude-opus-4.7", "anthropic/claude-opus-4.6", "openai/o3", "openai/gpt-5.4"],
   cheap: ["zai/glm-5", "zai/glm-5-turbo", "nvidia/gpt-oss-120b", "nvidia/deepseek-v3.2", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],
-  reasoning: ["openai/o3", "openai/o1", "openai/o3-mini", "deepseek/deepseek-reasoner", "moonshot/kimi-k2.6", "openai/gpt-5.3-codex"],
+  reasoning: ["anthropic/claude-opus-4.8", "openai/o3", "openai/o1", "openai/o3-mini", "deepseek/deepseek-reasoner", "moonshot/kimi-k2.6", "openai/gpt-5.3-codex"],
   free: ["nvidia/qwen3-next-80b-a3b-thinking", "nvidia/mistral-small-4-119b", "nvidia/gpt-oss-120b", "nvidia/deepseek-v3.2", "nvidia/qwen3-coder-480b", "nvidia/llama-4-maverick", "nvidia/gpt-oss-20b", "nvidia/glm-4.7"],
-  coding: ["zai/glm-5", "openai/gpt-5.3-codex", "moonshot/kimi-k2.6", "nvidia/qwen3-coder-480b", "anthropic/claude-sonnet-4.6", "openai/gpt-5.4"],
+  coding: ["anthropic/claude-opus-4.8", "zai/glm-5", "openai/gpt-5.3-codex", "moonshot/kimi-k2.6", "nvidia/qwen3-coder-480b", "anthropic/claude-sonnet-4.6", "openai/gpt-5.4"],
   glm: ["zai/glm-5", "zai/glm-5-turbo", "nvidia/glm-4.7"],
 } as const;
 
