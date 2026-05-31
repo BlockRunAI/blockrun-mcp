@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.17.0
+
+- **`feat(chat)` — `response_format` (JSON mode) and `stop` sequences on `blockrun_chat`.** The gateway now honors both OpenAI params on `/v1/chat/completions` — natively for OpenAI/Azure, and emulated for Anthropic/Bedrock (raw-JSON system instruction + code-fence strip for `response_format: "json_object"`; `stop` mapped to `stop_sequences`). Threaded through every routing path (smart, multi-turn, single-model, mode tiers).
+- **`chore(deps)` — upgrade `@blockrun/llm` to `^2.11.0`** (from `^1.12.0`), which exposes the new `responseFormat` / `stop` options. Per the 2.x upgrade path, the dropped `"free"` routing profile is now coerced to default ClawRouter routing (the gateway already picks the most cost-effective model).
+
 ## 0.16.2
 
 - **`feat(models)` — add `anthropic/claude-opus-4.8` to routing.** Anthropic's most capable Claude for complex reasoning and agentic coding ($5 in / $25 out, 1M context, 128k output, adaptive thinking, vision). Now leads the `powerful`, `reasoning`, and `coding` tiers in `MODEL_TIERS` so those modes route to it first, and it heads the Anthropic flagship roster in the catalog comment. The live `blockrun_models` catalog already serves it; this aligns the local routing hints.

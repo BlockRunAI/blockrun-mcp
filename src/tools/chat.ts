@@ -71,6 +71,8 @@ Run blockrun_models to see all 41+ models with pricing.`,
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
+        response_format: z.enum(["text", "json_object"]).optional().describe("Set to 'json_object' to force valid JSON output (no markdown fences). Works across all providers."),
+        stop: z.array(z.string()).max(4).optional().describe("Up to 4 stop sequences; generation halts when any is produced"),
         agent_id: z.string().optional().describe("Agent identifier. If a budget was delegated for this agent_id via blockrun_wallet action:'delegate', spending is tracked and enforced. The agent is hard-stopped when its budget is exhausted."),
         messages: z.array(z.object({
           role: z.enum(["user", "assistant", "system"]),
@@ -78,8 +80,11 @@ Run blockrun_models to see all 41+ models with pricing.`,
         })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.4' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
       },
     },
-    async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, agent_id, messages }) => {
+    async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, agent_id, messages }) => {
       const llm = getClient();
+
+      // OpenAI-compatible response shaping, forwarded to every call path below.
+      const responseFormat = response_format ? ({ type: response_format } as const) : undefined;
 
       // Budget gate: global + per-agent enforcement.
       // Smart routing picks the model AFTER the gate, so use a per-profile
@@ -108,7 +113,12 @@ Run blockrun_models to see all 41+ models with pricing.`,
             maxTokens: max_tokens,
             maxOutputTokens: max_tokens,
             temperature,
-            routingProfile: routing_profile,
+            // @blockrun/llm 2.x dropped the "free" routing profile; the gateway
+            // already routes to the most cost-effective model by default, so we
+            // omit it and let ClawRouter pick (matches the SDK upgrade path).
+            routingProfile: routing_profile === "free" ? undefined : routing_profile,
+            responseFormat,
+            stop,
           });
           // Record cost from ClawRouter's estimate
           recordSpending(budget, result.routing.costEstimate || 0.001, agent_id);
@@ -138,6 +148,8 @@ Run blockrun_models to see all 41+ models with pricing.`,
           const result = await llm.chatCompletion(targetModel, fullMessages, {
             maxTokens: max_tokens,
             temperature,
+            responseFormat,
+            stop,
           });
           const reply = result.choices?.[0]?.message?.content || "";
           recordSpending(budget, estimatedCost, agent_id); // local estimate
@@ -158,6 +170,8 @@ Run blockrun_models to see all 41+ models with pricing.`,
             system,
             maxTokens: max_tokens,
             temperature,
+            responseFormat,
+            stop,
           });
           recordSpending(budget, estimatedCost, agent_id); // local estimate
           return { content: [{ type: "text", text: response }] };
@@ -181,6 +195,8 @@ Run blockrun_models to see all 41+ models with pricing.`,
             system,
             maxTokens: max_tokens,
             temperature,
+            responseFormat,
+            stop,
           });
           recordSpending(budget, estimatedCost, agent_id); // local estimate
           return {
