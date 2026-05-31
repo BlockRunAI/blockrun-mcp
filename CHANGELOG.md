@@ -2,6 +2,14 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.18.0
+
+- **`feat(chat)` — native Anthropic passthrough for `claude-*`: real `thinking` blocks + verbatim signatures.** An explicit `anthropic/claude-*` model now bypasses the OpenAI-compat `/v1/chat/completions` path and goes DIRECT to the gateway's native `/v1/messages` endpoint (via `@blockrun/llm`'s `AnthropicClient`), which forwards to `api.anthropic.com` verbatim — zero model substitution, no cost routing, no fallback. The OpenAI-compat path could not carry thought signatures (they're lost in conversion) and flattened thinking to a string; the native path returns the real Anthropic response untouched.
+  - New `thinking` param (`{ type: "enabled", budget_tokens }`) — honored on the native `claude-*` path; `max_tokens` is auto-raised above `budget_tokens` when needed. Ignored for non-Claude models (no native thinking channel).
+  - The tool result's `structuredContent` carries the verbatim native response: `native` (full Anthropic `Message`), `thinking_blocks` (with their original `signature`), `signature_present`, `requested_model` + the real upstream `model` echo (proof of no substitution), `stop_reason`, and `usage`. Nothing is fabricated.
+  - **Multimodal image input** — `messages[].content` now accepts an array of `{ type: "text" }` / `{ type: "image_url" }` parts. Images (https URLs or `data:` base64 URIs) are converted to native Anthropic image blocks on the `claude-*` path, and forwarded verbatim for vision-capable models on the OpenAI path.
+- **`chore(deps)` — add `@anthropic-ai/sdk` `^0.39.0`** as a direct dependency (previously only a transitive optional dep of `@blockrun/llm`), so the native passthrough path is always available to MCP consumers.
+
 ## 0.17.0
 
 - **`feat(chat)` — `response_format` (JSON mode) and `stop` sequences on `blockrun_chat`.** The gateway now honors both OpenAI params on `/v1/chat/completions` — natively for OpenAI/Azure, and emulated for Anthropic/Bedrock (raw-JSON system instruction + code-fence strip for `response_format: "json_object"`; `stop` mapped to `stop_sequences`). Threaded through every routing path (smart, multi-turn, single-model, mode tiers).

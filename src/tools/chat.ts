@@ -2,7 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LLMClient } from "@blockrun/llm";
-import { getClient } from "../utils/wallet.js";
+import { getClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
+import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { formatError } from "../utils/errors.js";
 import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
 import { checkBudget, recordSpending } from "../utils/budget.js";
@@ -73,14 +74,24 @@ Run blockrun_models to see all 41+ models with pricing.`,
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
         response_format: z.enum(["text", "json_object"]).optional().describe("Set to 'json_object' to force valid JSON output (no markdown fences). Works across all providers."),
         stop: z.array(z.string()).max(4).optional().describe("Up to 4 stop sequences; generation halts when any is produced"),
+        thinking: z.object({
+          type: z.literal("enabled"),
+          budget_tokens: z.number().min(1).describe("Tokens Claude may spend reasoning before answering. max_tokens is auto-raised above this if needed."),
+        }).optional().describe("Anthropic extended thinking. Only honored for anthropic/claude-* models — these go direct to the native /v1/messages endpoint and the response includes verbatim type:'thinking' blocks with their original signature. Ignored for non-Claude models (no native thinking channel)."),
         agent_id: z.string().optional().describe("Agent identifier. If a budget was delegated for this agent_id via blockrun_wallet action:'delegate', spending is tracked and enforced. The agent is hard-stopped when its budget is exhausted."),
         messages: z.array(z.object({
           role: z.enum(["user", "assistant", "system"]),
-          content: z.string(),
+          content: z.union([
+            z.string(),
+            z.array(z.union([
+              z.object({ type: z.literal("text"), text: z.string() }),
+              z.object({ type: z.literal("image_url"), image_url: z.object({ url: z.string().describe("https URL or data:<mime>;base64,<...> URI") }) }),
+            ])),
+          ]).describe("Plain text, or an array of parts for multimodal input (text + image_url). Images are honored on the native anthropic/claude-* path."),
         })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.4' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
       },
     },
-    async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, agent_id, messages }) => {
+    async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
       const llm = getClient();
 
       // OpenAI-compatible response shaping, forwarded to every call path below.
@@ -97,6 +108,35 @@ Run blockrun_models to see all 41+ models with pricing.`,
           content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet with action: "report" to see usage, or action: "delegate" to increase agent budget.` }],
           isError: true,
         };
+      }
+
+      // Native Anthropic passthrough (EVM/Base only).
+      // An explicit anthropic/claude-* model goes DIRECT to the gateway's
+      // /v1/messages endpoint, which forwards to api.anthropic.com VERBATIM:
+      // zero model substitution, no cost routing, no fallback, and the real
+      // native response — type:"thinking" blocks with their original signature.
+      // This takes priority over mode/routing precisely because the requirement
+      // is "claude-* must be verbatim, never routed". The OpenAI-compat paths
+      // below cannot carry thinking signatures, so claude never falls through.
+      if (model && isAnthropicModel(model)) {
+        const solanaBlock = baseOnlyMessage("Native Anthropic (claude-*) calls");
+        if (solanaBlock) {
+          return { content: [{ type: "text", text: solanaBlock }], isError: true };
+        }
+        return handleAnthropicNative({
+          client: getAnthropicClient(),
+          model,
+          message,
+          system,
+          messages,
+          maxTokens: max_tokens,
+          temperature,
+          stop,
+          thinking,
+          budget,
+          agentId: agent_id,
+          estimatedCost,
+        });
       }
 
       // ClawRouter smart routing (EVM/Base only)
@@ -145,7 +185,11 @@ Run blockrun_models to see all 41+ models with pricing.`,
           { role: "user" as const, content: message },
         ];
         try {
-          const result = await llm.chatCompletion(targetModel, fullMessages, {
+          // The SDK types ChatMessage.content as string-only, but the gateway
+          // forwards `messages` verbatim and accepts image_url content arrays
+          // for vision-capable models — so a multimodal array is runtime-valid.
+          // (claude-* with history is already handled by the native branch above.)
+          const result = await llm.chatCompletion(targetModel, fullMessages as unknown as Parameters<typeof llm.chatCompletion>[1], {
             maxTokens: max_tokens,
             temperature,
             responseFormat,

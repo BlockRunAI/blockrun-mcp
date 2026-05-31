@@ -7,6 +7,7 @@ import {
   ImageClient,
   PriceClient,
   SolanaLLMClient,
+  AnthropicClient,
   getOrCreateWallet,
   getOrCreateSolanaWallet,
   loadSolanaWallet,
@@ -30,6 +31,7 @@ let _priceClient: PriceClient | null = null;
 let _freePriceClient: PriceClient | null = null;
 let _evmWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
 let _solanaClient: SolanaLLMClient | null = null;
+let _anthropicClient: AnthropicClient | null = null;
 
 function readChainPreference(): "base" | "solana" | null {
   for (const file of CHAIN_PREFERENCE_FILES) {
@@ -71,6 +73,7 @@ const CHAIN_FILE = path.join(BLOCKRUN_DIR, ".chain");
 function resetChainCaches(): void {
   _evmClient = null;
   _solanaClient = null;
+  _anthropicClient = null;
   _imageClient = null;
   _priceClient = null;
   _freePriceClient = null;
@@ -153,6 +156,23 @@ export function getClient(): ApiClient {
     _evmClient = new LLMClient({ privateKey });
   }
   return _evmClient;
+}
+
+/**
+ * Native Anthropic client → BlockRun's `/v1/messages` endpoint, which forwards
+ * Claude requests/responses to api.anthropic.com VERBATIM (thinking blocks +
+ * signatures + upstream identity headers, zero model substitution, no fallback).
+ * This is the ONLY path that surfaces real Anthropic native signals — the
+ * OpenAI-compat `/v1/chat/completions` path (LLMClient.chat/chatCompletion)
+ * flattens thinking to a string and drops thought signatures entirely.
+ * EVM/Base only: AnthropicClient signs x402 payments with the viem wallet key.
+ */
+export function getAnthropicClient(): AnthropicClient {
+  if (!_anthropicClient) {
+    const privateKey = getOrCreateWalletKey();
+    _anthropicClient = new AnthropicClient({ privateKey });
+  }
+  return _anthropicClient;
 }
 
 export function getImageClient(): ImageClient {
