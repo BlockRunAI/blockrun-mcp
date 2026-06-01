@@ -33,7 +33,7 @@ export const BASE_RPC_URLS = [
 //   nvidia/kimi-k2.5, nvidia/nemotron-{ultra-253b,3-super-120b,super-49b},
 //   nvidia/mistral-large-3-675b, nvidia/devstral-2-123b, nvidia/qwen3.5-397b-a17b.
 // ZAI (2): zai/glm-5, zai/glm-5-turbo
-// MiniMax (1): minimax/minimax-m2.7
+// MiniMax (2): minimax/minimax-m3 (flagship, 1M context, reasoning + coding), minimax/minimax-m2.7
 // xAI (hidden, API-routable): xai/grok-4.20-reasoning, xai/grok-4.20-non-reasoning, xai/grok-4-fast-reasoning
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
