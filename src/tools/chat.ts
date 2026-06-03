@@ -88,7 +88,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
               z.object({ type: z.literal("image_url"), image_url: z.object({ url: z.string().describe("https URL or data:<mime>;base64,<...> URI") }) }),
             ])),
           ]).describe("Plain text, or an array of parts for multimodal input (text + image_url). Images are honored on the native anthropic/claude-* path."),
-        })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.4' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
+        })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.5' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
       },
     },
     async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
@@ -178,7 +178,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
 
       // Multi-turn conversation
       if (messages && messages.length > 0) {
-        const targetModel = model || MODEL_TIERS[(mode ?? "balanced") as RoutingMode]?.[0] || "openai/gpt-5.4";
+        const targetModel = model || MODEL_TIERS[(mode ?? "balanced") as RoutingMode]?.[0] || "openai/gpt-5.5";
         const fullMessages = [
           ...(system ? [{ role: "system" as const, content: system }] : []),
           ...messages,
