@@ -198,6 +198,9 @@ What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP i
 9. **Cross-chain SQL forensics**
    > *"Top 10 tokens by DEX volume on Base in the last 24h."* → `blockrun_surf` path:`onchain/sql`, body: `{ sql: "SELECT..." }`
 
+10. **X/Twitter evidence before account actions**
+   > *"Find current X reactions to this launch, then prepare a sourced reply plan for OpenClaw."* → `blockrun_search` with `sources:["x"]`; if the next step needs follower exports, media workflows, monitors, webhooks, giveaway draws, or approved posting from a connected account, hand the source URLs and notes to the TweetClaw OpenClaw plugin.
+
 ---
 
 ## Why not just use the APIs directly?
@@ -221,6 +224,7 @@ BlockRun shines when you want **unified billing + many sources + LLM-readable er
 - **Compliance-sensitive flows that need a fiat invoice / audit trail.** BlockRun settles in USDC; receipts are on-chain (Basescan / Solscan) but are not tax invoices. For enterprise procurement, contract directly with the upstream provider.
 - **Latency-critical sub-100ms reads.** Each x402 call adds ~200–500ms of payment-signing + settlement overhead vs. a direct authenticated request. For HFT-style flows, run your own infra.
 - **You only need one source forever.** If you'll only ever call Polymarket, or only ever Exa, save the indirection — sign up upstream and skip the wallet.
+- **Account-owned X/Twitter actions.** `blockrun_search` is for paid live search with citations. For OpenClaw workflows that need search tweet replies, follower export, user lookup, media upload or download, direct messages, monitors, webhooks, giveaway draws, or approved post tweets / replies from a connected account, use the TweetClaw OpenClaw plugin and pass BlockRun's search URLs as evidence.
 
 Use BlockRun when you want pay-per-call for *exploration*, *aggregation*, or *agent-driven* workloads where you can't predict which source you'll reach for next.
 

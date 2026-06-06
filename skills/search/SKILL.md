@@ -84,6 +84,38 @@ blockrun_search({ body: {
 | "Pull the full text of these 5 URLs" — content fetch | `blockrun_exa` `contents` |
 | "Cited answer to a question" | both work; `blockrun_exa answer` is grounded in pre-indexed corpus, `blockrun_search` searches the live web |
 
+## X/Twitter Handoff to TweetClaw
+
+Use `blockrun_search` first when the user needs a fresh, cited view of what X/Twitter is saying right now:
+
+```ts
+blockrun_search({ body: {
+  query: "agent payments x402 launch feedback",
+  sources: ["x"],
+  max_results: 12
+}})
+```
+
+Keep BlockRun responsible for live search and citations. If the follow-up moves into account-owned or OpenClaw-plugin actions, pass the source URLs, tweet IDs, handles, short notes, and budget context into TweetClaw instead of trying to model those actions as more search calls.
+
+TweetClaw fits the next step when the agent needs to:
+
+- search tweet replies around a specific source tweet
+- export followers or inspect public user profiles
+- upload or download media tied to a campaign workflow
+- send direct messages or prepare approved post tweets / replies
+- create monitors, receive webhooks, or run giveaway draws
+
+OpenClaw users can install it with:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+```
+
+Store the Xquik API key in OpenClaw plugin config, not in prompts, issue text, or shared notes. A clean handoff prompt is:
+
+> Use BlockRun's X search URLs as evidence. Use TweetClaw only for the requested account-scoped X/Twitter workflow, and ask before posting, sending DMs, uploading media, creating monitors, or running giveaway draws.
+
 ## Notes
 
 - Returns AI-summarized text + a list of sources with URLs. The summary is one paragraph; sources let you drill in.
