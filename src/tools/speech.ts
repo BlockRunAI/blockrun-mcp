@@ -121,8 +121,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           cost = SOUND_EFFECT_COST;
         } else {
           // Defensive default — the MCP SDK applies the zod default, but a
-          // direct caller may omit model. Thousands separators also keep
-          // formatError's "500" substring check from misfiring on "5000".
+          // direct caller may omit model.
           const modelInfo = SPEECH_MODELS[model] ?? SPEECH_MODELS["elevenlabs/flash-v2.5"];
           if (input.length > modelInfo.maxInputChars) {
             return {

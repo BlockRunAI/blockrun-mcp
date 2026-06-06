@@ -36,12 +36,16 @@ export function extractErrorMessage(err: unknown): string {
 export function formatError(message: string): string {
   const msgLower = message.toLowerCase();
 
-  const isPaymentError = msgLower.includes("402") ||
+  // Match HTTP status codes as standalone tokens, not substrings — "max 5000
+  // characters" or "$1.4020" must not classify as 500/402 errors.
+  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}([^0-9]|$)`).test(msgLower);
+
+  const isPaymentError = hasStatus("402") ||
     msgLower.includes("balance") ||
     msgLower.includes("insufficient") ||
-    (msgLower.includes("payment") && !msgLower.includes("500"));
+    (msgLower.includes("payment") && !hasStatus("500"));
 
-  const isServerError = msgLower.includes("500") ||
+  const isServerError = hasStatus("500") ||
     msgLower.includes("api error after payment");
 
   let errorText = `Error: ${message}`;
