@@ -142,6 +142,7 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_video` | xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.298/sec |
 | `blockrun_realface` | Enroll a real person (phone liveness → `ta_xxxx` asset) for Seedance 2.0 real-person video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
+| `blockrun_speech` | ElevenLabs text-to-speech (Flash/Turbo/Multilingual/v3, 8 voice aliases) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars; $0.0525/effect |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform match + search | $0.001–0.005/query |
 | `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX market data, on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, Polymarket + Kalshi side-by-side, social mindshare, news, search, Surf-1.5 chat with citations | $0.001–0.02/call |
@@ -185,13 +186,16 @@ What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP i
 5. **Image generation with on-image text**
    > *"Generate a poster announcing GPT-5.5 on BlockRun, retro-futuristic, with the headline 'NOW LIVE'."* → `blockrun_image` + the `image-prompting` skill 5-section framework
 
-6. **Voice phone-out**
+6. **Give your agent a voice**
+   > *"Use blockrun to speak this with the sarah voice."* → `blockrun_speech` action:`speak` (default), `input` + `voice` → hosted MP3 URL. Sound effects via action:`sound_effect`
+
+7. **Voice phone-out**
    > *"Call +1-415-555-... and confirm the appointment on Friday at 3pm."* → `blockrun_phone` path:`voice/call`, body: `{ to, task, from }` (provision `from` first via `phone/numbers/buy`), then poll `voice/call/{call_id}`
 
-7. **Multi-agent research with budget cap**
+8. **Multi-agent research with budget cap**
    > *"Spawn 3 research agents on competing L1 narratives. Cap each at $0.50."* → `blockrun_wallet delegate × 3` → children call `blockrun_chat` + `blockrun_exa` with their `agent_id`
 
-8. **Cross-chain SQL forensics**
+9. **Cross-chain SQL forensics**
    > *"Top 10 tokens by DEX volume on Base in the last 24h."* → `blockrun_surf` path:`onchain/sql`, body: `{ sql: "SELECT..." }`
 
 ---
@@ -261,7 +265,7 @@ Chain selection priority (see `src/utils/wallet.ts`):
 - Base → Solana: `echo solana > ~/.blockrun/.chain`, then set `SOLANA_WALLET_KEY` or create `~/.blockrun/.solana-session`
 - Solana → Base: `echo base > ~/.blockrun/.chain` (the existing `.session` is reused, so it's the same Base wallet)
 
-Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_video`, and paid stock `blockrun_price` calls. In Solana mode they fail before creating or charging a Base wallet.
+Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, and paid stock `blockrun_price` calls. In Solana mode they fail before creating or charging a Base wallet.
 
 The server also runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` version exists. Upgrade by re-running the install command — no manual `npm update` needed.
 
