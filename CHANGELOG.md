@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.19.2
+
+- **`docs` — retire the hosted `mcp.blockrun.ai` install.** The hosted HTTP server (a stale v0.2.x deployment with only 8 of 16 tools and the deprecated `X-Wallet-Key` hosted-auth flow) has been decommissioned. The npx stdio install is the only supported path: `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest`. README on npm refreshed accordingly. No code changes.
+
 ## 0.18.0
 
 - **`feat(chat)` — native Anthropic passthrough for `claude-*`: real `thinking` blocks + verbatim signatures.** An explicit `anthropic/claude-*` model now bypasses the OpenAI-compat `/v1/chat/completions` path and goes DIRECT to the gateway's native `/v1/messages` endpoint (via `@blockrun/llm`'s `AnthropicClient`), which forwards to `api.anthropic.com` verbatim — zero model substitution, no cost routing, no fallback. The OpenAI-compat path could not carry thought signatures (they're lost in conversion) and flattened thinking to a string; the native path returns the real Anthropic response untouched.
