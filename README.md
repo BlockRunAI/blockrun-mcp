@@ -96,11 +96,6 @@ ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 }
 ```
 
-**Hosted (no install, always latest)**
-```bash
-claude mcp add blockrun -s user --transport http https://mcp.blockrun.ai/mcp
-```
-
 **Cursor** — add to `~/.cursor/mcp.json` (macOS / Linux) or `%APPDATA%\Cursor\mcp.json` (Windows):
 ```json
 {
