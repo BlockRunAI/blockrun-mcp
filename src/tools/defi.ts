@@ -1,0 +1,77 @@
+// src/tools/defi.ts
+//
+// DefiLlama via BlockRun — DeFi protocol TVL, chain TVL, yield pools, and
+// token prices. Path-based GET passthrough to /v1/defillama/{path}; the
+// gateway proxies DefiLlama (Apache 2.0 / public commercial-use) and settles
+// in USDC via x402. Endpoint catalog mirrors blockrun/src/lib/defillama.ts.
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { checkBudget, recordSpending } from "../utils/budget.js";
+import { getClient } from "../utils/wallet.js";
+import { formatError, extractErrorMessage } from "../utils/errors.js";
+import type { BudgetState } from "../types.js";
+
+type RawClient = {
+  getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
+};
+
+// prices/* is $0.001; protocols / protocol/{slug} / chains / yields are $0.005.
+function estimateDefiCost(path: string): number {
+  return path.startsWith("prices") ? 0.001 : 0.005;
+}
+
+export function registerDefiTool(server: McpServer, budget: BudgetState): void {
+  server.registerTool(
+    "blockrun_defi",
+    {
+      description: `DeFi fundamentals via DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices. Pays per call in USDC, no API key.
+
+Paths (GET only):
+- protocols                      ($0.005) — all DeFi protocols ranked by TVL
+- protocol/{slug}                ($0.005) — one protocol's TVL history + chain breakdown, e.g. protocol/aave-v3
+- chains                         ($0.005) — TVL by chain
+- yields                         ($0.005) — yield pools with APY + TVL (large; filter client-side)
+- prices/{coins}                 ($0.001) — token prices, coins like 'base:0x833589...,coingecko:ethereum'
+
+Examples:
+  blockrun_defi({ path: "protocol/uniswap-v3" })
+  blockrun_defi({ path: "prices/coingecko:bitcoin,coingecko:ethereum" })
+  blockrun_defi({ path: "chains" })
+
+Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pairs, blockrun_surf for labeled on-chain data — this tool is for protocol/TVL/yield fundamentals.`,
+      inputSchema: {
+        path: z.string().describe("Endpoint under /v1/defillama/, e.g. 'protocols', 'protocol/aave-v3', 'chains', 'yields', 'prices/coingecko:ethereum'"),
+        agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
+      },
+    },
+    async ({ path, agent_id }) => {
+      try {
+        const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/defillama\//, "").replace(/^api\/v1\/defillama\//, "");
+        const estimatedCost = estimateDefiCost(cleanPath);
+        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
+        if (!budgetCheck.allowed) {
+          return {
+            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+
+        const client = getClient() as unknown as RawClient;
+        const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
+        recordSpending(budget, estimatedCost, agent_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
+            ? result
+            : { result }) as Record<string, unknown>,
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
+          isError: true,
+        };
+      }
+    }
+  );
+}

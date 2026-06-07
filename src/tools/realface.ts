@@ -28,6 +28,60 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
+// x402 pay-and-POST: probe for the 402 challenge, sign, resubmit with payment.
+// Same flow the enroll action uses inline; shared by the portrait action.
+async function payAndPostJson(
+  url: string,
+  reqBody: string,
+  fallbackDescription: string,
+): Promise<{ status: number; data: Record<string, any> }> {
+  const privateKey = getOrCreateWalletKey();
+  const account = privateKeyToAccount(privateKey);
+
+  const resp402 = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: reqBody,
+  }, 15_000);
+
+  if (resp402.status !== 402) {
+    const data = await resp402.json().catch(() => ({})) as Record<string, any>;
+    throw new Error(`Expected 402, got ${resp402.status}: ${data.message || data.error || JSON.stringify(data)}`);
+  }
+
+  const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
+  if (!prHeader) throw new Error("No PAYMENT-REQUIRED header in 402 response");
+
+  const paymentRequired = parsePaymentRequired(prHeader);
+  const details = extractPaymentDetails(paymentRequired);
+
+  const paymentPayload = await createPaymentPayload(
+    privateKey,
+    account.address,
+    details.recipient,
+    details.amount,
+    details.network || "eip155:8453",
+    {
+      resourceUrl: details.resource?.url || url,
+      resourceDescription: details.resource?.description || fallbackDescription,
+      maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, 120),
+      extra: details.extra,
+    }
+  );
+
+  const resp = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "PAYMENT-SIGNATURE": paymentPayload,
+    },
+    body: reqBody,
+  }, 90_000);
+
+  const data = await resp.json().catch(() => ({})) as Record<string, any>;
+  return { status: resp.status, data };
+}
+
 export function registerRealfaceTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_realface",
@@ -40,7 +94,8 @@ Actions:
 - init: FREE. Create an asset group + a phone H5 link. The tool renders the link as a QR code and opens it; the real person scans it on their phone and completes the ~1 min liveness check. Pass group_id to refresh an expired link.
 - status: FREE. Poll a group until status:"active" (ready_to_finalize:true). The H5 link is valid ~120s — re-init if it expires.
 - enroll: PAID ($0.01 USDC, Base only). After the group is active, upload a clear front-facing photo (image_url) of the SAME person. Returns the ta_xxxx asset id.
-- list: FREE. List the RealFace assets enrolled by this wallet (their ta_xxxx ids + names) so you can pick one for blockrun_video.
+- portrait: PAID ($0.01 USDC, Base only). Virtual Portrait — enroll an AI-GENERATED character from an image URL directly, NO liveness needed (one step: name + image_url → ta_xxxx). For fictional/AI characters only; for a real person use the init→status→enroll liveness flow.
+- list: FREE. List the RealFace + Virtual Portrait assets enrolled by this wallet (their ta_xxxx ids + names) so you can pick one for blockrun_video.
 
 Typical flow:
   1. blockrun_realface action:"init" name:"Alice"          → scan QR on phone, do liveness
@@ -50,10 +105,10 @@ Typical flow:
 
 Privacy: BlockRun does not store face/liveness data — only the asset id, name, and the photo URL you supply.`,
       inputSchema: {
-        action: z.enum(["init", "status", "enroll", "list"]).describe("What to do"),
-        name: z.string().min(1).max(64).optional().describe("Display name for the person (required for init and enroll)."),
-        group_id: z.string().regex(/^legacy_rf_\d+$/).optional().describe("Asset-group id from init (required for status and enroll; pass to init to refresh an expired H5 link)."),
-        image_url: z.string().url().optional().describe("Public HTTPS URL to a clear front-facing face photo (JPG/PNG/WEBP, ≤10MB). Required for enroll."),
+        action: z.enum(["init", "status", "enroll", "portrait", "list"]).describe("What to do"),
+        name: z.string().min(1).max(64).optional().describe("Display name for the person/character (required for init, enroll, and portrait)."),
+        group_id: z.string().regex(/^legacy_rf_\d+$/).optional().describe("Asset-group id from init (required for status and enroll; pass to init to refresh an expired H5 link). Not used by portrait."),
+        image_url: z.string().url().optional().describe("Public HTTPS URL to a clear front-facing face image (JPG/PNG/WEBP, ≤10MB). Required for enroll and portrait."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement (enroll only)."),
       },
     },
@@ -155,29 +210,98 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         // ---- list (free) ----
         if (action === "list") {
           const account = privateKeyToAccount(getOrCreateWalletKey());
-          const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/realfaces`, {
-            method: "GET",
-          }, 30_000);
-          const data = await resp.json().catch(() => ({})) as Record<string, any>;
-          if (!resp.ok) {
-            return { content: [{ type: "text", text: formatError(`list failed (${resp.status}): ${data.error || JSON.stringify(data)}`) }], isError: true };
+          const [rfResp, vpResp] = await Promise.all([
+            fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
+            fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/portraits`, { method: "GET" }, 30_000)
+              .catch(() => null),
+          ]);
+          const data = await rfResp.json().catch(() => ({})) as Record<string, any>;
+          if (!rfResp.ok) {
+            return { content: [{ type: "text", text: formatError(`list failed (${rfResp.status}): ${data.error || JSON.stringify(data)}`) }], isError: true };
           }
           const faces: Array<Record<string, any>> = Array.isArray(data.realfaces) ? data.realfaces : [];
-          if (faces.length === 0) {
+          // Virtual Portraits are best-effort: a transient failure on this
+          // endpoint shouldn't break the RealFace listing.
+          let portraits: Array<Record<string, any>> = [];
+          if (vpResp?.ok) {
+            const vpData = await vpResp.json().catch(() => ({})) as Record<string, any>;
+            portraits = Array.isArray(vpData.portraits) ? vpData.portraits : [];
+          }
+          if (faces.length === 0 && portraits.length === 0) {
             return {
-              content: [{ type: "text", text: `No RealFace assets enrolled for ${account.address}.\nEnroll one: blockrun_realface action:"init" name:"…".` }],
-              structuredContent: { wallet: account.address, realfaces: [], count: 0 },
+              content: [{ type: "text", text: `No RealFace or Virtual Portrait assets enrolled for ${account.address}.\nEnroll one: blockrun_realface action:"init" name:"…" (real person) or action:"portrait" name:"…" image_url:"https://…" (AI character).` }],
+              structuredContent: { wallet: account.address, realfaces: [], portraits: [], count: 0 },
             };
           }
+          const first = faces[0] ?? portraits[0];
           const lines = [
-            `RealFace assets for ${account.address} (${faces.length}):`,
-            ...faces.map((f) => `  • ${f.assetId}  —  "${f.name}"${f.createdAt ? `  (${f.createdAt})` : ""}`),
+            `Assets for ${account.address} (${faces.length} RealFace, ${portraits.length} Virtual Portrait):`,
+            ...faces.map((f) => `  • ${f.assetId}  —  "${f.name}" [realface]${f.createdAt ? `  (${f.createdAt})` : ""}`),
+            ...portraits.map((p) => `  • ${p.assetId}  —  "${p.name}" [portrait]${p.createdAt ? `  (${p.createdAt})` : ""}`),
             ``,
-            `Use one: blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"${faces[0].assetId}" prompt:"…".`,
+            `Use one: blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"${first.assetId}" prompt:"…".`,
           ];
           return {
             content: [{ type: "text", text: lines.join("\n") }],
-            structuredContent: { wallet: account.address, realfaces: faces, count: faces.length },
+            structuredContent: { wallet: account.address, realfaces: faces, portraits, count: faces.length + portraits.length },
+          };
+        }
+
+        // ---- portrait (paid, Base only — Virtual Portrait, no liveness) ----
+        if (action === "portrait") {
+          if (getChain() !== "base") {
+            return { content: [{ type: "text", text: formatError("blockrun_realface portrait settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
+          }
+          if (!name || !image_url) {
+            return { content: [{ type: "text", text: formatError("portrait requires name and image_url (public HTTPS URL of an AI-generated character image).") }], isError: true };
+          }
+
+          const budgetCheck = checkBudget(budget, agent_id, ENROLLMENT_PRICE_USD);
+          if (!budgetCheck.allowed) {
+            return { content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
+          }
+
+          const { status, data } = await payAndPostJson(
+            `${BLOCKRUN_API}/v1/portrait/enroll`,
+            JSON.stringify({ name, image_url }),
+            "BlockRun Virtual Portrait enrollment",
+          );
+
+          if (status === 402) {
+            throw new Error("Payment rejected. Check your wallet balance.");
+          }
+          if (status === 422) {
+            return { content: [{ type: "text", text: formatError(`Portrait rejected — ${data.hint || data.message || "use a clear front-facing character image"}. No payment taken.`) }], isError: true };
+          }
+          if (status < 200 || status >= 300) {
+            throw new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`);
+          }
+
+          const assetId: string | undefined = data.asset_id;
+          if (!assetId) throw new Error(`Portrait response missing asset_id: ${JSON.stringify(data)}`);
+
+          recordSpending(budget, ENROLLMENT_PRICE_USD, agent_id);
+
+          const txHash = data.settlement?.tx_hash || undefined;
+          const lines = [
+            `✅ Virtual Portrait enrolled!`,
+            `Asset ID: ${assetId}`,
+            `Name: ${data.name || name}`,
+            `Cost: $${ENROLLMENT_PRICE_USD.toFixed(2)} USDC`,
+            ...(txHash ? [`Tx: ${txHash}`] : []),
+            ``,
+            `Use it: blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"${assetId}" prompt:"…".`,
+          ];
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            structuredContent: {
+              asset_id: assetId,
+              group_id: data.group_id,
+              name: data.name || name,
+              image_url: data.image_url,
+              price_usd: ENROLLMENT_PRICE_USD,
+              ...(txHash ? { txHash } : {}),
+            },
           };
         }
 

@@ -135,7 +135,7 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_chat` | 66+ LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K2.6, GLM, NVIDIA free tier, ...) with `mode` tier routing | per token |
 | `blockrun_image` | GPT Image 1/2, Nano Banana / Pro (up to 4K), Grok Imagine, CogView-4 — generation + img2img editing | $0.015–0.15 |
 | `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.30/sec |
-| `blockrun_realface` | Enroll a real person (phone liveness → `ta_xxxx` asset) for Seedance 2.0 real-person video | free; $0.01 to enroll |
+| `blockrun_realface` | Enroll a real person (phone liveness) or an AI character (Virtual Portrait, no liveness) as a `ta_xxxx` asset for Seedance 2.0 video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs text-to-speech (Flash/Turbo/Multilingual/v3, 8 voice aliases) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars; $0.0525/effect |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
@@ -145,6 +145,7 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_search` | Grok Live Search — web + news with citations | $0.025 × max_results (default 10) |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
 | `blockrun_rpc` | Raw JSON-RPC on 40+ chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, ...) via Tatum gateway — eth_call, balances, blocks, logs | $0.002/call |
+| `blockrun_defi` | DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices | $0.001–0.005/call |
 | `blockrun_modal` | Isolated code execution in a BlockRun-hosted Modal sandbox — disposable container, optional GPU (T4 → H100) | $0.01 create; $0.001/op |
 | `blockrun_phone` | Outbound AI voice calls (Bland) + wallet-owned US/CA numbers (Twilio), carrier + fraud lookups | $0.54/call; $5/number |
 | `blockrun_models` | Live catalogue of every LLM/image/video/music model + pricing | free |

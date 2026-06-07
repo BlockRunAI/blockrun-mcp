@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.21.0
+
+- **`feat(defi)` — new `blockrun_defi` tool: DeFi fundamentals via DefiLlama.** Path-based GET passthrough to `/v1/defillama/*`: `protocols`, `protocol/{slug}`, `chains` (TVL), `yields` (APY pools) at $0.005/call and `prices/{coins}` at $0.001/call. Live-tested (ETH price round-trip).
+- **`feat(realface)` — Virtual Portrait support.** New `action:"portrait"` enrolls an AI-generated character from an `image_url` in one step ($0.01, Base only, NO phone liveness — for fictional/AI characters; real people still go through the init→status→enroll liveness flow). `action:"list"` now returns both RealFace and Virtual Portrait assets. Live-tested end-to-end (generate → enroll → asset id usable with Seedance `real_face_asset_id`).
+
 ## 0.20.0
 
 - **`feat(rpc)` — new `blockrun_rpc` tool: raw JSON-RPC on 40+ chains.** Path-based passthrough to the gateway's new Tatum-backed `/v1/rpc/{network}` endpoint (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, XRP, Polkadot, Monad, Berachain, HyperEVM, and 30+ more). $0.002 per call; a JSON-RPC batch charges per element. Accepts `method`+`params` shorthand or a full JSON-RPC `body` (incl. batch arrays). Unknown-but-wellformed network slugs pass through, so new chains work without an MCP release. Full network catalog + per-chain recipes in the new `rpc` skill.

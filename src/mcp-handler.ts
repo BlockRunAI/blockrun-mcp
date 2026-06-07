@@ -21,6 +21,7 @@ import { registerModalTool } from "./tools/modal.js";
 import { registerPhoneTool } from "./tools/phone.js";
 import { registerSurfTool } from "./tools/surf.js";
 import { registerRpcTool } from "./tools/rpc.js";
+import { registerDefiTool } from "./tools/defi.js";
 export function initializeMcpServer(server: McpServer): void {
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
   const modelCache: { models: Array<Model | ImageModel> | null } = { models: null };
@@ -43,6 +44,7 @@ export function initializeMcpServer(server: McpServer): void {
   registerPhoneTool(server, budget);
   registerSurfTool(server, budget);
   registerRpcTool(server, budget);
+  registerDefiTool(server, budget);
 
   // Register resources
   server.registerResource(
