@@ -132,9 +132,9 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 
 | Tool | Data source | Cost |
 |------|-------------|------|
-| `blockrun_chat` | 55+ LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K2.6, GLM, NVIDIA free tier, ...) with `mode` tier routing | per token |
-| `blockrun_image` | DALL-E 3, GPT Image 1/2, Grok Imagine, Flux, CogView-4, Nano Banana — generation + editing | $0.015–0.12 |
-| `blockrun_video` | xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.298/sec |
+| `blockrun_chat` | 66+ LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K2.6, GLM, NVIDIA free tier, ...) with `mode` tier routing | per token |
+| `blockrun_image` | GPT Image 1/2, Nano Banana / Pro (up to 4K), Grok Imagine, CogView-4 — generation + img2img editing | $0.015–0.15 |
+| `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.30/sec |
 | `blockrun_realface` | Enroll a real person (phone liveness → `ta_xxxx` asset) for Seedance 2.0 real-person video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs text-to-speech (Flash/Turbo/Multilingual/v3, 8 voice aliases) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars; $0.0525/effect |
@@ -144,6 +144,9 @@ $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + news with citations | $0.025 × max_results (default 10) |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
+| `blockrun_rpc` | Raw JSON-RPC on 40+ chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, ...) via Tatum gateway — eth_call, balances, blocks, logs | $0.002/call |
+| `blockrun_modal` | Isolated code execution in a BlockRun-hosted Modal sandbox — disposable container, optional GPU (T4 → H100) | $0.01 create; $0.001/op |
+| `blockrun_phone` | Outbound AI voice calls (Bland) + wallet-owned US/CA numbers (Twilio), carrier + fraud lookups | $0.54/call; $5/number |
 | `blockrun_models` | Live catalogue of every LLM/image/video/music model + pricing | free |
 | `blockrun_wallet` | Balance, spending, agent budgets, setup QR | free |
 

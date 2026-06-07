@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.20.0
+
+- **`feat(rpc)` — new `blockrun_rpc` tool: raw JSON-RPC on 40+ chains.** Path-based passthrough to the gateway's new Tatum-backed `/v1/rpc/{network}` endpoint (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, XRP, Polkadot, Monad, Berachain, HyperEVM, and 30+ more). $0.002 per call; a JSON-RPC batch charges per element. Accepts `method`+`params` shorthand or a full JSON-RPC `body` (incl. batch arrays). Unknown-but-wellformed network slugs pass through, so new chains work without an MCP release. Full network catalog + per-chain recipes in the new `rpc` skill.
+- **`fix(image)` — sync `blockrun_image` with the live catalog.** Removed delisted `openai/dall-e-3` (was the broken *default*) and `together/flux-schnell`; added `google/nano-banana-pro` ($0.10, up to 4K). Default model is now `openai/gpt-image-2` for both generate and edit. Corrected base prices (gpt-image-1 $0.02, gpt-image-2 $0.06 at 1024²; larger sizes billed higher) and made budget estimates size-aware. Edit (img2img) now also supports `google/nano-banana` and `google/nano-banana-pro`, matching the gateway's image2image roster. `size` is free-form (e.g. 1536x1024 for gpt-image-*, 4096x4096 for nano-banana-pro) instead of the stale DALL-E 1792px enum.
+
 ## 0.19.2
 
 - **`docs` — retire the hosted `mcp.blockrun.ai` install.** The hosted HTTP server (a stale v0.2.x deployment with only 8 of 16 tools and the deprecated `X-Wallet-Key` hosted-auth flow) has been decommissioned. The npx stdio install is the only supported path: `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest`. README on npm refreshed accordingly. No code changes.
