@@ -19,6 +19,40 @@ const { version: VERSION } = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
 ) as { version: string };
 
+function printHelp(): void {
+  process.stdout.write(
+    [
+      "BlockRun MCP Server",
+      "",
+      "Usage:",
+      "  blockrun-mcp [options]",
+      "",
+      "Options:",
+      "  -h, --help       Show this help message",
+      "  -v, --version    Print the package version",
+      "",
+      "When no metadata flag is provided, the server starts on stdio for MCP clients.",
+      "",
+    ].join("\n"),
+  );
+}
+
+function handleCliMetadataFlags(argv: string[]): void {
+  const args = argv.slice(2);
+
+  if (args.includes("--version") || args.includes("-v")) {
+    process.stdout.write(`${VERSION}\n`);
+    process.exit(0);
+  }
+
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    process.exit(0);
+  }
+}
+
+handleCliMetadataFlags(process.argv);
+
 async function checkForUpdate() {
   try {
     const resp = await fetch("https://registry.npmjs.org/@blockrun/mcp/latest", {
