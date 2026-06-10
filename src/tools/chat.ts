@@ -60,7 +60,7 @@ Notable modes:
 - mode:"free" → NVIDIA models (no cost)
 - routing:"smart" → auto-select via ClawRouter
 
-Pick directly: model:"zai/glm-5", model:"openai/o3", model:"nvidia/deepseek-v3.2" (free).
+Pick directly: model:"zai/glm-5", model:"openai/o3", model:"nvidia/deepseek-v4-flash" (free).
 
 Run blockrun_models to see all 41+ models with pricing.`,
       inputSchema: {
