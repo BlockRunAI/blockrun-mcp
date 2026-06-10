@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.21.2
+
+- **`fix` — `--version`/`-v` and `--help`/`-h` CLI flags exit cleanly.** Metadata flags are now handled before the stdio transport connects, so version/help inspection no longer boots the full MCP server. Thanks @xianzuyang9-blip! (#16)
+- **`fix(chat)` — stop recommending dead `nvidia/deepseek-v3.2` in the `blockrun_chat` description.** The 0.21.1 sweep rebuilt `MODEL_TIERS` but missed the tool description's direct-pick example, which still pointed at one of the NIM-hung models. Replaced with `nvidia/deepseek-v4-flash` (free, healthy, 1M context).
+
+## 0.21.1
+
+- **`fix(models)` — drop dead free models from `MODEL_TIERS`.** 2026-06-07 sweep: `free[]` led with `nvidia/qwen3-next-80b-a3b-thinking` (NVIDIA EOL, 410) and `nvidia/mistral-small-4-119b` (timing out), and included `nvidia/deepseek-v3.2` + `nvidia/glm-4.7` (NIM hung). Rebuilt `free[]` to the models actually serving themselves (`llama-4-maverick`, `qwen3-coder-480b`, `deepseek-v4-flash`, `gpt-oss-120b/20b`); `cheap[]` swapped `deepseek-v3.2` → `deepseek-v4-flash`; `glm[]` dropped the hung `nvidia/glm-4.7`.
+
 ## 0.21.0
 
 - **`feat(defi)` — new `blockrun_defi` tool: DeFi fundamentals via DefiLlama.** Path-based GET passthrough to `/v1/defillama/*`: `protocols`, `protocol/{slug}`, `chains` (TVL), `yields` (APY pools) at $0.005/call and `prices/{coins}` at $0.001/call. Live-tested (ETH price round-trip).
