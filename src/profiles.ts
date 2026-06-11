@@ -27,7 +27,8 @@ export type ToolName =
   | "surf"
   | "rpc"
   | "defi"
-  | "polymarket";
+  | "polymarket"
+  | "stall";
 
 // `as const satisfies` keeps the literal tuple type (so the exhaustiveness
 // guard below can see the actual entries) AND rejects any entry that isn't a
@@ -36,6 +37,7 @@ export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
   "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
   "polymarket",
+  "stall",
 ] as const satisfies readonly ToolName[];
 
 // Compile-time guard: if a new ToolName is added to the union but not to
