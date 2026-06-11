@@ -212,6 +212,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
 | `blockrun_rpc` | Raw JSON-RPC on 40+ chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, …) via Tatum | $0.002/call |
 | `blockrun_defi` | DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices | $0.001–0.005/call |
+| `blockrun_stall` | The Stall (IntuiTek¹) — 297 data caps: US/EU/JP/KR/AU equities, dealer GEX, DeFi, Polymarket, GDELT news, SEC/EDGAR, congressional trades, 85yr ERA5 climate, social intelligence | $0.001–$0.065/call |
 | `blockrun_modal` | Isolated code execution in a BlockRun-hosted Modal sandbox — disposable container, optional GPU (T4 → H100) | $0.01 create; $0.001/op |
 | `blockrun_phone` | Outbound AI voice calls (Bland) + wallet-owned US/CA numbers (Twilio), carrier + fraud lookups | $0.54/call; $5/number |
 | `blockrun_models` | Live catalogue of every LLM/image/video/music model + pricing | free |
