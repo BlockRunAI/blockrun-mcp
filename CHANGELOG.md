@@ -127,6 +127,9 @@ A whole-codebase audit (8 review angles, every finding adversarially re-verified
 - **`feat` — tool profiles: `--profile media | trading | research | chat` (or `BLOCKRUN_MCP_PROFILE`) expose a trimmed tool set** so MCP clients load fewer schemas into context. One published package now serves focused installs — e.g. `npx @blockrun/mcp@latest --profile trading` registers 7 tools (`wallet price dex markets surf defi rpc`) instead of 18. `wallet` is in every profile, resources are gated to their tool, and an unknown name falls back to `full` (the historical 18-tool set, still the default when no flag is given). Thanks @KillerQueen-Z! (#20)
 - **`test` — profile-resolution test suite + compile-time `ALL_TOOLS` drift guard.** New `npm test` (`tsx --test`) covers `--profile`/env precedence, case-insensitivity, per-profile tool counts, wallet-in-every-profile, and unknown→full fallback. `ALL_TOOLS` is now `as const satisfies readonly ToolName[]` with an exhaustiveness type guard, so a newly added tool can't silently drop out of the `full` profile.
 - **`docs` — README links back to blockrun.ai/docs.** Thanks @VickyXAI! (#19)
+- **`blockrun_stall` — 209 pay-per-call AI data capabilities via The Stall (IntuiTek¹).** Equities (US/EU/JP/KR/AU stocks, options microstructure, dealer GEX via CBOE), Crypto/DeFi (Polymarket, DeFiLlama, DEX data), Macro (FRED, Treasury, FX, World Bank), Regulatory (SEC/EDGAR, congressional trades, insider filings, sanctions), News (GDELT 24h synthesis), Climate (85yr ERA5 history), Social (Twitter/X via twit.sh, Reddit, HN), and more. $0.001–$0.065/call, USDC on Base.
+  - Full 209-cap catalog: https://the-stall.intuitek.ai/health
+  - Thanks @KyleMillion (IntuiTek¹)
 
 ## 0.21.5
 
