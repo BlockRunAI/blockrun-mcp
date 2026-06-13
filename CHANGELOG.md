@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.22.0
+
+- **`feat(talent)` — new `blockrun_talent` tool: discover and hire skills from the BlockRun agent marketplace.** Opens business.blockrun.ai's paid skills (other creators' specialized agents) to any MCP host. `action:"list"` (default) browses or searches the catalog for free, ranked by call volume; `action:"run"` hires a skill by slug, signing ONE standard single-leg `exact` USDC x402 payment from the wallet on Base and returning its output — budget-gated against the quoted price and charged only on a successful run (the marketplace settles only on success, so a failed run is free). Base only. Live-tested end-to-end against real Coinbase CDP `/verify` on Base mainnet (402 → @blockrun/llm-signed `x-payment` → `valid:true`, exact-price gate `10000 == 10000`, result returned).
+
 ## 0.21.2
 
 - **`fix` — `--version`/`-v` and `--help`/`-h` CLI flags exit cleanly.** Metadata flags are now handled before the stdio transport connects, so version/help inspection no longer boots the full MCP server. Thanks @xianzuyang9-blip! (#16)
