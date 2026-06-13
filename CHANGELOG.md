@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.21.3
+
+- **`fix(wallet)` — declare `@solana/web3.js` + `@solana/spl-token` as direct deps so `blockrun_wallet` works on a fresh `npx` install.** Both are only `optionalDependencies` of `@blockrun/llm`, which npm installs *when they succeed* — so the wallet's Solana path (`ensureBothWallets` → `SolanaLLMClient.getBalance`) works in dev but a fresh `npx -y @blockrun/mcp@latest` that omits/fails optional deps shipped without them, throwing `missing dependency (@solana/web3.js)` on the default `status` action. Re-declared both at the ranges `@blockrun/llm` pins (`^1.98.4`, `^0.4.14`) so they install on every npx and dedupe to one copy — same pattern used for `@anthropic-ai/sdk` in 0.18.0.
+
 ## 0.21.2
 
 - **`fix` — `--version`/`-v` and `--help`/`-h` CLI flags exit cleanly.** Metadata flags are now handled before the stdio transport connects, so version/help inspection no longer boots the full MCP server. Thanks @xianzuyang9-blip! (#16)
