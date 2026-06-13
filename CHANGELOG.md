@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.21.4
+
+- **`fix(wallet)` — pin `rpc-websockets@9.3.0` so the Solana wallet path loads on Node < 20.19 / < 22.** With the Solana deps now installed (0.21.3), a fresh install exposed a deeper transitive break: `@solana/web3.js@1.98.4` wants `rpc-websockets ^9.0.2`, which floats to `9.3.9` — and `9.3.9` bumped its `uuid` dependency to `^14.0.0`, which is **ESM-only**. `rpc-websockets` is CommonJS and does `require('uuid')`, so Node versions without `require(ESM)` support (e.g. 20.17) throw `ERR_REQUIRE_ESM` and `blockrun_wallet` crashes before returning. Declaring `rpc-websockets@9.3.0` (uuid `^8.3.2`, CJS) as a direct dependency pins the whole tree to one CJS-compatible copy that still satisfies `@solana`'s `^9.0.2` — npm `overrides` can't fix this because they're ignored when the package is installed as a dependency (the npx case). Verified: a clean tarball install resolves a single `rpc-websockets@9.3.0` with `uuid@8.3.2` and no ESM uuid anywhere in the tree.
+
 ## 0.21.3
 
 - **`fix(wallet)` — declare `@solana/web3.js` + `@solana/spl-token` as direct deps so `blockrun_wallet` works on a fresh `npx` install.** Both are only `optionalDependencies` of `@blockrun/llm`, which npm installs *when they succeed* — so the wallet's Solana path (`ensureBothWallets` → `SolanaLLMClient.getBalance`) works in dev but a fresh `npx -y @blockrun/mcp@latest` that omits/fails optional deps shipped without them, throwing `missing dependency (@solana/web3.js)` on the default `status` action. Re-declared both at the ranges `@blockrun/llm` pins (`^1.98.4`, `^0.4.14`) so they install on every npx and dedupe to one copy — same pattern used for `@anthropic-ai/sdk` in 0.18.0.

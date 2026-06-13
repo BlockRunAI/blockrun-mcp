@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.21.3",
+  "version": "0.21.4",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, crypto data, X/Twitter intelligence. Paid via x402 micropayments.",
   "type": "module",
@@ -51,6 +51,7 @@
     "@solana/web3.js": "^1.98.4",
     "open": "^11.0.0",
     "qrcode": "^1.5.4",
+    "rpc-websockets": "9.3.0",
     "sharp": "^0.34.5",
     "viem": "^2.21.0",
     "zod": "^4.3.5"
