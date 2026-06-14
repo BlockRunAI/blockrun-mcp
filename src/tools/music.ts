@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -157,7 +158,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
             isError: true,
           };
         }
-        if (errMsg.includes("abort") || errMsg.includes("timeout") || errMsg.includes("Timeout")) {
+        if (isTimeoutError(err)) {
           return {
             content: [{ type: "text", text: `Music generation timed out. This can happen during peak load — please try again.\nError: ${errMsg}` }],
             isError: true,
@@ -170,14 +171,4 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
       }
     }
   );
-}
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
 }

@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -241,7 +242,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             isError: true,
           };
         }
-        if (errMsg.includes("abort") || errMsg.includes("timeout") || errMsg.includes("Timeout")) {
+        if (isTimeoutError(err)) {
           return {
             content: [{ type: "text", text: `Speech generation timed out — please try again.\nError: ${errMsg}` }],
             isError: true,
@@ -292,14 +293,4 @@ async function listVoices(): Promise<ToolResult> {
     content: [{ type: "text", text: `Built-in voice aliases (pass as 'voice'; full catalog temporarily unavailable):\n${lines.join("\n")}\n\nAny raw ElevenLabs voice_id also works.` }],
     structuredContent: { voices: VOICE_ALIASES },
   };
-}
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
 }

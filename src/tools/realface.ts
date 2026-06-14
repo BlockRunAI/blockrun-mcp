@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
@@ -17,16 +18,6 @@ const BLOCKRUN_API = "https://blockrun.ai/api";
 // Promotional flat fee charged by the gateway for finalizing an enrollment.
 // Source: blockrun/src/app/api/v1/realface/enroll/route.ts (ENROLLMENT_PRICE_USD).
 const ENROLLMENT_PRICE_USD = 0.01;
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
-}
 
 // x402 pay-and-POST: probe for the 402 challenge, sign, resubmit with payment.
 // Same flow the enroll action uses inline; shared by the portrait action.
