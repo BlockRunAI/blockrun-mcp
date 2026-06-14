@@ -1,8 +1,8 @@
 // src/mcp-handler.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ImageModel, Model } from "@blockrun/llm";
 import type { BudgetState } from "./types.js";
 import { getClient, getWalletInfo } from "./utils/wallet.js";
+import { loadModels, type ModelCache } from "./utils/model-cache.js";
 
 import { registerWalletTool } from "./tools/wallet.js";
 import { registerChatTool } from "./tools/chat.js";
@@ -24,7 +24,7 @@ import { registerRpcTool } from "./tools/rpc.js";
 import { registerDefiTool } from "./tools/defi.js";
 export function initializeMcpServer(server: McpServer): void {
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
-  const modelCache: { models: Array<Model | ImageModel> | null } = { models: null };
+  const modelCache: ModelCache = { models: null };
 
   // Register all tools
   registerWalletTool(server, budget);
@@ -68,18 +68,12 @@ export function initializeMcpServer(server: McpServer): void {
     "blockrun://models",
     { description: "Available AI models with pricing", mimeType: "application/json" },
     async () => {
-      const llm = getClient();
-      if (!modelCache.models) {
-        modelCache.models = "listAllModels" in llm
-          ? await llm.listAllModels()
-          : await llm.listModels();
-        setTimeout(() => { modelCache.models = null; }, 5 * 60 * 1000);
-      }
+      const models = await loadModels(getClient(), modelCache);
       return {
         contents: [{
           uri: "blockrun://models",
           mimeType: "application/json",
-          text: JSON.stringify(modelCache.models, null, 2),
+          text: JSON.stringify(models, null, 2),
         }],
       };
     }

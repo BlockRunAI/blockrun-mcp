@@ -3,14 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ImageModel, Model } from "@blockrun/llm";
 import { getClient } from "../utils/wallet.js";
-
-type ModelEntry = Model | ImageModel;
+import { loadModels, type ModelCache, type ModelEntry } from "../utils/model-cache.js";
 
 function getModelType(model: ModelEntry): "llm" | "image" {
   return model.type === "image" || "pricePerImage" in model ? "image" : "llm";
 }
 
-export function registerModelsTool(server: McpServer, modelCache: { models: ModelEntry[] | null }): void {
+export function registerModelsTool(server: McpServer, modelCache: ModelCache): void {
   server.registerTool(
     "blockrun_models",
     {
@@ -21,16 +20,7 @@ export function registerModelsTool(server: McpServer, modelCache: { models: Mode
       },
     },
     async ({ category, provider }) => {
-      const llm = getClient();
-
-      if (!modelCache.models) {
-        modelCache.models = "listAllModels" in llm
-          ? await llm.listAllModels()
-          : await llm.listModels();
-        setTimeout(() => { modelCache.models = null; }, 5 * 60 * 1000);
-      }
-
-      let models = modelCache.models;
+      let models = await loadModels(getClient(), modelCache);
 
       if (provider) {
         const p = provider.toLowerCase();
