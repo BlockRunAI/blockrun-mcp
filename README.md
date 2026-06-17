@@ -93,14 +93,24 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 The `-s user` flag installs globally (available in every project). The `--` separator
 ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 
-**Media-only build** — image/video/audio focused, fewer tools loaded into context. Add
-`--profile media` to expose only `blockrun_image`, `blockrun_video`, `blockrun_realface`,
-`blockrun_music`, `blockrun_speech`, `blockrun_wallet`, and `blockrun_models`:
+**Tool profiles** — expose a trimmed tool set so the client loads fewer schemas into
+context. Pass `--profile <name>` (or set `BLOCKRUN_MCP_PROFILE`); omit it for the full set.
+
+| Profile | Tools |
+|---------|-------|
+| `full` *(default)* | everything |
+| `media` | `wallet` `models` `image` `video` `realface` `music` `speech` |
+| `trading` | `wallet` `price` `dex` `markets` `surf` `defi` `rpc` |
+| `research` | `wallet` `models` `chat` `search` `exa` `surf` |
+| `chat` | `wallet` `models` `chat` |
+
 ```bash
+# e.g. a media-only install
 claude mcp add blockrun-media -s user -- npx -y @blockrun/mcp@latest --profile media
+# or a trading-only install
+claude mcp add blockrun-trading -s user -- npx -y @blockrun/mcp@latest --profile trading
 ```
-Equivalent via env: `BLOCKRUN_MCP_PROFILE=media`. Omit the flag (or use `--profile full`)
-for the complete tool set.
+Equivalent via env: `BLOCKRUN_MCP_PROFILE=trading`. An unknown profile name falls back to `full`.
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
 ```json

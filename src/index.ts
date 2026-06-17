@@ -13,6 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { initializeMcpServer } from "./mcp-handler.js";
 import { warnOnLeakedKeys } from "./utils/key-leak-scanner.js";
+import { PROFILES } from "./profiles.js";
 
 // Read version from package.json so it can never drift from the published version.
 const { version: VERSION } = JSON.parse(
@@ -30,7 +31,7 @@ function printHelp(): void {
       "Options:",
       "  -h, --help       Show this help message",
       "  -v, --version    Print the package version",
-      "      --profile <name>  Tool profile to expose: full (default) | media",
+      `      --profile <name>  Tool profile to expose: ${Object.keys(PROFILES).join(" | ")} (default: full)`,
       "",
       "When no metadata flag is provided, the server starts on stdio for MCP clients.",
       "",

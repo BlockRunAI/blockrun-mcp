@@ -37,11 +37,18 @@ export const ALL_TOOLS: ToolName[] = [
 // list so the full profile never drifts out of sync when tools are added.
 export const PROFILES: Record<string, ToolName[] | "all"> = {
   full: "all",
-  // Image + video focused build: generation/editing tools (image, video,
-  // realface) plus the other generative-media tools (music, speech), and the
-  // wallet (funding/balance — media calls cost USDC) and models (discover
-  // what's available). Strips chat, market data, search, and the rest.
+  // Generative media: image/video/realface plus the other media-generation
+  // tools (music, speech), with wallet (funding/balance — media calls cost
+  // USDC) and models (discover what's available).
   media: ["wallet", "models", "image", "video", "realface", "music", "speech"],
+  // Markets & on-chain data: prediction markets, realtime prices, DEX/CEX
+  // data, DeFi metrics, and raw RPC, plus the wallet for balance/funding.
+  trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc"],
+  // Web research & analysis: live search, neural search, Surf's news/SQL,
+  // and chat for synthesis, plus wallet and the model catalogue.
+  research: ["wallet", "models", "chat", "search", "exa", "surf"],
+  // Minimal LLM gateway: just chat + model discovery + wallet.
+  chat: ["wallet", "models", "chat"],
 };
 
 const DEFAULT_PROFILE = "full";
