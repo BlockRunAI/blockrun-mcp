@@ -22,60 +22,89 @@ import { registerPhoneTool } from "./tools/phone.js";
 import { registerSurfTool } from "./tools/surf.js";
 import { registerRpcTool } from "./tools/rpc.js";
 import { registerDefiTool } from "./tools/defi.js";
-export function initializeMcpServer(server: McpServer): void {
+import { resolveTools, type ToolName } from "./profiles.js";
+
+/**
+ * Initialize the MCP server. The active tool `profile` (resolved from
+ * `--profile` / BLOCKRUN_MCP_PROFILE, defaulting to "full") decides which
+ * tools are registered, so one published package can expose a trimmed set
+ * (e.g. media-only) without loading the excluded tools' schemas into the
+ * client's context. Returns the canonical profile name + registered tools
+ * for startup logging.
+ */
+export function initializeMcpServer(
+  server: McpServer,
+  profileArgs?: { argv?: string[]; env?: NodeJS.ProcessEnv },
+): { profile: string; tools: ToolName[] } {
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
   const modelCache: ModelCache = { models: null };
 
-  // Register all tools
-  registerWalletTool(server, budget);
-  registerChatTool(server, budget);
-  registerModelsTool(server, modelCache);
-  registerImageTool(server, budget);
-  registerMusicTool(server, budget);
-  registerSpeechTool(server, budget);
-  registerVideoTool(server, budget);
-  registerRealfaceTool(server, budget);
-  registerSearchTool(server, budget);
-  registerExaTool(server, budget);
-  registerMarketsTool(server, budget);
-  registerPriceTool(server, budget);
-  registerDexTool(server);
-  registerModalTool(server, budget);
-  registerPhoneTool(server, budget);
-  registerSurfTool(server, budget);
-  registerRpcTool(server, budget);
-  registerDefiTool(server, budget);
+  const { profile, tools } = resolveTools(profileArgs?.argv, profileArgs?.env);
 
-  // Register resources
-  server.registerResource(
-    "wallet",
-    "blockrun://wallet",
-    { description: "Wallet address and status", mimeType: "application/json" },
-    async () => {
-      const info = await getWalletInfo();
-      return {
-        contents: [{
-          uri: "blockrun://wallet",
-          mimeType: "application/json",
-          text: JSON.stringify(info, null, 2),
-        }],
-      };
-    }
-  );
+  // One registrar per tool — only the ones in the active profile run, so a
+  // trimmed profile never advertises (or loads schemas for) excluded tools.
+  const registrars: Record<ToolName, () => void> = {
+    wallet: () => registerWalletTool(server, budget),
+    chat: () => registerChatTool(server, budget),
+    models: () => registerModelsTool(server, modelCache),
+    image: () => registerImageTool(server, budget),
+    music: () => registerMusicTool(server, budget),
+    speech: () => registerSpeechTool(server, budget),
+    video: () => registerVideoTool(server, budget),
+    realface: () => registerRealfaceTool(server, budget),
+    search: () => registerSearchTool(server, budget),
+    exa: () => registerExaTool(server, budget),
+    markets: () => registerMarketsTool(server, budget),
+    price: () => registerPriceTool(server, budget),
+    dex: () => registerDexTool(server),
+    modal: () => registerModalTool(server, budget),
+    phone: () => registerPhoneTool(server, budget),
+    surf: () => registerSurfTool(server, budget),
+    rpc: () => registerRpcTool(server, budget),
+    defi: () => registerDefiTool(server, budget),
+  };
 
-  server.registerResource(
-    "models",
-    "blockrun://models",
-    { description: "Available AI models with pricing", mimeType: "application/json" },
-    async () => {
-      const models = await loadModels(getClient(), modelCache);
-      return {
-        contents: [{
-          uri: "blockrun://models",
-          mimeType: "application/json",
-          text: JSON.stringify(models, null, 2),
-        }],
-      };
-    }
-  );
+  for (const [name, register] of Object.entries(registrars) as [ToolName, () => void][]) {
+    if (tools.has(name)) register();
+  }
+
+  // Register resources — gated on the matching tool so a trimmed profile
+  // doesn't advertise resources for capabilities it excluded.
+  if (tools.has("wallet")) {
+    server.registerResource(
+      "wallet",
+      "blockrun://wallet",
+      { description: "Wallet address and status", mimeType: "application/json" },
+      async () => {
+        const info = await getWalletInfo();
+        return {
+          contents: [{
+            uri: "blockrun://wallet",
+            mimeType: "application/json",
+            text: JSON.stringify(info, null, 2),
+          }],
+        };
+      }
+    );
+  }
+
+  if (tools.has("models")) {
+    server.registerResource(
+      "models",
+      "blockrun://models",
+      { description: "Available AI models with pricing", mimeType: "application/json" },
+      async () => {
+        const models = await loadModels(getClient(), modelCache);
+        return {
+          contents: [{
+            uri: "blockrun://models",
+            mimeType: "application/json",
+            text: JSON.stringify(models, null, 2),
+          }],
+        };
+      }
+    );
+  }
+
+  return { profile, tools: [...tools] };
 }

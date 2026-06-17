@@ -93,6 +93,15 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 The `-s user` flag installs globally (available in every project). The `--` separator
 ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 
+**Media-only build** — image/video/audio focused, fewer tools loaded into context. Add
+`--profile media` to expose only `blockrun_image`, `blockrun_video`, `blockrun_realface`,
+`blockrun_music`, `blockrun_speech`, `blockrun_wallet`, and `blockrun_models`:
+```bash
+claude mcp add blockrun-media -s user -- npx -y @blockrun/mcp@latest --profile media
+```
+Equivalent via env: `BLOCKRUN_MCP_PROFILE=media`. Omit the flag (or use `--profile full`)
+for the complete tool set.
+
 **Claude Desktop** — add to `claude_desktop_config.json`:
 ```json
 {

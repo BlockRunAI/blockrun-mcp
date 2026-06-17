@@ -30,6 +30,7 @@ function printHelp(): void {
       "Options:",
       "  -h, --help       Show this help message",
       "  -v, --version    Print the package version",
+      "      --profile <name>  Tool profile to expose: full (default) | media",
       "",
       "When no metadata flag is provided, the server starts on stdio for MCP clients.",
       "",
@@ -79,11 +80,14 @@ async function main() {
     version: VERSION,
   });
 
-  initializeMcpServer(server);
+  const { profile, tools } = initializeMcpServer(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`BlockRun MCP Server started (v${VERSION}) — stdio transport`);
+  const profileNote = profile === "full"
+    ? `${tools.length} tools`
+    : `profile "${profile}" — ${tools.length} tools: ${tools.join(", ")}`;
+  console.error(`BlockRun MCP Server started (v${VERSION}) — stdio transport — ${profileNote}`);
 
   // Check for updates in background (non-blocking)
   checkForUpdate();
