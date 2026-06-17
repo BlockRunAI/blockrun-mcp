@@ -14,6 +14,15 @@ Wallet auto-created. Fund with $5 USDC. Ask Claude anything.
 
 ---
 
+## Documentation
+
+Full docs: **https://blockrun.ai/docs**
+
+- MCP tools & setup: https://blockrun.ai/docs/mcp/blockrun-mcp
+- All BlockRun SDKs & APIs: https://blockrun.ai/docs
+
+---
+
 ## What changes
 
 Before BlockRun, Claude can't answer:
