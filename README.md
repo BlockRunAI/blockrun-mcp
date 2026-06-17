@@ -117,7 +117,7 @@ ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 
 ## Fund your wallet
 
-Run `blockrun_wallet` to see your address. Send USDC on Base.
+Run `blockrun_wallet` to see your address. The server pays on **Base** by default. Send USDC on Base:
 
 | Method | Steps |
 |--------|-------|
@@ -125,6 +125,24 @@ Run `blockrun_wallet` to see your address. Send USDC on Base.
 | Bridge from Ethereum | [bridge.base.org](https://bridge.base.org) |
 
 $5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~10 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.46 each).
+
+### Pay on Solana
+
+Prefer to pay in USDC on Solana? It's two tool calls — no env vars, no file editing, no restart:
+
+```
+blockrun_wallet action:"chain" chain:"solana"   # provisions + activates the Solana wallet
+blockrun_wallet action:"setup"                  # shows the Solana address + funding QR
+```
+
+Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. Switch back anytime with `blockrun_wallet action:"chain" chain:"base"`. The server keeps both wallets; switching just changes which one pays.
+
+**Base-only — these fall back to Base regardless of active chain:**
+
+- Tools: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid stock `blockrun_price`. In Solana mode they return a "switch to Base" message instead of charging.
+- `blockrun_chat routing:"smart"` (ClawRouter) and native Anthropic (`claude-*`) passthrough — on Solana, pass `model:` or `mode:` explicitly.
+
+> Advanced: chain selection can also be forced before startup via files/env (`~/.blockrun/.chain`, `SOLANA_WALLET_KEY`) — see [Environment Variables](#environment-variables). The `action:"chain"` command above is the recommended path.
 
 ---
 
@@ -261,10 +279,16 @@ Chain selection priority (see `src/utils/wallet.ts`):
 
 **Switching chains:**
 
-- Base → Solana: `echo solana > ~/.blockrun/.chain`, then set `SOLANA_WALLET_KEY` or create `~/.blockrun/.solana-session`
-- Solana → Base: `echo base > ~/.blockrun/.chain` (the existing `.session` is reused, so it's the same Base wallet)
+The recommended way is the tool itself — it provisions both wallets, applies instantly (no restart), and shows the funding QR:
 
-Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, and paid stock `blockrun_price` calls. In Solana mode they fail before creating or charging a Base wallet.
+```
+blockrun_wallet action:"chain" chain:"solana"   # or chain:"base"
+blockrun_wallet action:"setup"                  # funding instructions for the active chain
+```
+
+*Advanced (force a chain before startup, e.g. in CI):* `echo solana > ~/.blockrun/.chain` then set `SOLANA_WALLET_KEY` or create `~/.blockrun/.solana-session`; `echo base > ~/.blockrun/.chain` reuses the existing `.session` (same Base wallet). These edit the same preference file that `action:"chain"` writes — prefer the tool unless you need pre-startup control.
+
+Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, and paid stock `blockrun_price` calls — plus `blockrun_chat routing:"smart"` and native Anthropic (`claude-*`) passthrough. In Solana mode these return a "switch to Base" message instead of charging.
 
 The server also runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` version exists. Upgrade by re-running the install command — no manual `npm update` needed.
 
