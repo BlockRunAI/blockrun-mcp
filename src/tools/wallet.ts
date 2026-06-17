@@ -18,6 +18,14 @@ Call this to set spending limits before spawning child agents.
 
 The server holds TWO wallets — one on Base, one on Solana — but pays on ONE
 active chain at a time. status shows both addresses/balances and which is active.
+Default chain is Base.
+
+To pay on Solana (no env vars, no file editing, no restart):
+  1. action:"chain" chain:"solana"   → provisions + activates the Solana wallet
+  2. action:"setup"                   → Solana address + funding QR (send USDC SPL on Solana)
+Switch back with action:"chain" chain:"base". Base-only — these ignore Solana and
+need Base: blockrun_image, blockrun_music, blockrun_speech, blockrun_video, paid
+blockrun_price, blockrun_chat routing:"smart", and native Anthropic (claude-*).
 
 Actions:
 - status (default): Both wallet addresses + USDC balances, active chain, session spending
