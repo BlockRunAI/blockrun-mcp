@@ -110,7 +110,7 @@ claude mcp add blockrun-media -s user -- npx -y @blockrun/mcp@latest --profile m
 # or a trading-only install
 claude mcp add blockrun-trading -s user -- npx -y @blockrun/mcp@latest --profile trading
 ```
-Equivalent via env: `BLOCKRUN_MCP_PROFILE=trading`. An unknown profile name falls back to `full`.
+Equivalent via env: `BLOCKRUN_MCP_PROFILE=trading`. An unknown profile name falls back to `full`. `modal` and `phone` are available in the `full` profile only.
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
 ```json

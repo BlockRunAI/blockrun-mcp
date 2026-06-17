@@ -28,10 +28,20 @@ export type ToolName =
   | "rpc"
   | "defi";
 
-export const ALL_TOOLS: ToolName[] = [
+// `as const satisfies` keeps the literal tuple type (so the exhaustiveness
+// guard below can see the actual entries) AND rejects any entry that isn't a
+// real ToolName (catches typos).
+export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
   "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
-];
+] as const satisfies readonly ToolName[];
+
+// Compile-time guard: if a new ToolName is added to the union but not to
+// ALL_TOOLS, `MissingFromAllTools` is non-`never` and this assignment fails —
+// keeping the "full" profile from silently dropping a tool.
+type MissingFromAllTools = Exclude<ToolName, (typeof ALL_TOOLS)[number]>;
+const _allToolsExhaustive: Record<MissingFromAllTools, true> = {};
+void _allToolsExhaustive;
 
 // "all" is a sentinel meaning "every tool" — kept distinct from an explicit
 // list so the full profile never drifts out of sync when tools are added.
