@@ -2,6 +2,12 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.22.0
+
+- **`feat` — tool profiles: `--profile media | trading | research | chat` (or `BLOCKRUN_MCP_PROFILE`) expose a trimmed tool set** so MCP clients load fewer schemas into context. One published package now serves focused installs — e.g. `npx @blockrun/mcp@latest --profile trading` registers 7 tools (`wallet price dex markets surf defi rpc`) instead of 18. `wallet` is in every profile, resources are gated to their tool, and an unknown name falls back to `full` (the historical 18-tool set, still the default when no flag is given). Thanks @KillerQueen-Z! (#20)
+- **`test` — profile-resolution test suite + compile-time `ALL_TOOLS` drift guard.** New `npm test` (`tsx --test`) covers `--profile`/env precedence, case-insensitivity, per-profile tool counts, wallet-in-every-profile, and unknown→full fallback. `ALL_TOOLS` is now `as const satisfies readonly ToolName[]` with an exhaustiveness type guard, so a newly added tool can't silently drop out of the `full` profile.
+- **`docs` — README links back to blockrun.ai/docs.** Thanks @VickyXAI! (#19)
+
 ## 0.21.5
 
 - **`refactor` — internal cleanup, no behavior change.** Collapsed four byte-identical `fetchWithTimeout` copies (music, speech, video, realface) and the duplicated model-cache loader into shared `utils/http.ts` and `utils/model-cache.ts`. Both the abort timer and the model-cache TTL timer are now `.unref()`'d, so a pending request or expiring cache never keeps the stdio process alive. Added `isTimeoutError()` (checks the `AbortError`/`TimeoutError` DOMException name before falling back to message substrings) and used it for the music/speech/video timeout branches, replacing the previous inconsistent per-tool string matching.
