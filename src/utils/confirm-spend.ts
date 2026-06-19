@@ -7,13 +7,18 @@
 // scoped to this server process = this session). This is reliable across
 // clients that support elicitation (e.g. Claude Code), unlike PreToolUse hooks.
 //
+// Off by default — opt in with BLOCKRUN_CONFIRM_SPEND=on (or 1/true/yes). This
+// avoids double-prompting when a plugin already gates spend via a PreToolUse
+// hook (the hook renders the cost and is honored on more clients), and keeps
+// the bare MCP from surprising users with an extra dialog.
+//
 // Controls (env):
-//   BLOCKRUN_CONFIRM_SPEND=off      disable confirmation entirely (just charge)
+//   BLOCKRUN_CONFIRM_SPEND=on       enable elicitation-based spend confirmation
 //   BLOCKRUN_CONFIRM_THRESHOLD=0.05 only confirm calls estimated above this USD
 //
-// Degradation: if the client doesn't advertise form elicitation, we proceed
-// without prompting (the tool's cost footer still tells the user what was
-// charged) — better than failing the call on clients that can't ask.
+// Degradation: if the client doesn't advertise elicitation, we proceed without
+// prompting (the tool's cost footer still tells the user what was charged) —
+// better than failing the call on clients that can't ask.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -21,7 +26,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // so a module-level flag is exactly session lifetime.
 let sessionAutoApprove = false;
 
-const CONFIRM_OFF = /^(0|false|off|no)$/i.test(process.env.BLOCKRUN_CONFIRM_SPEND ?? "");
+const CONFIRM_ON = /^(1|true|on|yes)$/i.test(process.env.BLOCKRUN_CONFIRM_SPEND ?? "");
 const THRESHOLD = Number(process.env.BLOCKRUN_CONFIRM_THRESHOLD || 0);
 
 export interface ConfirmResult {
@@ -41,9 +46,9 @@ export async function confirmSpend(
 ): Promise<ConfirmResult> {
   const { usd, label, balanceNote } = opts;
 
+  if (!CONFIRM_ON) return { ok: true };              // off by default (opt-in)
   if (usd <= 0) return { ok: true };                 // free
   if (sessionAutoApprove) return { ok: true };       // user already approved all
-  if (CONFIRM_OFF) return { ok: true };              // disabled by operator
   if (usd <= THRESHOLD) return { ok: true };         // cheap enough to skip
 
   const caps = server.server.getClientCapabilities?.();
