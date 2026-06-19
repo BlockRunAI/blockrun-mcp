@@ -6,6 +6,54 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
+import { readFile } from "node:fs/promises";
+
+// The gateway's /v1/images/image2image only accepts base64 data URIs for the
+// source image(s). Callers naturally have local file paths or http(s) URLs, so
+// normalize those into data URIs here instead of forcing them to pre-encode.
+// Mirrors Franklin's resolveReferenceImage (src/tools/imagegen.ts): same data
+// URI / http / local-path handling, with a size cap, fetch timeout, and
+// content-type / extension validation.
+const REFERENCE_IMAGE_MAX_BYTES = 4_000_000;
+const IMAGE_EXT_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+export async function toImageDataUri(ref: string): Promise<string> {
+  if (ref.startsWith("data:image/")) return ref;
+
+  if (/^https?:\/\//i.test(ref)) {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      const res = await fetch(ref, { signal: ctrl.signal });
+      if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
+      const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
+      if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
+        throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
+      }
+      return `data:${mime};base64,${buffer.toString("base64")}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // Treat as a local file path.
+  const ext = ref.split(".").pop()?.toLowerCase() ?? "";
+  const mime = IMAGE_EXT_MIME[ext];
+  if (!mime) throw new Error(`unsupported image extension ".${ext}"; use png/jpg/jpeg/gif/webp`);
+  const buffer = await readFile(ref);
+  if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
+    throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap; resize or crop first`);
+  }
+  return `data:${mime};base64,${buffer.toString("base64")}`;
+}
 
 // Base (1024x1024) prices, mirroring the live /v1/images/models catalog.
 // dall-e-3 and flux-schnell were delisted upstream — do not re-add them.
@@ -33,6 +81,17 @@ const EDIT_MODELS = new Set([
   "google/nano-banana",
   "google/nano-banana-pro",
 ]);
+
+// Mirrors the gateway's MAX_IMAGES_BY_PREFIX. Multi-image edit fuses several
+// source images (e.g. a subject + a layout guide, or a reference + a brand logo)
+// into one render. openai/* accepts up to 4 source images, google/* up to 3.
+const MAX_EDIT_IMAGES_BY_PREFIX: Record<string, number> = {
+  "openai/": 4,
+  "google/": 3,
+};
+
+// Mirrors the gateway's MASK_SUPPORTED_MODELS — only OpenAI image models inpaint.
+const MASK_MODELS = new Set(["openai/gpt-image-1", "openai/gpt-image-2"]);
 
 const IMAGE_MODELS = [
   "zai/cogview-4",
@@ -71,18 +130,24 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - xai/grok-imagine-image-pro ($0.07) — higher quality Grok Imagine
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 
-Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro`,
+Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro
+Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
+Source images and masks accept a base64 data URI, an http(s) URL, or a local file path (auto-encoded). Inpaint mask (openai/gpt-image-* only) via "mask"; not combinable with multiple source images.`,
       inputSchema: {
         prompt: z.string().describe("Image description or edit instructions"),
         action: z.enum(["generate", "edit"]).optional().default("generate").describe("generate: create from text; edit: transform existing image"),
         model: z.enum(IMAGE_MODELS).optional().describe("Model to use (default: openai/gpt-image-2 for both generate and edit). gpt-image-2 renders on-image text best; nano-banana-pro for 4K photorealism; cogview-4 / grok-imagine-image for cheap drafts."),
-        image: z.string().optional().describe("Source image for edit action: base64-encoded image or URL"),
+        image: z
+          .union([z.string(), z.array(z.string()).min(1).max(4)])
+          .optional()
+          .describe("Source image(s) for edit action: a base64 data URI, an http(s) URL, or a local file path (auto-encoded to a data URI) — or an array of 2–4 to fuse into one render (e.g. subject + layout guide, or reference + brand logo). openai/* accepts up to 4, google/* up to 3; a mask cannot be combined with multiple images."),
+        mask: z.string().optional().describe("Inpaint mask for edit action (openai/gpt-image-* only): a base64 data URI, http(s) URL, or local file path. Transparent areas of the mask are regenerated. Cannot be combined with multiple source images."),
         size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro)"),
         quality: z.enum(["standard", "hd"]).optional().default("standard"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, action, model, image, size, quality, agent_id }) => {
+    async ({ prompt, action, model, image, mask, size, quality, agent_id }) => {
       try {
         if (getChain() !== "base") {
           return {
@@ -107,6 +172,40 @@ Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/
               isError: true,
             };
           }
+          const sourceImages = Array.isArray(image) ? image : [image];
+          const maxImages = MAX_EDIT_IMAGES_BY_PREFIX[`${selectedModel.split("/")[0]}/`] ?? 1;
+          if (sourceImages.length > maxImages) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} accepts at most ${maxImages} source image${maxImages > 1 ? "s" : ""} per edit (got ${sourceImages.length}).`) }],
+              isError: true,
+            };
+          }
+          if (mask) {
+            if (!MASK_MODELS.has(selectedModel)) {
+              return {
+                content: [{ type: "text", text: formatError("mask (inpaint) is supported only by openai/gpt-image-1 and openai/gpt-image-2") }],
+                isError: true,
+              };
+            }
+            if (sourceImages.length > 1) {
+              return {
+                content: [{ type: "text", text: formatError("mask cannot be combined with multiple source images; send a single image with a mask, or multiple images without a mask") }],
+                isError: true,
+              };
+            }
+          }
+          let normalizedImage: string | string[];
+          let normalizedMask: string | undefined;
+          try {
+            const dataUris = await Promise.all(sourceImages.map(toImageDataUri));
+            normalizedImage = dataUris.length === 1 ? dataUris[0] : dataUris;
+            if (mask) normalizedMask = await toImageDataUri(mask);
+          } catch (e) {
+            return {
+              content: [{ type: "text", text: formatError(`Could not load source image: ${e instanceof Error ? e.message : String(e)}`) }],
+              isError: true,
+            };
+          }
           const estimatedCost = estimateCost(selectedModel, size);
           const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
           if (!budgetCheck.allowed) {
@@ -115,9 +214,10 @@ Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/
               isError: true,
             };
           }
-          response = await getImageClient().edit(prompt, image, {
+          response = await getImageClient().edit(prompt, normalizedImage, {
             model: selectedModel,
             size,
+            ...(normalizedMask ? { mask: normalizedMask } : {}),
           });
           recordSpending(budget, estimatedCost, agent_id);
         } else {
