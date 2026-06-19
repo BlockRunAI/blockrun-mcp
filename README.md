@@ -93,6 +93,14 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 The `-s user` flag installs globally (available in every project). The `--` separator
 ensures `-y` is passed to `npx`, not parsed by `claude mcp add`.
 
+> 💡 **Homebrew / nvm users:** if the server doesn't connect after install, Claude Code
+> likely can't find `node`/`npx` on its launcher PATH. Install with your shell PATH passed
+> through — works on CLI and desktop:
+> ```bash
+> claude mcp add blockrun -s user -e PATH="$PATH" -- npx -y @blockrun/mcp@latest
+> ```
+> See [Troubleshooting](#troubleshooting) if it persists.
+
 **Tool profiles** — expose a trimmed tool set so the client loads fewer schemas into
 context. Pass `--profile <name>` (or set `BLOCKRUN_MCP_PROFILE`); omit it for the full set.
 
@@ -281,7 +289,13 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 - **`Insufficient balance` / HTTP 402 after retry** → Run `blockrun_wallet action:"setup"`. Send USDC on Base (or Solana — see [Environment Variables](#environment-variables)).
 - **`Smart routing (ClawRouter) is not available on Solana`** → Pass `model:` or `mode:` explicitly to `blockrun_chat`, or switch back to Base with `echo base > ~/.blockrun/.chain`.
-- **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥18). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above.
+- **`blockrun` doesn't connect / "MCP server failed" / `spawn npx ENOENT`** → Almost always a **PATH issue**: Claude Code can't find `node`/`npx` on the PATH its MCP launcher uses. Common with **Homebrew** (`/opt/homebrew/bin`) or **nvm**, where node isn't on that PATH — and it affects the **CLI as well as the desktop app** (the launcher doesn't always inherit your interactive shell PATH). Fix by passing your shell PATH at install:
+  ```bash
+  claude mcp remove blockrun -s user
+  claude mcp add blockrun -s user -e PATH="$PATH" -- npx -y @blockrun/mcp@latest
+  ```
+  Then restart Claude Code (or `/mcp` to reconnect — MCP tools load at session start). Or pin absolute paths: `claude mcp add blockrun -s user -- /opt/homebrew/bin/npx -y @blockrun/mcp@latest` (use `which npx` for your path).
+- **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥18). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above (see the PATH fix above if node/npx aren't found).
 - **`fetch failed` / timeout when checking wallet balance** → Base RPC transient outage. The tool already falls through 3 public RPCs; retry after 30s. Persistent failures usually = local proxy / firewall blocking outbound RPC.
 - **`ENOENT: ~/.blockrun/.session`** → Expected on first run. The server auto-creates the wallet; check stderr for the `WALLET_CREATED` line confirming the address.
 - **`Video generation timed out` (5-min cap)** → Upstream Seedance / xAI queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model (`bytedance/seedance-1.5-pro`).
