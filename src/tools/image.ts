@@ -34,6 +34,14 @@ const EDIT_MODELS = new Set([
   "google/nano-banana-pro",
 ]);
 
+// Mirrors the gateway's MAX_IMAGES_BY_PREFIX. Multi-image edit fuses several
+// source images (e.g. a subject + a layout guide, or a reference + a brand logo)
+// into one render. openai/* accepts up to 4 source images, google/* up to 3.
+const MAX_EDIT_IMAGES_BY_PREFIX: Record<string, number> = {
+  "openai/": 4,
+  "google/": 3,
+};
+
 const IMAGE_MODELS = [
   "zai/cogview-4",
   "google/nano-banana",
@@ -71,12 +79,16 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - xai/grok-imagine-image-pro ($0.07) — higher quality Grok Imagine
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 
-Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro`,
+Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro
+Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.`,
       inputSchema: {
         prompt: z.string().describe("Image description or edit instructions"),
         action: z.enum(["generate", "edit"]).optional().default("generate").describe("generate: create from text; edit: transform existing image"),
         model: z.enum(IMAGE_MODELS).optional().describe("Model to use (default: openai/gpt-image-2 for both generate and edit). gpt-image-2 renders on-image text best; nano-banana-pro for 4K photorealism; cogview-4 / grok-imagine-image for cheap drafts."),
-        image: z.string().optional().describe("Source image for edit action: base64-encoded image or URL"),
+        image: z
+          .union([z.string(), z.array(z.string()).min(1).max(4)])
+          .optional()
+          .describe("Source image(s) for edit action: a base64 data URI or URL, or an array of 2–4 to fuse into one render (e.g. subject + layout guide, or reference + brand logo). openai/* accepts up to 4, google/* up to 3; a mask cannot be combined with multiple images."),
         size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro)"),
         quality: z.enum(["standard", "hd"]).optional().default("standard"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
@@ -104,6 +116,14 @@ Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/
           if (!EDIT_MODELS.has(selectedModel)) {
             return {
               content: [{ type: "text", text: formatError("Image edits support openai/gpt-image-1, openai/gpt-image-2, google/nano-banana, or google/nano-banana-pro") }],
+              isError: true,
+            };
+          }
+          const sourceImages = Array.isArray(image) ? image : [image];
+          const maxImages = MAX_EDIT_IMAGES_BY_PREFIX[`${selectedModel.split("/")[0]}/`] ?? 1;
+          if (sourceImages.length > maxImages) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} accepts at most ${maxImages} source image${maxImages > 1 ? "s" : ""} per edit (got ${sourceImages.length}).`) }],
               isError: true,
             };
           }
