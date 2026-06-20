@@ -76,11 +76,12 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
         real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only. Mutually exclusive with image_url."),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for (defaults to the model's default — 8s for xAI, 5s for Seedance; Seedance supports up to 10s)."),
+        generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, image_url, real_face_asset_id, duration_seconds, model, agent_id }) => {
+    async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, model, agent_id }) => {
       try {
         if (getChain() !== "base") {
           return {
@@ -130,6 +131,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (image_url) body.image_url = image_url;
         if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
+        if (generate_audio !== undefined) body.generate_audio = generate_audio;
 
         // Step 1: get 402 with price + requirements
         const resp402 = await fetchWithTimeout(submitUrl, {
