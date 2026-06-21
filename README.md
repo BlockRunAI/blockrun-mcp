@@ -187,7 +187,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 | Tool | Data source | Cost |
 |------|-------------|------|
 | `blockrun_chat` | 66+ LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K2.6, GLM, NVIDIA free tier, ...) with `mode` tier routing | per token |
-| `blockrun_image` | GPT Image 1/2, Nano Banana / Pro (up to 4K), Grok Imagine, CogView-4 — generation + img2img editing | $0.015–0.15 |
+| `blockrun_image` | Generation: openai/gpt-image-2 ($0.06–0.12) — flagship, reasoning + text; openai/gpt-image-1 ($0.02–0.04); google/nano-banana ($0.05) / nano-banana-pro ($0.10–0.15, 4K); xai/grok-imagine-image ($0.02) / -pro ($0.07); zai/cogview-4 ($0.015). Edit: openai/gpt-image-*, google/nano-banana* (img2img, inpaint, fusion). | $0.015–0.15 |
 | `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio defaults); RealFace asset → real-person video | $0.05–0.30/sec |
 | `blockrun_realface` | Enroll a real person (phone liveness) or an AI character (Virtual Portrait, no liveness) as a `ta_xxxx` asset for Seedance 2.0 video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
