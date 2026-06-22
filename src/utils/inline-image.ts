@@ -15,9 +15,15 @@ import sharp from "sharp";
 // Thumbnail bounds — small enough that the base64 stays cheap in context.
 const MAX_DIM = Number(process.env.BLOCKRUN_INLINE_MAX_DIM || 512);
 const JPEG_QUALITY = Number(process.env.BLOCKRUN_INLINE_QUALITY || 70);
-// Hard ceiling on the encoded thumbnail; above this we skip inlining entirely
-// (URL-only) so a single image can never blow up the context window.
+// Hard ceiling on the BASE64-encoded thumbnail (the string that actually lands
+// in the context window — base64 inflates the raw JPEG ~33%). Above this we
+// skip inlining entirely (URL-only) so a single image can't blow up context.
 const MAX_BYTES = Number(process.env.BLOCKRUN_INLINE_MAX_BYTES || 900_000);
+// Defensive caps on the SOURCE download/decode. Upstream is the trusted
+// blockrun-hosted asset, but bounding the buffer + decode keeps a pathological
+// response from ballooning memory before the thumbnail step runs.
+const MAX_SOURCE_BYTES = 25_000_000;     // 25 MB ceiling on the fetched image
+const MAX_INPUT_PIXELS = 100_000_000;    // ~100 MP decode guard for sharp
 
 function truthy(v: string | undefined): boolean {
   return v != null && /^(1|true|yes|on)$/i.test(v.trim());
@@ -48,17 +54,23 @@ export async function buildInlineImageBlock(url: string): Promise<InlineImageBlo
   try {
     const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!resp.ok) return null;
+    // Cap the download: reject early on a too-large Content-Length, and guard
+    // again on the actual buffer in case the header lied or was absent.
+    const declared = Number(resp.headers.get("content-length") || 0);
+    if (declared > MAX_SOURCE_BYTES) return null;
     const input = Buffer.from(await resp.arrayBuffer());
+    if (input.byteLength > MAX_SOURCE_BYTES) return null;
 
-    const thumb = await sharp(input)
+    const thumb = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
       .resize(MAX_DIM, MAX_DIM, { fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer();
 
-    if (thumb.byteLength > MAX_BYTES) return null;
+    const data = thumb.toString("base64");
+    if (data.length > MAX_BYTES) return null;  // measure the encoded size
 
-    return { type: "image", data: thumb.toString("base64"), mimeType: "image/jpeg" };
+    return { type: "image", data, mimeType: "image/jpeg" };
   } catch {
     return null;
   }

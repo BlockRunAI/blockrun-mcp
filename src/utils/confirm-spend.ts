@@ -59,7 +59,8 @@ export async function confirmSpend(
       message:
         `💸 BlockRun charge — ${label}\n` +
         `Estimated: $${usd.toFixed(4)}${balanceNote ? ` · ${balanceNote}` : ""}\n` +
-        `Approve this spend? (USDC is debited per call.)`,
+        `Approve this spend? (USDC is debited per call.)\n` +
+        `To stop the charge, choose Decline — Cancel/ESC lets it proceed.`,
       requestedSchema: {
         type: "object",
         properties: {
