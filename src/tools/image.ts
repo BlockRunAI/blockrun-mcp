@@ -224,8 +224,8 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         }
 
         // Confirm the spend before charging (elicitation; user can approve once,
-        // approve all for the session, or cancel). No-ops on clients without
-        // elicitation or when disabled via env.
+        // approve all for the session, or decline to abort). No-ops on clients
+        // without elicitation or when disabled via env.
         const confirm = await confirmSpend(server, {
           usd: estimatedCost,
           label: `${action === "edit" ? "image edit" : "image"} · ${selectedModel}`,
