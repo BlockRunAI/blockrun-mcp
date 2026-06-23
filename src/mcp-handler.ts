@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BudgetState } from "./types.js";
 import { getClient, getWalletInfo } from "./utils/wallet.js";
 import { loadModels, type ModelCache } from "./utils/model-cache.js";
+import { parseBudgetLimitEnv } from "./utils/budget.js";
 
 import { registerWalletTool } from "./tools/wallet.js";
 import { registerChatTool } from "./tools/chat.js";
@@ -36,7 +37,16 @@ export function initializeMcpServer(
   server: McpServer,
   profileArgs?: { argv?: string[]; env?: NodeJS.ProcessEnv },
 ): { profile: string; tools: ToolName[] } {
-  const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
+  // Default global spend cap from BLOCKRUN_BUDGET_LIMIT (USD). Without it the
+  // ledger starts unlimited; the cap is in-memory and resets when the (npx-spawned)
+  // process restarts, so an operator who wants a hard ceiling should set the env.
+  const env = profileArgs?.env ?? process.env;
+  const budget: BudgetState = {
+    limit: parseBudgetLimitEnv(env.BLOCKRUN_BUDGET_LIMIT),
+    spent: 0,
+    calls: 0,
+    agents: new Map(),
+  };
   const modelCache: ModelCache = { models: null };
 
   const { profile, tools } = resolveTools(profileArgs?.argv, profileArgs?.env);

@@ -1,7 +1,7 @@
 // src/tools/realface.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -25,7 +25,7 @@ async function payAndPostJson(
   url: string,
   reqBody: string,
   fallbackDescription: string,
-): Promise<{ status: number; data: Record<string, any> }> {
+): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
   const privateKey = getOrCreateWalletKey();
   const account = privateKeyToAccount(privateKey);
 
@@ -70,7 +70,7 @@ async function payAndPostJson(
   }, 90_000);
 
   const data = await resp.json().catch(() => ({})) as Record<string, any>;
-  return { status: resp.status, data };
+  return { status: resp.status, data, settledUsd: amountToUsd(details.amount) };
 }
 
 export function registerRealfaceTool(server: McpServer, budget: BudgetState): void {
@@ -252,7 +252,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
 
-          const { status, data } = await payAndPostJson(
+          const { status, data, settledUsd } = await payAndPostJson(
             `${BLOCKRUN_API}/v1/portrait/enroll`,
             JSON.stringify({ name, image_url }),
             "BlockRun Virtual Portrait enrollment",
@@ -271,7 +271,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Portrait response missing asset_id: ${JSON.stringify(data)}`);
 
-          recordSpending(budget, ENROLLMENT_PRICE_USD, agent_id);
+          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
 
           const txHash = data.settlement?.tx_hash || undefined;
           const lines = [
@@ -333,6 +333,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
           const paymentRequired = parsePaymentRequired(prHeader);
           const details = extractPaymentDetails(paymentRequired);
+          const settledUsd = amountToUsd(details.amount);
 
           const paymentPayload = await createPaymentPayload(
             privateKey,
@@ -377,7 +378,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Enroll response missing asset_id: ${JSON.stringify(data)}`);
 
-          recordSpending(budget, ENROLLMENT_PRICE_USD, agent_id);
+          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
 
           const txHash = data.settlement?.tx_hash || undefined;
           const lines = [

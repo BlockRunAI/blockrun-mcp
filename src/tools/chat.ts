@@ -4,19 +4,23 @@ import { z } from "zod";
 import { LLMClient } from "@blockrun/llm";
 import { getClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
-import { formatError } from "../utils/errors.js";
+import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { checkBudget, recordActualSpend } from "../utils/budget.js";
+import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
 
 /**
- * Worst-case per-call cost estimate for the budget pre-check. Smart routing
- * doesn't know which model it'll pick until after the call, so we estimate by
- * routing_profile; mode-based paths escalate for reasoning/powerful tiers.
- * The post-call `recordSpending` in the smart path uses the SDK's actual
- * `costEstimate`, so this only needs to be conservative, not precise.
+ * Conservative per-call RESERVE for the budget pre-check (the gate). We don't
+ * know a model's settled price until after the call, so for any path that CAN
+ * pick an expensive model we reserve a frontier-ish worst-case scaled by
+ * max_tokens — this stops a near-exhausted budget from authorizing one large
+ * frontier completion. The post-call recordActualSpend() books the REAL settled
+ * cost (LLMClient.getSpending delta), so over-reserving here only affects the
+ * gate, never the ledger.
  */
 function estimateChatCost(
+  maxTokens: number | undefined,
   mode: string | undefined,
   model: string | undefined,
   routing: string | undefined,
@@ -27,23 +31,45 @@ function estimateChatCost(
   if (model?.startsWith("nvidia/")) return 0;
   if (routing === "smart" && routingProfile === "free") return 0;
 
-  // Smart routing: cost varies by profile. Conservative upper-bound so the
-  // gate matches what ClawRouter may actually settle.
+  const out = Math.max(maxTokens ?? 1024, 256);
+  // ~$20 / 1M output tokens — a conservative upper bound covering premium
+  // frontier output, floored so tiny completions still reserve something real.
+  const frontierReserve = Math.max(0.01, (out / 1_000_000) * 20);
+
+  // Smart routing: cost varies by profile; reserve the worst-case it may settle.
   if (routing === "smart") {
     switch (routingProfile) {
-      case "eco":     return 0.002;
-      case "premium": return 0.05;
+      case "eco":     return 0.01;
+      case "premium": return frontierReserve;
       case "auto":
-      default:        return 0.01;
+      default:        return Math.max(0.01, frontierReserve * 0.5);
     }
   }
 
-  // Mode-based: reasoning/powerful tiers pick expensive frontier models.
-  if (mode === "reasoning" || mode === "powerful") return 0.01;
+  // Reasoning/powerful tiers and any explicit single model can be a frontier
+  // model whose real price we can't know up front — reserve conservatively.
+  if (mode === "reasoning" || mode === "powerful") return frontierReserve;
+  if (model) return frontierReserve;
 
-  // Default nominal cost for cheap/balanced/coding/glm/fast and explicit
-  // single-model calls. Matches the local recordSpending convention.
-  return 0.001;
+  // Heuristic cheap/balanced/coding/glm/fast modes pick budget models.
+  return Math.max(0.002, (out / 1_000_000) * 3);
+}
+
+/**
+ * Settled cost of the LLMClient call that ran inside `run`, measured as the
+ * delta of the client's own cumulative spend counter (getSpending().totalUsd),
+ * which the SDK increments with the REAL on-chain amount per call. Returns the
+ * result plus the booked cost so callers can record actual spend, falling back
+ * to the estimate when the delta is unavailable (0/NaN).
+ */
+async function withSettledCost<T>(
+  client: ApiClient,
+  run: () => Promise<T>,
+): Promise<{ result: T; settledUsd: number }> {
+  const before = client.getSpending().totalUsd;
+  const result = await run();
+  const settledUsd = client.getSpending().totalUsd - before;
+  return { result, settledUsd };
 }
 
 export function registerChatTool(server: McpServer, budget: BudgetState): void {
@@ -101,7 +127,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
       // Smart routing picks the model AFTER the gate, so use a per-profile
       // worst-case estimate so a single premium-profile call cannot blow past
       // a near-exhausted budget. Mode-based heuristics escalate similarly.
-      const estimatedCost = estimateChatCost(mode, model, routing, routing_profile);
+      const estimatedCost = estimateChatCost(max_tokens, mode, model, routing, routing_profile);
       const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
       if (!budgetCheck.allowed) {
         return {
@@ -148,7 +174,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
           };
         }
         try {
-          const result = await llm.smartChat(message, {
+          const { result, settledUsd } = await withSettledCost(llm, () => llm.smartChat(message, {
             system,
             maxTokens: max_tokens,
             maxOutputTokens: max_tokens,
@@ -159,9 +185,10 @@ Run blockrun_models to see all 41+ models with pricing.`,
             routingProfile: routing_profile === "free" ? undefined : routing_profile,
             responseFormat,
             stop,
-          });
-          // Record cost from ClawRouter's estimate
-          recordSpending(budget, result.routing.costEstimate || 0.001, agent_id);
+          }));
+          // Book the REAL settled cost (getSpending delta); fall back to
+          // ClawRouter's own estimate, then the gate reserve.
+          recordActualSpend(budget, settledUsd, result.routing.costEstimate || estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: `[${result.model} | ${result.routing.tier} | $${result.routing.costEstimate.toFixed(4)} | ${Math.round((result.routing.savings ?? 0) * 100)}% savings]\n\n${result.response}` }],
             structuredContent: {
@@ -171,8 +198,7 @@ Run blockrun_models to see all 41+ models with pricing.`,
             },
           };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return { content: [{ type: "text", text: formatError(errorMessage) }], isError: true };
+          return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
         }
       }
 
@@ -189,40 +215,38 @@ Run blockrun_models to see all 41+ models with pricing.`,
           // forwards `messages` verbatim and accepts image_url content arrays
           // for vision-capable models — so a multimodal array is runtime-valid.
           // (claude-* with history is already handled by the native branch above.)
-          const result = await llm.chatCompletion(targetModel, fullMessages as unknown as Parameters<typeof llm.chatCompletion>[1], {
+          const { result, settledUsd } = await withSettledCost(llm, () => llm.chatCompletion(targetModel, fullMessages as unknown as Parameters<typeof llm.chatCompletion>[1], {
             maxTokens: max_tokens,
             temperature,
             responseFormat,
             stop,
-          });
+          }));
           const reply = result.choices?.[0]?.message?.content || "";
-          recordSpending(budget, estimatedCost, agent_id); // local estimate
+          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: `[${targetModel} | ${fullMessages.length} msgs]\n\n${reply}` }],
             structuredContent: { model_used: targetModel, response: reply, message_count: fullMessages.length },
           };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return { content: [{ type: "text", text: formatError(errorMessage) }], isError: true };
+          return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
         }
       }
 
       // If specific model provided, use it directly
       if (model) {
         try {
-          const response = await llm.chat(model, message, {
+          const { result: response, settledUsd } = await withSettledCost(llm, () => llm.chat(model, message, {
             system,
             maxTokens: max_tokens,
             temperature,
             responseFormat,
             stop,
-          });
-          recordSpending(budget, estimatedCost, agent_id); // local estimate
+          }));
+          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return { content: [{ type: "text", text: response }] };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
           return {
-            content: [{ type: "text", text: formatError(errorMessage) }],
+            content: [{ type: "text", text: formatError(extractErrorMessage(error)) }],
             isError: true,
           };
         }
@@ -232,28 +256,28 @@ Run blockrun_models to see all 41+ models with pricing.`,
       const routingMode: RoutingMode = mode || "balanced";
       const models = MODEL_TIERS[routingMode];
 
-      let lastError: Error | null = null;
+      let lastError: unknown = null;
       for (const m of models) {
         try {
-          const response = await llm.chat(m, message, {
+          const { result: response, settledUsd } = await withSettledCost(llm, () => llm.chat(m, message, {
             system,
             maxTokens: max_tokens,
             temperature,
             responseFormat,
             stop,
-          });
-          recordSpending(budget, estimatedCost, agent_id); // local estimate
+          }));
+          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: `[${m}]\n\n${response}` }],
             structuredContent: { model_used: m, response },
           };
         } catch (error) {
-          lastError = error as Error;
+          lastError = error;
           continue;
         }
       }
 
-      const errorMessage = lastError?.message || "All models failed";
+      const errorMessage = lastError ? extractErrorMessage(lastError) : "All models failed";
       return {
         content: [{ type: "text", text: formatError(errorMessage) }],
         isError: true,

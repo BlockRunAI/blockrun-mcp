@@ -1,7 +1,7 @@
 // src/tools/music.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -127,7 +127,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
         if (!track?.url) throw new Error("No track URL in response");
 
         const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
-        recordSpending(budget, MUSIC_COST, agent_id);
+        recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
 
         const lines = [
           `🎵 Track ready!`,

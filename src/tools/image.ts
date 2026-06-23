@@ -103,9 +103,18 @@ const IMAGE_MODELS = [
   "xai/grok-imagine-image-pro",
 ] as const;
 
+// The large-size tier applies only when a dimension genuinely exceeds 1024.
+// A plain `size !== "1024x1024"` inequality billed SMALLER renders (512x512) and
+// harmless typos ("1024X1024", trailing space) at the large-tier price.
+function isLargerThanBase(size: string): boolean {
+  const m = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(size);
+  if (!m) return false; // unrecognized → treat as base, don't over-charge
+  return Math.max(Number(m[1]), Number(m[2])) > 1024;
+}
+
 function estimateCost(model: string, size: string): number {
   const base = GENERATE_MODEL_COST[model] ?? 0.06;
-  if (size !== "1024x1024" && LARGE_SIZE_COST[model]) {
+  if (LARGE_SIZE_COST[model] && isLargerThanBase(size)) {
     return LARGE_SIZE_COST[model];
   }
   return base;

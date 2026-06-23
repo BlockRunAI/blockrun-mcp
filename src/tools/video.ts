@@ -1,7 +1,7 @@
 // src/tools/video.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -173,6 +173,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         const paymentRequired = parsePaymentRequired(prHeader);
         const details = extractPaymentDetails(paymentRequired);
+        // Real on-chain price from the 402 challenge (token-priced upstream, so
+        // 1080p/4K can far exceed the per-second table estimate). Book THIS, not
+        // the estimate, so the budget cap reflects what was actually settled.
+        const settledUsd = amountToUsd(details.amount);
 
         const paymentPayload = await createPaymentPayload(
           privateKey,
@@ -305,7 +309,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),
           ...(completed.txHash ? [`Tx: ${completed.txHash}`] : []),
         ];
-        recordSpending(budget, estimatedCost, agent_id);
+        recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],

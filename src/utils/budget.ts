@@ -52,3 +52,51 @@ export function recordSpending(budget: BudgetState, cost: number, agentId?: stri
     // If no budget entry for this agent, spending is tracked globally only
   }
 }
+
+/**
+ * Convert an x402 `details.amount` (atomic USDC base units — USDC has 6 decimals
+ * on both Base and Solana) to a USD figure. Returns null when the amount is
+ * missing or unparseable so callers fall back to their pre-call estimate instead
+ * of silently recording $0 for a call that actually settled on-chain.
+ */
+export function amountToUsd(amount: unknown): number | null {
+  const n =
+    typeof amount === "string" ? Number(amount)
+    : typeof amount === "number" ? amount
+    : NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n / 1_000_000;
+}
+
+/**
+ * Record the ACTUAL settled cost of a paid call when it is known (the 402
+ * `details.amount`, or an SDK getSpending() delta), else fall back to the
+ * pre-call `estimate`. The budget cap is only meaningful if the ledger reflects
+ * real on-chain spend: the old path recorded a flat estimate, so a frontier
+ * chat or high-resolution video could settle for orders of magnitude more than
+ * was booked, silently blowing past the cap.
+ */
+export function recordActualSpend(
+  budget: BudgetState,
+  actualUsd: number | null | undefined,
+  estimate: number,
+  agentId?: string,
+): void {
+  const cost =
+    typeof actualUsd === "number" && Number.isFinite(actualUsd) && actualUsd > 0
+      ? actualUsd
+      : Math.max(0, estimate);
+  recordSpending(budget, cost, agentId);
+}
+
+/**
+ * Parse the optional BLOCKRUN_BUDGET_LIMIT env var into a default global spend
+ * cap (USD). Without it the server starts UNLIMITED — an agent loop can drain
+ * the funded wallet before the user ever runs blockrun_wallet action:"budget".
+ * Accepts "5", "5.00", or "$5"; ignores junk / non-positive values (→ null).
+ */
+export function parseBudgetLimitEnv(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const n = Number(raw.trim().replace(/^\$/, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}

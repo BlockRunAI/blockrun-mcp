@@ -10,7 +10,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -164,6 +164,9 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         const paymentRequired = parsePaymentRequired(prHeader);
         const details = extractPaymentDetails(paymentRequired);
+        // Prefer the exact 402-quoted price (handles sound-effect duration and any
+        // server-side price change) over the local estimate for billing + display.
+        const billedUsd = amountToUsd(details.amount) ?? cost;
 
         const paymentPayload = await createPaymentPayload(
           privateKey,
@@ -207,7 +210,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         if (!clip?.url) throw new Error("No audio URL in response");
 
         const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
-        recordSpending(budget, cost, agent_id);
+        recordActualSpend(budget, billedUsd, cost, agent_id);
 
         const lines = [
           action === "sound_effect" ? `🔊 Sound effect ready!` : `🗣️ Speech ready!`,
@@ -216,7 +219,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           ...(clip.characters !== undefined ? [`Characters: ${clip.characters}`] : []),
           ...(clip.duration_seconds !== undefined ? [`Duration: ${clip.duration_seconds}s`] : []),
           `Model: ${data.model || (action === "sound_effect" ? "elevenlabs/sound-effects" : model)}`,
-          `Cost: $${cost.toFixed(4)}`,
+          `Cost: $${billedUsd.toFixed(4)}`,
           ...(txHash ? [`Tx: ${txHash}`] : []),
           ``,
           `Note: This URL may expire — download it now if you need to keep the file.`,
@@ -230,7 +233,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             ...(clip.characters !== undefined ? { characters: clip.characters } : {}),
             ...(clip.duration_seconds !== undefined ? { duration_seconds: clip.duration_seconds } : {}),
             model: data.model || (action === "sound_effect" ? "elevenlabs/sound-effects" : model),
-            cost_usd: cost,
+            cost_usd: billedUsd,
             ...(txHash ? { txHash } : {}),
           },
         };
