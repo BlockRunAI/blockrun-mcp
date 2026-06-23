@@ -1,6 +1,6 @@
 ---
 name: image-prompting
-description: Use when generating or editing images via `blockrun_image` — especially with GPT Image 2, DALL-E 3, or Flux for posters, UI mockups, marketing assets, product shots, or anything with on-image text. Turns vague user requests ("make me a cool poster") into structured, text-accurate prompts that actually render what you asked for.
+description: Use when generating or editing images via `blockrun_image` — especially with GPT Image 2, Nano Banana, or Grok Imagine for posters, UI mockups, marketing assets, product shots, or anything with on-image text. Turns vague user requests ("make me a cool poster") into structured, text-accurate prompts that actually render what you asked for.
 triggers:
   - "image prompt"
   - "make a poster"
@@ -18,7 +18,7 @@ triggers:
 
 # Image Prompting
 
-Most image failures are prompt failures. This skill gives the MCP agent a repeatable structure for turning any user request into a prompt that renders clean typography, preserves layout on edits, and avoids AI slop. Defaults are tuned for **GPT Image 2** (best legible text), with fallbacks for DALL-E 3, Flux, and Nano Banana.
+Most image failures are prompt failures. This skill gives the MCP agent a repeatable structure for turning any user request into a prompt that renders clean typography, preserves layout on edits, and avoids AI slop. Defaults are tuned for **GPT Image 2** (best legible text), with fallbacks for Nano Banana, Grok Imagine, and CogView.
 
 ## Quick Decision Table
 
@@ -26,7 +26,7 @@ Most image failures are prompt failures. This skill gives the MCP agent a repeat
 |---|---|---|---|---|
 | Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` | ~$0.04 |
 | Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` | ~$0.04 |
-| Photoreal / fashion / editorial | `openai/gpt-image-2` or `black-forest/flux-1.1-pro` | generate | `1024x1024`+ | $0.04–0.06 |
+| Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024`+ | $0.04–0.10 |
 | Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | ~$0.01 |
 | Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | ~$0.04 |
 | Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target | ~$0.04 |
@@ -305,4 +305,4 @@ CONSTRAINTS:
 
 ## Reference
 
-BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `openai/dall-e-3`, `google/nano-banana`, `google/nano-banana-pro`, `black-forest/flux-1.1-pro`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-pro`
+BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-pro`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-pro`

@@ -41,6 +41,6 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 - TypeScript, ESM
 - Build with tsup
-- Node >= 18
+- Node >= 20.19
 - MIT license
 - npm registry: `@blockrun/mcp`

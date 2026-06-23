@@ -212,7 +212,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 > **For LLMs and agents invoking BlockRun MCP tools:**
 
 - **CRITICAL: When any `blockrun_*` tool returns a payment / balance / 402 error, call `blockrun_wallet` *first* to check status, then `action:"setup"` to get funding instructions.** Don't retry the failing tool blindly — the wallet is empty.
-- **CRITICAL: For `blockrun_markets` and `blockrun_surf`, the 80+ endpoint catalog lives in `skills/markets/SKILL.md` and `skills/surf/SKILL.md`, NOT in the tool description.** Browse the skill before guessing endpoint paths.
+- **CRITICAL: `blockrun_surf`'s 84-endpoint catalog lives in `skills/surf/SKILL.md`; `blockrun_markets`' full endpoint list is in its own tool description (with worked examples in `skills/prediction-markets/SKILL.md`).** Browse those before guessing endpoint paths.
 - **CRITICAL: `blockrun_chat routing:"smart"` (ClawRouter) only works on Base wallets.** On Solana, pass `mode:` or `model:` to pick a model directly.
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures or client-side timeouts do NOT charge. Don't retry-loop them — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`. Pass `agent_id:"X"` to every downstream `blockrun_*` call — the child is auto-blocked when the budget hits zero.
@@ -295,7 +295,7 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
   claude mcp add blockrun -s user -e PATH="$PATH" -- npx -y @blockrun/mcp@latest
   ```
   Then restart Claude Code (or `/mcp` to reconnect — MCP tools load at session start). Or pin absolute paths: `claude mcp add blockrun -s user -- /opt/homebrew/bin/npx -y @blockrun/mcp@latest` (use `which npx` for your path).
-- **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥18). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above (see the PATH fix above if node/npx aren't found).
+- **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (must be ≥20.19). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install command from above (see the PATH fix above if node/npx aren't found).
 - **`fetch failed` / timeout when checking wallet balance** → Base RPC transient outage. The tool already falls through 3 public RPCs; retry after 30s. Persistent failures usually = local proxy / firewall blocking outbound RPC.
 - **`ENOENT: ~/.blockrun/.session`** → Expected on first run. The server auto-creates the wallet; check stderr for the `WALLET_CREATED` line confirming the address.
 - **`Video generation timed out` (5-min cap)** → Upstream Seedance / xAI queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model (`bytedance/seedance-1.5-pro`).

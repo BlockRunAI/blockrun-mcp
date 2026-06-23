@@ -82,13 +82,13 @@ Notable modes:
 - mode:"glm" → Zhipu GLM-5 / GLM-5-Turbo ($0.001/call, excellent for coding tasks, pays via USDC on BlockRun)
 - mode:"coding" → GLM-5 first, then code-specialized models
 - mode:"cheap" → GLM-5, NVIDIA free, DeepSeek
-- mode:"reasoning" → o3, o1, DeepSeek-R1
+- mode:"reasoning" → Claude Opus, o3, o1, deepseek-reasoner
 - mode:"free" → NVIDIA models (no cost)
 - routing:"smart" → auto-select via ClawRouter
 
 Pick directly: model:"zai/glm-5", model:"openai/o3", model:"nvidia/deepseek-v4-flash" (free).
 
-Run blockrun_models to see all 41+ models with pricing.`,
+Run blockrun_models to see all available models with pricing.`,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'zai/glm-5', 'openai/o3')"),

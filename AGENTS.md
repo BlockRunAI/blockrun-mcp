@@ -34,13 +34,13 @@ src/
 ## Install in Codex
 
 ```bash
-Codex mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
+codex mcp add blockrun -- npx -y @blockrun/mcp@latest
 ```
 
 ## Conventions
 
 - TypeScript, ESM
 - Build with tsup
-- Node >= 18
+- Node >= 20.19
 - MIT license
 - npm registry: `@blockrun/mcp`

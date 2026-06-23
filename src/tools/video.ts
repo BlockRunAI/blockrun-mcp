@@ -62,8 +62,8 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
 Models (Seedance defaults bumped to 720p + synced audio on the gateway):
-- azure/sora-2 ($0.10/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
-- xai/grok-imagine-video ($0.05/sec, 8s default -> $0.42/clip) — stylized, fast
+- azure/sora-2 ($0.10/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.40/clip). No image_url / RealFace.
+- xai/grok-imagine-video ($0.05/sec, 8s default -> $0.40/clip) — stylized, fast
 - bytedance/seedance-1.5-pro (~$0.092/sec, 720p + audio t2v, 5s default up to 10s) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-fast (~$0.238/sec text · ~$0.140/sec image-to-video, 720p + audio, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
 - bytedance/seedance-2.0 (~$0.298/sec text · ~$0.183/sec image-to-video, 720p + audio Pro) — highest quality; supports BytePlus RealFace assets

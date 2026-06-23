@@ -1,6 +1,6 @@
 # Contributing to BlockRun MCP
 
-PRs welcome. This server is small (~870 lines of tool code + 4 skills); reviews are usually fast.
+PRs welcome. This server is small (~4,400 lines of tool code + 8 skills); reviews are usually fast.
 
 ## Setup
 
@@ -19,12 +19,12 @@ Smoke-test the built server via the MCP stdio handshake:
 (printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'; sleep 2) | node dist/index.js 2>/dev/null
 ```
 
-Should return 15 tools including `blockrun_surf` and any new one you add.
+Should return 18 tools including `blockrun_surf` and any new one you add.
 
 To test locally with Claude Code, point it at your dev build:
 
 ```bash
-claude mcp add blockrun-dev node /path/to/blockrun-mcp/dist/index.js
+claude mcp add blockrun-dev -- node /path/to/blockrun-mcp/dist/index.js
 ```
 
 ## Design rule — Tool vs Skill
@@ -54,7 +54,7 @@ Reference examples in the repo:
 3. Keep tool description ≤ 30 lines. Long endpoint catalogs belong in `skills/<name>/SKILL.md`, not in the tool description
 4. Register in `src/mcp-handler.ts` (one import + one `register*Tool()` call)
 5. Add a row to the `## Tools` table in `README.md`
-6. `npm run typecheck && npm run build` + run the stdio smoke test above
+6. `npm run typecheck && npm run build && npm test` + run the stdio smoke test above
 
 ## Adding a new skill
 
@@ -105,6 +105,7 @@ Bump `package.json` `version` to match (semver: patch for fixes, minor for new t
 
 - [ ] `npm run typecheck` passes
 - [ ] `npm run build` passes
+- [ ] `npm test` passes
 - [ ] Tool description ≤ 30 lines (long catalogs go in the skill)
 - [ ] New tool added to `README.md` `## Tools` table
 - [ ] New skill placed in `skills/<name>/` directory
@@ -113,7 +114,7 @@ Bump `package.json` `version` to match (semver: patch for fixes, minor for new t
 
 One feature/fix per PR. Include what the tool does and its cost in the PR description.
 
-No test convention yet — `npm test` will exist when vitest lands. For now, smoke-test via the MCP stdio handshake above.
+Run `npm test` (node's built-in test runner via `tsx --test`, specs in `test/*.test.ts`) and the MCP stdio smoke-test above before opening a PR.
 
 ## Issues
 
