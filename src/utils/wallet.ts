@@ -139,9 +139,10 @@ export function getOrCreateWalletKey(): `0x${string}` {
   return info.privateKey as `0x${string}`;
 }
 
-function buildSolanaClient(): SolanaLLMClient {
+function buildSolanaClient(timeout?: number): SolanaLLMClient {
   const privateKey = process.env.SOLANA_WALLET_KEY || loadSolanaWallet() || undefined;
-  return new SolanaLLMClient(privateKey ? { privateKey } : undefined);
+  const opts = { ...(privateKey ? { privateKey } : {}), ...(timeout ? { timeout } : {}) };
+  return new SolanaLLMClient(Object.keys(opts).length ? opts : undefined);
 }
 
 export function getClient(): ApiClient {
@@ -156,6 +157,22 @@ export function getClient(): ApiClient {
     _evmClient = new LLMClient({ privateKey });
   }
   return _evmClient;
+}
+
+/**
+ * Build a NON-cached client for the active chain with an explicit HTTP timeout.
+ * Modal's sandbox/exec is synchronous — the HTTP call blocks for the whole run,
+ * which the skill documents at up to 1200s — but the shared getClient() uses the
+ * SDK's 60s default. A long exec on the shared client would abort, charge
+ * nothing, and orphan a live paid sandbox. Modal calls use this instead, so a
+ * long timeout never leaks onto the 60s client every other tool relies on.
+ */
+export function buildClientWithTimeout(timeoutMs: number): ApiClient {
+  if (getChain() === "solana") {
+    return buildSolanaClient(timeoutMs);
+  }
+  const privateKey = getOrCreateWalletKey();
+  return new LLMClient({ privateKey, timeout: timeoutMs });
 }
 
 /**
