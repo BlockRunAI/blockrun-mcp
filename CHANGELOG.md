@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.23.1
+
+- **`fix(modal)` — long synchronous `sandbox/exec` no longer aborts at 60s and orphans a paid sandbox.** Modal's `exec` blocks until the command finishes (the skill documents `timeout` up to 1200s), but the call ran on the shared 60s-timeout client, so any exec over ~60s threw `AbortError` — the result was lost and the sandbox the user paid to create kept running upstream. Modal calls now use a dedicated client whose HTTP timeout is sized to the requested `timeout` (floored at the 300s sandbox default, capped at 30 min, plus slack), without lengthening the 60s timeout every other tool relies on.
+
 ## 0.23.0
 
 - **`fix(budget)` — the spend cap now reflects REAL on-chain cost, not a flat estimate.** Paid tools recorded a pre-call estimate (a flat `$0.001` for explicit-model chat, a per-second table price for video) into the budget ledger instead of the amount actually settled via x402 — so a frontier-model chat or a 1080p/4K video could settle for orders of magnitude more than was booked, silently blowing past the cap the tool advertises. `blockrun_chat` now books the `LLMClient.getSpending()` delta (the SDK's real settled USDC) on every paid path; the manual-x402 media tools (`video`/`music`/`speech`/`realface`) record the 402 `details.amount`; native Anthropic derives cost from token usage. The pre-call gate is now `max_tokens`-aware so a near-exhausted budget can't authorize one large frontier completion, and `BLOCKRUN_BUDGET_LIMIT` sets an optional default global cap at startup (the ledger is still in-memory and resets per process). `blockrun_image` no longer over-charges sizes ≤1024² (the large-size tier only applies when a dimension truly exceeds 1024).
