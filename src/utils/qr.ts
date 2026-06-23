@@ -3,10 +3,31 @@ import QRCode from "qrcode";
 import open from "open";
 import * as fs from "fs";
 import * as path from "path";
-import sharp from "sharp";
 import { WALLET_DIR, QR_FILE, USDC_ADDRESS, BASE_CHAIN_ID } from "./constants.js";
 
 const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+// sharp is a native module whose platform binaries ship as optional deps, so a
+// fresh `npx -y @blockrun/mcp@latest` can silently fail to build it (musl/Alpine,
+// unusual arch, offline CI, partial optionalDeps install). It's used ONLY for the
+// cosmetic Solana-logo overlay on the payment QR. A top-level `import sharp` would
+// be resolved before main() runs, so a failed install would crash the ENTIRE
+// server — taking down all 18 tools for a decoration. Load it lazily and tolerate
+// its absence: a missing sharp degrades to a logo-less QR, never a crash.
+// sharp ships as a CJS `export = sharp`, so the module type IS the factory
+// function; under Node's ESM interop the dynamic import exposes it as `.default`.
+type SharpFactory = typeof import("sharp");
+let sharpModule: SharpFactory | null | undefined;
+async function loadSharp(): Promise<SharpFactory | null> {
+  if (sharpModule !== undefined) return sharpModule;
+  try {
+    const mod = (await import("sharp")) as unknown as { default: SharpFactory };
+    sharpModule = mod.default;
+  } catch {
+    sharpModule = null;
+  }
+  return sharpModule;
+}
 
 export function getEip681Uri(address: string, amountUsdc: number = 1.0): string {
   const amountWei = Math.floor(amountUsdc * 1_000_000);
@@ -36,6 +57,11 @@ function buildSolanaLogoSvg(size: number): string {
 
 async function overlayLogo(qrBuf: Buffer, chain: "base" | "solana", qrSize: number): Promise<Buffer> {
   if (chain !== "solana") return qrBuf;
+
+  // No sharp (native binary missing) → return the plain QR without the overlay.
+  // The QR is fully scannable; only the cosmetic ◎ logo is skipped.
+  const sharp = await loadSharp();
+  if (!sharp) return qrBuf;
 
   const logoSize = Math.round(qrSize * 0.18);
   const pad = Math.round(logoSize * 0.08);
