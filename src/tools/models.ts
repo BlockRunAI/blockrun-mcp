@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ImageModel, Model } from "@blockrun/llm";
 import { getClient } from "../utils/wallet.js";
+import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { loadModels, type ModelCache, type ModelEntry } from "../utils/model-cache.js";
 
 function getModelType(model: ModelEntry): "llm" | "image" {
@@ -20,6 +21,7 @@ export function registerModelsTool(server: McpServer, modelCache: ModelCache): v
       },
     },
     async ({ category, provider }) => {
+      try {
       let models = await loadModels(getClient(), modelCache);
 
       if (provider) {
@@ -59,6 +61,14 @@ export function registerModelsTool(server: McpServer, modelCache: ModelCache): v
         content: [{ type: "text", text: `Models (${models.length}):\n${lines.join("\n")}` }],
         structuredContent: { count: models.length, models },
       };
+      } catch (err) {
+        // Every other tool normalizes errors; the catalogue fetch (network/5xx)
+        // must not propagate uncaught out of the handler.
+        return {
+          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
+          isError: true,
+        };
+      }
     }
   );
 }

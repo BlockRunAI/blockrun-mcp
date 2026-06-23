@@ -8,7 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
-import { coerceBody } from "../utils/body.js";
+import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
@@ -77,7 +77,7 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
         if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: result as Record<string, unknown>,
+          structuredContent: asStructuredContent(result),
         };
       } catch (err) {
         return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };

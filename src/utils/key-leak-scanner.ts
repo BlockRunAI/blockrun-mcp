@@ -23,6 +23,19 @@ function looksLikeRawPrivateKey(value: unknown): boolean {
   return false;
 }
 
+/**
+ * Solana secret keys are most commonly exported as a JSON array of 64 byte
+ * integers (the `solana-keygen` / `id.json` format) rather than a bs58 string.
+ * The string scanner above never sees those, so detect the byte-array shape too.
+ */
+function looksLikeSolanaSecretKeyArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === 64 &&
+    value.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 255)
+  );
+}
+
 interface Finding {
   file: string;
   path: string; // JSON path like "mcpServers.blockrun.headers.X-Wallet-Key"
@@ -36,6 +49,9 @@ function walk(
 ): void {
   if (obj === null || typeof obj !== "object") return;
   if (Array.isArray(obj)) {
+    if (looksLikeSolanaSecretKeyArray(obj)) {
+      out.push({ file, path: jsonPath || "(root)" });
+    }
     obj.forEach((v, i) => walk(v, file, `${jsonPath}[${i}]`, out));
     return;
   }

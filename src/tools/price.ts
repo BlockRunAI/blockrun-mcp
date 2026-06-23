@@ -17,7 +17,7 @@ import type {
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
-import { formatError } from "../utils/errors.js";
+import { extractErrorMessage, formatError } from "../utils/errors.js";
 
 const CATEGORY = z.enum(["crypto", "fx", "commodity", "usstock", "stocks"]);
 const MARKET = z.enum([
@@ -133,9 +133,8 @@ Examples:
           structuredContent: result as unknown as Record<string, unknown>,
         };
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: formatError(msg) }],
+          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
           isError: true,
         };
       }

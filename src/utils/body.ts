@@ -5,16 +5,36 @@
 // rejects it with "400 Invalid request body" (and Exa/Modal upstreams 400 too).
 //
 // coerceBody normalizes that: a JSON string is parsed back to an object; an
-// object is returned untouched; empty/whitespace becomes {}. This also fixes
-// cost estimators that read fields like body.max_results — they need the object.
+// object is returned untouched.
+//
+// Empty/whitespace string → `undefined` (treated as "no body"), NOT `{}`. Some
+// MCP clients serialize an omitted optional `body` as "" rather than leaving it
+// absent; mapping that to `{}` flipped GET-only endpoints (voice/call poll,
+// markets GET reads) to POST and triggered Tier-2 billing. Returning `undefined`
+// preserves the absent-vs-empty distinction: a caller's real `{}` object stays
+// `{}` (a deliberate empty POST body, e.g. phone/numbers/list), while "" means
+// "not provided". Cost estimators here all guard for a non-object body, and
+// tools that always POST send `body ?? {}`, so `undefined` is safe everywhere.
 export function coerceBody(body: unknown): unknown {
   if (typeof body !== "string") return body;
   const trimmed = body.trim();
-  if (trimmed === "") return {};
+  if (trimmed === "") return undefined;
   try {
     return JSON.parse(trimmed);
   } catch {
     // Not JSON — leave as-is so the caller/gateway can surface a clear error.
     return body;
   }
+}
+
+/**
+ * MCP `structuredContent` must be a JSON object. Path-based passthrough tools can
+ * return a top-level array or primitive from the upstream API, so wrap those as
+ * `{ result }` (matching the defi/rpc convention) instead of casting an array to
+ * an object — which violates the protocol's object-typed structuredContent.
+ */
+export function asStructuredContent(result: unknown): Record<string, unknown> {
+  return (typeof result === "object" && result !== null && !Array.isArray(result)
+    ? result
+    : { result }) as Record<string, unknown>;
 }

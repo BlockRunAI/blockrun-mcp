@@ -2,9 +2,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
-import { coerceBody } from "../utils/body.js";
+import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { formatError } from "../utils/errors.js";
+import { extractErrorMessage, formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 
 function estimateMarketCost(path: string, body: unknown): number {
@@ -104,12 +104,11 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
 
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: result,
+          structuredContent: asStructuredContent(result),
         };
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: formatError(errMsg) }],
+          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
           isError: true,
         };
       }
