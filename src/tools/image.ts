@@ -259,7 +259,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           };
         }
         return {
-          content: [{ type: "text", text: formatError(`Image generation failed: ${errMsg}`) }],
+          content: [{ type: "text", text: formatError(`Image generation failed: ${errMsg}`, { altModels: "google/nano-banana, zai/cogview-4" }) }],
           isError: true,
         };
       }
