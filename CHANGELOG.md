@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.23.2
+
+- **`fix(errors)` — error guidance no longer suggests a wrong, cross-domain model, and upstream model outages are classified as such instead of a generic blip.** `formatError` (shared by all tools) had a single 500 branch that appended *"try a different model (e.g. openai/gpt-4o)"* — useless advice on a video/image/music/speech failure, and wrong when the gateway surfaced an upstream model-supply outage (token360's `Model '…' not found or not active for requested provider`) as a 500. A new `isModelUnavailable` branch detects that case and says the model is *temporarily unavailable upstream*; an optional `altModels` lets a tool name a **same-domain** fallback (video → `bytedance/seedance-2.0, azure/sora-2`; image → `google/nano-banana, zai/cogview-4`, each spanning two providers so a single-provider outage still leaves a working suggestion). Music/speech/other tools simply stop emitting the wrong model name. Thanks @KillerQueen-Z! (#26)
+- **`test` — `formatError` branch coverage.** `test/errors.test.ts` covers model-unavailable (with and without `altModels`), the generic-500 path no longer naming `gpt-4o`, payment/402 funding guidance, plain validation messages getting no canned text, and the `$1.4020`-isn't-a-402 token-boundary guard.
+
 ## 0.23.1
 
 - **`fix(modal)` — long synchronous `sandbox/exec` no longer aborts at 60s and orphans a paid sandbox.** Modal's `exec` blocks until the command finishes (the skill documents `timeout` up to 1200s), but the call ran on the shared 60s-timeout client, so any exec over ~60s threw `AbortError` — the result was lost and the sandbox the user paid to create kept running upstream. Modal calls now use a dedicated client whose HTTP timeout is sized to the requested `timeout` (floored at the 300s sandbox default, capped at 30 min, plus slack), without lengthening the 60s timeout every other tool relies on.
