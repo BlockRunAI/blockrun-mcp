@@ -334,7 +334,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           };
         }
         return {
-          content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0" }) }],
+          content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, azure/sora-2" }) }],
           isError: true,
         };
       }
