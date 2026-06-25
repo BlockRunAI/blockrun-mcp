@@ -33,7 +33,14 @@ export function extractErrorMessage(err: unknown): string {
   return base;
 }
 
-export function formatError(message: string): string {
+/**
+ * Format an error for return to the caller, appending actionable guidance for
+ * the three common failure classes (upstream model unavailable, server blip,
+ * payment/balance). `opts.altModels` lets a tool suggest a SAME-DOMAIN fallback
+ * (e.g. video → "bytedance/seedance-2.0") instead of a generic, often-wrong
+ * cross-domain one — omit it and no specific model is named.
+ */
+export function formatError(message: string, opts?: { altModels?: string }): string {
   const msgLower = message.toLowerCase();
 
   // Match HTTP status codes as standalone tokens, not substrings — "max 5000
@@ -45,14 +52,29 @@ export function formatError(message: string): string {
     msgLower.includes("insufficient") ||
     (msgLower.includes("payment") && !hasStatus("500"));
 
+  // Upstream model/provider availability, e.g. token360 returns
+  // "Model '…' not found or not active for requested provider" (the gateway
+  // surfaces it as a 500). This is the SPECIFIC model being down upstream, not
+  // a generic blip — so steer the user to a sibling model, not "try again".
+  const isModelUnavailable =
+    msgLower.includes("not active for requested provider") ||
+    msgLower.includes("not found or not active");
+
   const isServerError = hasStatus("500") ||
     msgLower.includes("api error after payment");
 
+  const altHint = opts?.altModels ? ` (e.g. ${opts.altModels})` : "";
   let errorText = `Error: ${message}`;
 
-  if (isServerError) {
+  if (isModelUnavailable) {
+    errorText += `\n\nThis model is temporarily unavailable upstream` +
+      (opts?.altModels
+        ? `. Try a different model${altHint} — it should work right away.`
+        : `. Try a different model, or retry shortly.`);
+  } else if (isServerError) {
     errorText += `\n\nThis is a temporary API issue. The API may be experiencing problems.` +
-      `\nTry again in a few minutes, or use a different model (e.g., openai/gpt-4o).`;
+      `\nTry again in a few minutes` +
+      (opts?.altModels ? `, or use a different model${altHint}.` : `.`);
   } else if (isPaymentError) {
     const chain = getChain();
     const network = chain === "solana" ? "Solana" : "Base";
