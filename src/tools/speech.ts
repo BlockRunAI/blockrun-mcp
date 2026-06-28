@@ -159,7 +159,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         if (resp402.status !== 402) {
           const data = await resp402.json().catch(() => ({})) as Record<string, unknown>;
-          throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${JSON.stringify(data)}`);
+          throw new Error(`Unexpected status ${resp402.status} (the endpoint did not return a quote): ${JSON.stringify(data)}`);
         }
 
         const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");

@@ -37,7 +37,7 @@ async function payAndPostJson(
 
   if (resp402.status !== 402) {
     const data = await resp402.json().catch(() => ({})) as Record<string, any>;
-    throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${data.message || data.error || JSON.stringify(data)}`);
+    throw new Error(`Unexpected status ${resp402.status} (the endpoint did not return a quote): ${data.message || data.error || JSON.stringify(data)}`);
   }
 
   const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");

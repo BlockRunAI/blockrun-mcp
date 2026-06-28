@@ -13,6 +13,21 @@ test("hasPathTraversal flags parent/current-dir segments that escape a namespace
   assert.equal(hasPathTraversal("."), true);
 });
 
+test("hasPathTraversal catches percent-encoded and backslash traversal", () => {
+  // The WHATWG URL parser normalizes %2e/%2E and backslashes the same as ./..
+  // so a literal-only check is bypassable. These must all be flagged.
+  assert.equal(hasPathTraversal("%2e%2e/pm/markets"), true);
+  assert.equal(hasPathTraversal("%2E%2E/v1/phone/numbers/buy"), true);
+  assert.equal(hasPathTraversal(".%2e/foo"), true);
+  assert.equal(hasPathTraversal("%2e/foo"), true);
+  assert.equal(hasPathTraversal("..\\..\\v1\\voice\\call"), true);
+});
+
+test("hasPathTraversal tolerates a malformed percent and legit encoded chars", () => {
+  assert.equal(hasPathTraversal("foo%zzbar"), false); // malformed % must not throw
+  assert.equal(hasPathTraversal("search/web%20query"), false); // %20 → space, no traversal
+});
+
 test("hasPathTraversal allows legitimate passthrough paths", () => {
   assert.equal(hasPathTraversal(""), false);
   assert.equal(hasPathTraversal("market/price"), false);

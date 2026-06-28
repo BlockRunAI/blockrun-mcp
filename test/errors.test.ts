@@ -59,6 +59,16 @@ test("genuine status codes still classify after the regex tightening", () => {
   assert.match(formatError("API error 402: declined"), /needs funding/);
 });
 
+test("a non-402 probe failure is not misclassified as a funding error", () => {
+  // The manual-402 tools' catch falls through to formatError(errMsg); the probe
+  // throw must carry no 402/payment tokens, so 425/503/400/404 outages get
+  // server/plain guidance, never "needs funding".
+  for (const status of [425, 503, 400, 404]) {
+    const out = formatError(`Music generation failed: Unexpected status ${status} (the endpoint did not return a quote): upstream issue`);
+    assert.doesNotMatch(out, /needs funding/, `status ${status} must not say needs funding`);
+  }
+});
+
 test("isPaymentRejectionError matches settlement failures, not outage status text", () => {
   assert.equal(isPaymentRejectionError("Payment rejected. Check your wallet balance."), true);
   assert.equal(isPaymentRejectionError("insufficient balance"), true);

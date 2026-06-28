@@ -14,9 +14,17 @@
  * the shapes that normalize away and escape the intended namespace. Segments
  * that merely *contain* a dot (e.g. `coingecko:ethereum`, `base:0x...`) are
  * legitimate and NOT flagged — only an exact `.`/`..` segment is.
+ *
+ * Decode once and split on both `/` and `\` first: the WHATWG URL parser (which
+ * runs on the concatenated endpoint before fetch) treats `%2e`/`%2E` as `.` and
+ * `\` as `/`, so `%2e%2e/...`, `.%2e/...`, and `..\..\...` normalize into
+ * traversal too. A single decode matches the parser (it does not double-decode
+ * `%252e`); a malformed `%` is left as-is rather than throwing.
  */
 export function hasPathTraversal(path: string): boolean {
-  return path.split("/").some((seg) => seg === ".." || seg === ".");
+  let decoded = path;
+  try { decoded = decodeURIComponent(path); } catch { /* malformed %: check raw */ }
+  return decoded.split(/[/\\]/).some((seg) => seg === ".." || seg === ".");
 }
 
 /**
