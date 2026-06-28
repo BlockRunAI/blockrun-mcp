@@ -2,6 +2,17 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.24.1
+
+A second audit pass (every finding adversarially re-verified) over the 0.24.0 code — including the changes 0.24.0 itself introduced — surfaced a batch of hardening fixes. None critical; the two notable ones are residuals of the 0.24.0 budget work.
+
+- **`fix(budget)` — high-resolution video can no longer settle past the cap.** The video pre-pay gate reserved only `perSecond × seconds` (a 720p-baseline estimate); Seedance/Sora are token-priced upstream, so a 1080p/2K/4K render could settle for several multiples of the reserve while the gate only validated the small number. The real price from the 402 challenge is now re-reserved against the budget **before** the payment is signed (and held for the full polling window so concurrent jobs reserve the true amount), aborting if it would exceed the cap.
+- **`fix(budget)` — concurrent `blockrun_chat` calls no longer over-count / cross-attribute spend.** `withSettledCost` measured a call's cost as the delta of the shared client's cumulative `getSpending()` counter; under the MCP SDK's concurrent dispatch, two in-flight calls each captured the other's settlement, inflating the ledger and charging agent A for agent B's spend (fail-safe — it never under-counts, so it could not overspend). Each chat call now runs on a fresh per-call client so the delta isolates only that call.
+- **`fix(security)` — SSRF guard on the `blockrun_image` reference-URL fetch.** `toImageDataUri` fetched a caller/model-supplied URL server-side with redirects followed and no address filtering, so a supplied (or prompt-injected) reference could probe localhost, the cloud metadata endpoint, or internal hosts. It now rejects loopback/private/link-local/CGNAT/IPv6-ULA addresses and metadata/internal names, and follows redirects manually, re-validating every hop.
+- **`fix(robustness)` — bounded fetches, cache + chain-detection edges.** `blockrun_dex` and the Base balance RPC now use bounded fetches (no unbounded hang); the model cache treats an empty catalogue as *not loaded* (an empty result was pinned for the full 5-min TTL); and `getChain` detects Solana via a usable key (`loadSolanaWallet`) instead of bare `existsSync`, so an empty/truncated session file no longer pins every tool to an unbuildable client.
+- **`fix(video)` / `docs(constants)`** — the video success message reports the billed duration instead of a hardcoded `8s`, and the OpenAI model-inventory comment now lists `gpt-5.5` (the balanced default) with the correct count.
+- **`test`** — +4 suites/cases (68 total): SSRF host classification, model-cache empty-result re-fetch, plus the repurposed image guard test.
+
 ## 0.24.0
 
 A whole-codebase audit (8 review angles, every finding adversarially re-verified) found that the v0.23.0 budget cap — the wallet-drain guardrail — had **four independent bypasses**. This release closes all of them plus a batch of correctness and robustness fixes.
