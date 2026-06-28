@@ -16,6 +16,7 @@ import {
   formatNeedsFundingMessage,
   SOLANA_WALLET_FILE_PATH,
 } from "@blockrun/llm";
+import { USDC_ADDRESS, BASE_RPC_URLS } from "./constants.js";
 
 export type ApiClient = LLMClient | SolanaLLMClient;
 
@@ -250,13 +251,19 @@ async function getSolanaUsdcBalance(): Promise<number | null> {
   } catch { return null; }
 }
 
+/**
+ * Parse a USDC `balanceOf` eth_call result (hex string) into a USD figure.
+ * Returns null for missing/empty ("0x") / non-hex results so the caller can fall
+ * through to the next RPC instead of surfacing "$NaN USDC" and skipping the rest
+ * of the healthy fallback list. BigInt avoids the >2^53 precision loss of
+ * parseInt for very large balances.
+ */
+export function parseBaseUsdcCallResult(raw: unknown): number | null {
+  if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) return null;
+  return Number(BigInt(raw)) / 1e6;
+}
+
 async function getBaseUsdcBalance(address: string): Promise<number | null> {
-  const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-  const BASE_RPC_URLS = [
-    "https://mainnet.base.org",
-    "https://base.llamarpc.com",
-    "https://1rpc.io/base",
-  ];
   const data = {
     jsonrpc: "2.0",
     method: "eth_call",
@@ -271,7 +278,8 @@ async function getBaseUsdcBalance(address: string): Promise<number | null> {
         body: JSON.stringify(data),
       });
       const result = await response.json() as { result?: string };
-      if (result.result) return parseInt(result.result, 16) / 1e6;
+      const usd = parseBaseUsdcCallResult(result.result);
+      if (usd !== null) return usd;
     } catch { continue; }
   }
   return null;

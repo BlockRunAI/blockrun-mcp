@@ -34,6 +34,14 @@ export async function toImageDataUri(ref: string): Promise<string> {
       if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
       const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
       if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);
+      // Reject by advertised size BEFORE buffering, so an oversized remote image
+      // can't be fully read into memory (OOM risk in the long-lived stdio
+      // process) only to be rejected. The post-read check below still covers
+      // chunked responses with no Content-Length.
+      const advertised = Number(res.headers.get("content-length"));
+      if (Number.isFinite(advertised) && advertised > REFERENCE_IMAGE_MAX_BYTES) {
+        throw new Error(`image too large: ${(advertised / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
+      }
       const buffer = Buffer.from(await res.arrayBuffer());
       if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
         throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);

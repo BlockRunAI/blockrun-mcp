@@ -15,12 +15,27 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-/** Match Base (0x + 64 hex) or Solana (80-100 char bs58) raw key shapes. */
-function looksLikeRawPrivateKey(value: unknown): boolean {
+/**
+ * Strict raw-key shape: 0x-prefixed EVM key (0x + 64 hex) or Solana bs58
+ * (80-100 chars). Used for the UNTAGGED catch-all scan, where requiring the 0x
+ * prefix avoids flagging unrelated 64-hex values (e.g. SHA-256 hashes).
+ */
+export function looksLikeRawPrivateKey(value: unknown): boolean {
   if (typeof value !== "string") return false;
   if (/^0x[0-9a-fA-F]{64}$/.test(value)) return true;
   if (value.length >= 80 && value.length <= 100 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) return true;
   return false;
+}
+
+/**
+ * Permissive key shape for a value living under a key/secret-NAMED field. Also
+ * accepts a BARE (no-0x) 64-hex key — the common MetaMask "Export Private Key"
+ * format — which the strict matcher misses. Safe to be permissive here because
+ * the field name already says it holds a secret.
+ */
+export function looksLikeNamedSecretValue(value: unknown): boolean {
+  if (looksLikeRawPrivateKey(value)) return true;
+  return typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value);
 }
 
 /**
@@ -57,8 +72,9 @@ function walk(
   }
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
     const next = jsonPath ? `${jsonPath}.${k}` : k;
-    // Heuristic: look at header-ish fields first
-    if (/wallet[-_ ]?key|private[-_ ]?key|secret/i.test(k) && looksLikeRawPrivateKey(v)) {
+    // Heuristic: look at header-ish fields first. A key/secret-named field uses
+    // the permissive matcher so a bare 64-hex key is caught too.
+    if (/wallet[-_ ]?key|private[-_ ]?key|secret/i.test(k) && looksLikeNamedSecretValue(v)) {
       out.push({ file, path: next });
     } else if (looksLikeRawPrivateKey(v)) {
       // Also catch untagged values that happen to be raw keys

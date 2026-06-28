@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import http from "node:http";
 import { toImageDataUri } from "../src/tools/image.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "blockrun-img-"));
@@ -44,4 +45,21 @@ test("toImageDataUri rejects a file over the 4MB cap", async () => {
   const p = join(tmp, "huge.png");
   writeFileSync(p, Buffer.alloc(4_000_001, 0));
   await assert.rejects(() => toImageDataUri(p), /too large/);
+});
+
+test("toImageDataUri rejects a remote image by Content-Length before buffering it", async () => {
+  // A large advertised Content-Length must be rejected up front so an oversized
+  // remote image can't be fully buffered into memory (OOM) just to be rejected.
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "image/png", "content-length": String(5_000_000) });
+    res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47])); // tiny body; header is what matters
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const { port } = server.address() as { port: number };
+  try {
+    await assert.rejects(() => toImageDataUri(`http://127.0.0.1:${port}/`), /too large/i);
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
 });

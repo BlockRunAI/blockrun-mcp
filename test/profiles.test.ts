@@ -58,6 +58,16 @@ test("no args → full", () => {
   assert.equal(tools.size, 18);
 });
 
+test("Object.prototype key names fall back to full instead of crashing", () => {
+  // PROFILES is a plain object, so "constructor"/"__proto__" resolve to
+  // inherited members (truthy, non-iterable) and used to throw at startup.
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    const { profile, tools } = resolveTools(["--profile", name], {});
+    assert.equal(profile, "full", `${name} should fall back to full`);
+    assert.equal(tools.size, 18, `${name} should expose all 18 tools`);
+  }
+});
+
 test("trimmed profiles only contain real tools", () => {
   const all = new Set(ALL_TOOLS);
   for (const name of Object.keys(PROFILES)) {

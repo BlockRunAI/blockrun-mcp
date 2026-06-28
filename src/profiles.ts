@@ -91,7 +91,10 @@ export function resolveTools(
   env?: NodeJS.ProcessEnv,
 ): { profile: string; tools: Set<ToolName> } {
   const requested = resolveProfileName(argv, env);
-  const spec = PROFILES[requested];
+  // Use hasOwn so inherited Object.prototype members ("constructor",
+  // "__proto__", …) are treated as unknown names and fall back to "full"
+  // instead of resolving to a non-iterable function and crashing at startup.
+  const spec = Object.hasOwn(PROFILES, requested) ? PROFILES[requested] : undefined;
   if (!spec) {
     return { profile: DEFAULT_PROFILE, tools: new Set(ALL_TOOLS) };
   }
