@@ -6,7 +6,7 @@ import { getClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
-import { checkBudget, recordActualSpend } from "../utils/budget.js";
+import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
 
@@ -131,13 +131,17 @@ Run blockrun_models to see all available models with pricing.`,
       // worst-case estimate so a single premium-profile call cannot blow past
       // a near-exhausted budget. Mode-based heuristics escalate similarly.
       const estimatedCost = estimateChatCost(max_tokens, mode, model, routing, routing_profile);
-      const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-      if (!budgetCheck.allowed) {
+      // Reserve the estimate up front so concurrent calls can't each pass a
+      // stale budget; release in finally once the call settles or fails (the
+      // real settled cost is booked separately via recordActualSpend).
+      const gate = reserveBudget(budget, agent_id, estimatedCost);
+      if (!gate.allowed) {
         return {
-          content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet with action: "report" to see usage, or action: "delegate" to increase agent budget.` }],
+          content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet with action: "report" to see usage, or action: "delegate" to increase agent budget.` }],
           isError: true,
         };
       }
+      try {
 
       // Native Anthropic passthrough (EVM/Base only).
       // An explicit anthropic/claude-* model goes DIRECT to the gateway's
@@ -152,7 +156,7 @@ Run blockrun_models to see all available models with pricing.`,
         if (solanaBlock) {
           return { content: [{ type: "text", text: solanaBlock }], isError: true };
         }
-        return handleAnthropicNative({
+        return await handleAnthropicNative({
           client: getAnthropicClient(),
           model,
           message,
@@ -295,6 +299,9 @@ Run blockrun_models to see all available models with pricing.`,
         content: [{ type: "text", text: formatError(errorMessage) }],
         isError: true,
       };
+      } finally {
+        gate.release();
+      }
     }
   );
 }

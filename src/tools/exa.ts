@@ -6,7 +6,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -51,27 +51,30 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
     async ({ path, body, agent_id }) => {
       try {
         body = coerceBody(body);
-        const estimatedCost = estimateExaCost(path, body);
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
-          return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
-            isError: true,
-          };
-        }
-
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
-        const client = getClient() as unknown as RawClient;
-        const endpoint = `/v1/exa/${cleanPath}`;
-        const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
-        recordSpending(budget, estimatedCost, agent_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: asStructuredContent(result),
-        };
+        const estimatedCost = estimateExaCost(path, body);
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
+          return {
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+        try {
+          const client = getClient() as unknown as RawClient;
+          const endpoint = `/v1/exa/${cleanPath}`;
+          const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
+          recordSpending(budget, estimatedCost, agent_id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structuredContent: asStructuredContent(result),
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
       }

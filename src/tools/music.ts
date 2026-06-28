@@ -1,7 +1,7 @@
 // src/tools/music.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -37,6 +37,9 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
       },
     },
     async ({ prompt, instrumental, lyrics, model, agent_id }) => {
+      // Reserve the estimate up front so concurrent calls can't each pass a
+      // stale budget; release in finally once the call settles or fails.
+      let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
         if (getChain() !== "base") {
           return {
@@ -52,10 +55,10 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
           };
         }
 
-        const budgetCheck = checkBudget(budget, agent_id, MUSIC_COST);
-        if (!budgetCheck.allowed) {
+        gate = reserveBudget(budget, agent_id, MUSIC_COST);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
@@ -168,6 +171,8 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
           content: [{ type: "text", text: formatError(`Music generation failed: ${errMsg}`) }],
           isError: true,
         };
+      } finally {
+        gate?.release();
       }
     }
   );

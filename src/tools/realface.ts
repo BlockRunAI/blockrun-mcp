@@ -1,7 +1,7 @@
 // src/tools/realface.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -104,6 +104,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
       },
     },
     async ({ action, name, group_id, image_url, agent_id }) => {
+      // Reserve the estimate up front so concurrent calls can't each pass a
+      // stale budget; release in finally once the call settles or fails.
+      let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
         // ---- init (free) ----
         if (action === "init") {
@@ -247,9 +250,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError("portrait requires name and image_url (public HTTPS URL of an AI-generated character image).") }], isError: true };
           }
 
-          const budgetCheck = checkBudget(budget, agent_id, ENROLLMENT_PRICE_USD);
-          if (!budgetCheck.allowed) {
-            return { content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
+          gate = reserveBudget(budget, agent_id, ENROLLMENT_PRICE_USD);
+          if (!gate.allowed) {
+            return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
 
           const { status, data, settledUsd } = await payAndPostJson(
@@ -305,9 +308,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError("enroll requires name, image_url, and group_id (from init, after the group is active).") }], isError: true };
           }
 
-          const budgetCheck = checkBudget(budget, agent_id, ENROLLMENT_PRICE_USD);
-          if (!budgetCheck.allowed) {
-            return { content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
+          gate = reserveBudget(budget, agent_id, ENROLLMENT_PRICE_USD);
+          if (!gate.allowed) {
+            return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
 
           const privateKey = getOrCreateWalletKey();
@@ -412,6 +415,8 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           };
         }
         return { content: [{ type: "text", text: formatError(`RealFace ${action} failed: ${errMsg}`) }], isError: true };
+      } finally {
+        gate?.release();
       }
     }
   );

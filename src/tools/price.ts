@@ -14,7 +14,7 @@ import type {
   BarResolution,
   MarketSession,
 } from "@blockrun/llm";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
@@ -82,56 +82,59 @@ Examples:
         }
 
         const estimatedCost = paid ? 0.001 : 0;
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
+        try {
+          const priceClient = getPriceClient(paid);
 
-        const priceClient = getPriceClient(paid);
+          if (action === "price") {
+            if (!symbol) throw new Error("symbol is required for action='price'");
+            const result = await priceClient.price(category as PriceCategory, symbol, {
+              market: market as StockMarket | undefined,
+              session: session as MarketSession | undefined,
+            });
+            if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
+            return {
+              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+              structuredContent: result as unknown as Record<string, unknown>,
+            };
+          }
 
-        if (action === "price") {
-          if (!symbol) throw new Error("symbol is required for action='price'");
-          const result = await priceClient.price(category as PriceCategory, symbol, {
+          if (action === "history") {
+            if (!symbol) throw new Error("symbol is required for action='history'");
+            if (from === undefined) throw new Error("from (unix seconds) is required for action='history'");
+            const result = await priceClient.history(category as PriceCategory, symbol, {
+              market: market as StockMarket | undefined,
+              session: session as MarketSession | undefined,
+              resolution: (resolution ?? "D") as BarResolution,
+              from,
+              to,
+            });
+            if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
+            return {
+              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+              structuredContent: result as unknown as Record<string, unknown>,
+            };
+          }
+
+          // action === "list"
+          const result = await priceClient.listSymbols(category as PriceCategory, {
             market: market as StockMarket | undefined,
-            session: session as MarketSession | undefined,
+            query,
+            limit,
           });
-          if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: result as unknown as Record<string, unknown>,
           };
+        } finally {
+          gate.release();
         }
-
-        if (action === "history") {
-          if (!symbol) throw new Error("symbol is required for action='history'");
-          if (from === undefined) throw new Error("from (unix seconds) is required for action='history'");
-          const result = await priceClient.history(category as PriceCategory, symbol, {
-            market: market as StockMarket | undefined,
-            session: session as MarketSession | undefined,
-            resolution: (resolution ?? "D") as BarResolution,
-            from,
-            to,
-          });
-          if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
-          return {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            structuredContent: result as unknown as Record<string, unknown>,
-          };
-        }
-
-        // action === "list"
-        const result = await priceClient.listSymbols(category as PriceCategory, {
-          market: market as StockMarket | undefined,
-          query,
-          limit,
-        });
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: result as unknown as Record<string, unknown>,
-        };
       } catch (err) {
         return {
           content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],

@@ -39,6 +39,49 @@ export function checkBudget(
   return { allowed: true };
 }
 
+/**
+ * Atomically gate AND reserve a call's estimated cost so concurrent in-flight
+ * calls can't each pass a stale `spent` and collectively blow past the cap
+ * (the MCP SDK dispatches requests concurrently). `checkBudget` only READS
+ * `spent`; the paid call then awaits the network before `recordSpending` WRITES
+ * it, leaving a check-then-act race. Reserve closes it by adding the estimate to
+ * `spent` immediately (so the next concurrent reserve sees it), and returning a
+ * `release()` the caller MUST call in a `finally` once the call settles or
+ * fails. The settled cost is still booked separately via recordSpending/
+ * recordActualSpend; release() removes the estimate, netting the real spend:
+ *
+ *   const gate = reserveBudget(budget, agentId, estimate);
+ *   if (!gate.allowed) return error(gate.reason);
+ *   try { ...paid call...; recordActualSpend(...); return ok; }
+ *   finally { gate.release(); }
+ *
+ * release() is idempotent and a no-op when the reservation was denied.
+ */
+export function reserveBudget(
+  budget: BudgetState,
+  agentId?: string,
+  estimatedCost: number = 0.001,
+): { allowed: boolean; reason?: string; release: () => void } {
+  const check = checkBudget(budget, agentId, estimatedCost);
+  if (!check.allowed) return { allowed: false, reason: check.reason, release: () => {} };
+
+  const cost = Math.max(0, estimatedCost);
+  budget.spent += cost;
+  const agentBudget = agentId ? budget.agents.get(agentId) : undefined;
+  if (agentBudget) agentBudget.spent += cost;
+
+  let released = false;
+  return {
+    allowed: true,
+    release: () => {
+      if (released) return;
+      released = true;
+      budget.spent -= cost;
+      if (agentBudget) agentBudget.spent -= cost;
+    },
+  };
+}
+
 export function recordSpending(budget: BudgetState, cost: number, agentId?: string): void {
   budget.spent += cost;
   budget.calls += 1;

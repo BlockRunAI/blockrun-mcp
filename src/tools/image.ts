@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
@@ -224,34 +224,42 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             };
           }
           const estimatedCost = estimateCost(selectedModel, size);
-          const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-          if (!budgetCheck.allowed) {
+          const gate = reserveBudget(budget, agent_id, estimatedCost);
+          if (!gate.allowed) {
             return {
-              content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+              content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
               isError: true,
             };
           }
-          response = await getImageClient().edit(prompt, normalizedImage, {
-            model: selectedModel,
-            size,
-            ...(normalizedMask ? { mask: normalizedMask } : {}),
-          });
-          recordSpending(budget, estimatedCost, agent_id);
+          try {
+            response = await getImageClient().edit(prompt, normalizedImage, {
+              model: selectedModel,
+              size,
+              ...(normalizedMask ? { mask: normalizedMask } : {}),
+            });
+            recordSpending(budget, estimatedCost, agent_id);
+          } finally {
+            gate.release();
+          }
         } else {
           const estimatedCost = estimateCost(selectedModel, size);
-          const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-          if (!budgetCheck.allowed) {
+          const gate = reserveBudget(budget, agent_id, estimatedCost);
+          if (!gate.allowed) {
             return {
-              content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+              content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
               isError: true,
             };
           }
-          response = await getImageClient().generate(prompt, {
-            model: selectedModel,
-            size,
-            quality: quality as "standard" | "hd",
-          });
-          recordSpending(budget, estimatedCost, agent_id);
+          try {
+            response = await getImageClient().generate(prompt, {
+              model: selectedModel,
+              size,
+              quality: quality as "standard" | "hd",
+            });
+            recordSpending(budget, estimatedCost, agent_id);
+          } finally {
+            gate.release();
+          }
         }
 
         const imageUrl = response.data?.[0]?.url;

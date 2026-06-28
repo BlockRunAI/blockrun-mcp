@@ -7,6 +7,7 @@ import {
   parseBudgetLimitEnv,
   recordActualSpend,
   recordSpending,
+  reserveBudget,
 } from "../src/utils/budget.js";
 import type { BudgetState } from "../src/types.js";
 
@@ -75,6 +76,54 @@ test("OLD flat-estimate behavior would have blown past the cap (regression guard
   // 50 calls that really cost $0.50 each = $25 settled on-chain, but the ledger
   // shows only $0.05 — the cap is meaningless. recordActualSpend prevents this.
   assert.equal(Math.round(b.spent * 1000) / 1000, 0.05);
+});
+
+test("reserveBudget gates concurrent in-flight calls against the cap (TOCTOU fix)", () => {
+  const b = newBudget(1); // $1 cap
+  // Two concurrent $0.5 reservations both succeed and consume the cap...
+  assert.equal(reserveBudget(b, undefined, 0.5).allowed, true);
+  assert.equal(reserveBudget(b, undefined, 0.5).allowed, true);
+  // ...so a third $0.5 call is blocked while the first two are still in flight,
+  // even though nothing has been *recorded* yet. (checkBudget alone would let
+  // all three pass because each reads the same pre-spend total.)
+  assert.equal(reserveBudget(b, undefined, 0.5).allowed, false);
+});
+
+test("reserveBudget.release frees the reservation and is idempotent", () => {
+  const b = newBudget(1);
+  const a = reserveBudget(b, undefined, 0.8);
+  assert.equal(a.allowed, true);
+  assert.equal(reserveBudget(b, undefined, 0.8).allowed, false); // 0.8 + 0.8 > 1
+  a.release();
+  a.release(); // idempotent — must not double-credit
+  assert.equal(b.spent, 0);
+  assert.equal(reserveBudget(b, undefined, 0.8).allowed, true); // capacity freed
+});
+
+test("reserve + recordActualSpend + release nets the actual settled cost", () => {
+  const b = newBudget(10);
+  const g = reserveBudget(b, undefined, 0.02); // reserve the estimate
+  assert.equal(g.allowed, true);
+  recordActualSpend(b, 0.5, 0.02, undefined);  // book the real on-chain cost
+  g.release();                                  // free the estimate
+  assert.equal(b.spent, 0.5);
+  assert.equal(b.calls, 1);
+});
+
+test("a blocked reserveBudget makes no reservation (release is a safe no-op)", () => {
+  const b = newBudget(0.01);
+  const g = reserveBudget(b, undefined, 0.5);
+  assert.equal(g.allowed, false);
+  assert.equal(b.spent, 0);
+  g.release();
+  assert.equal(b.spent, 0);
+});
+
+test("reserveBudget enforces per-agent caps across concurrent calls", () => {
+  const b = newBudget(null);
+  b.agents.set("a1", { limit: 1, spent: 0, calls: 0 });
+  assert.equal(reserveBudget(b, "a1", 0.6).allowed, true);
+  assert.equal(reserveBudget(b, "a1", 0.6).allowed, false); // 0.6 + 0.6 > 1 for agent
 });
 
 test("parseBudgetLimitEnv parses a default cap, ignores junk", () => {

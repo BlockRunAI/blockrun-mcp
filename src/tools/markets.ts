@@ -1,7 +1,7 @@
 // src/tools/markets.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
@@ -94,24 +94,27 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
         const estimatedCost = estimateMarketCost(path, body);
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
+        try {
+          const llm = getClient();
+          const result = body !== undefined
+            ? await llm.pmQuery(path, body)
+            : await llm.pm(path, params);
+          recordSpending(budget, estimatedCost, agent_id);
 
-        const llm = getClient();
-        const result = body !== undefined
-          ? await llm.pmQuery(path, body)
-          : await llm.pm(path, params);
-        recordSpending(budget, estimatedCost, agent_id);
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: asStructuredContent(result),
-        };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structuredContent: asStructuredContent(result),
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         return {
           content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],

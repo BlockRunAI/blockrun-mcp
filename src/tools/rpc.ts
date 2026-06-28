@@ -9,7 +9,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -63,13 +63,6 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
 
         const batchCount = Array.isArray(body) ? Math.max(body.length, 1) : 1;
         const estimatedCost = RPC_PRICE_USD * batchCount;
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
-          return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
-            isError: true,
-          };
-        }
 
         const cleanNetwork = network.trim().toLowerCase().replace(/^\/+|\/+$/g, "");
         // A chain slug never contains '/', '.', or '..'. Reject anything else so
@@ -81,15 +74,27 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
             isError: true,
           };
         }
-        const client = getClient() as unknown as RawClient;
-        const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
-        recordSpending(budget, estimatedCost, agent_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
-            ? result
-            : { result }) as Record<string, unknown>,
-        };
+
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
+          return {
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            isError: true,
+          };
+        }
+        try {
+          const client = getClient() as unknown as RawClient;
+          const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
+          recordSpending(budget, estimatedCost, agent_id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
+              ? result
+              : { result }) as Record<string, unknown>,
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         return {
           content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],

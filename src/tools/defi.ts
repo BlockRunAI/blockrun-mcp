@@ -7,7 +7,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
@@ -53,23 +53,26 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
         const estimatedCost = estimateDefiCost(cleanPath);
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
-
-        const client = getClient() as unknown as RawClient;
-        const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
-        recordSpending(budget, estimatedCost, agent_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
-            ? result
-            : { result }) as Record<string, unknown>,
-        };
+        try {
+          const client = getClient() as unknown as RawClient;
+          const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
+          recordSpending(budget, estimatedCost, agent_id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
+              ? result
+              : { result }) as Record<string, unknown>,
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         return {
           content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],

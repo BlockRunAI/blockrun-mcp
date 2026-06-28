@@ -7,7 +7,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { checkBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -65,24 +65,27 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
         const estimatedCost = estimatePhoneCost(cleanPath, body !== undefined);
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
-
-        const client = getClient() as unknown as RawClient;
-        const endpoint = `/v1/${cleanPath}`;
-        const result = body !== undefined
-          ? await client.requestWithPaymentRaw(endpoint, body)
-          : await client.getWithPaymentRaw(endpoint);
-        if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-          structuredContent: asStructuredContent(result),
-        };
+        try {
+          const client = getClient() as unknown as RawClient;
+          const endpoint = `/v1/${cleanPath}`;
+          const result = body !== undefined
+            ? await client.requestWithPaymentRaw(endpoint, body)
+            : await client.getWithPaymentRaw(endpoint);
+          if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            structuredContent: asStructuredContent(result),
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
       }

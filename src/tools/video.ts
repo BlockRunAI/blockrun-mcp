@@ -1,7 +1,7 @@
 // src/tools/video.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
@@ -85,6 +85,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
       },
     },
     async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, resolution, aspect_ratio, last_frame_url, model, agent_id }) => {
+      // Reserve the estimate up front so concurrent calls can't each pass a
+      // stale budget; release in finally once the call settles or fails.
+      let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
         if (getChain() !== "base") {
           return {
@@ -135,10 +138,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           ?? VIDEO_PRICE_PER_SECOND[selectedModel]
           ?? 0.05;
         const estimatedCost = perSecond * billedSeconds;
-        const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
-        if (!budgetCheck.allowed) {
+        gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: `${budgetCheck.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
@@ -341,6 +344,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, azure/sora-2" }) }],
           isError: true,
         };
+      } finally {
+        gate?.release();
       }
     }
   );
