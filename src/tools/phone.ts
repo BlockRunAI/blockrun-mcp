@@ -11,6 +11,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -60,6 +61,9 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
       try {
         body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\//, "");
+        if (hasPathTraversal(cleanPath)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
         const estimatedCost = estimatePhoneCost(cleanPath, body !== undefined);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {

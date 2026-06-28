@@ -11,6 +11,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -61,8 +62,11 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
           };
         }
 
-        const client = getClient() as unknown as RawClient;
         const cleanPath = (path ?? "").replace(/^\/+/, "").replace(/^v1\/search\/?/, "");
+        if (hasPathTraversal(cleanPath)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
+        const client = getClient() as unknown as RawClient;
         const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
         const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
         recordSpending(budget, estimatedCost, agent_id);

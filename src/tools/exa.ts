@@ -10,6 +10,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -59,8 +60,11 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
           };
         }
 
-        const client = getClient() as unknown as RawClient;
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
+        if (hasPathTraversal(cleanPath)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
+        const client = getClient() as unknown as RawClient;
         const endpoint = `/v1/exa/${cleanPath}`;
         const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
         recordSpending(budget, estimatedCost, agent_id);

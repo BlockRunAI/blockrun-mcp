@@ -10,6 +10,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { buildClientWithTimeout } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -62,6 +63,9 @@ Full action shapes + GPU type details in the \`modal\` skill.`,
       try {
         body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/modal\//, "");
+        if (hasPathTraversal(cleanPath)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
         const estimatedCost = estimateModalCost(cleanPath);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { checkBudget, recordSpending } from "../utils/budget.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -48,6 +49,9 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
     async ({ path, agent_id }) => {
       try {
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/defillama\//, "").replace(/^api\/v1\/defillama\//, "");
+        if (hasPathTraversal(cleanPath)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
         const estimatedCost = estimateDefiCost(cleanPath);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {

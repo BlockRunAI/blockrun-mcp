@@ -13,6 +13,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { isValidNetworkSlug } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -71,6 +72,15 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
         }
 
         const cleanNetwork = network.trim().toLowerCase().replace(/^\/+|\/+$/g, "");
+        // A chain slug never contains '/', '.', or '..'. Reject anything else so
+        // a `network` like "../chat/completions" can't normalize past /v1/rpc/
+        // and re-route a cheap RPC call onto an expensive paid endpoint.
+        if (!isValidNetworkSlug(cleanNetwork)) {
+          return {
+            content: [{ type: "text", text: formatError(`Invalid network '${network}'. Use a chain slug like 'ethereum', 'base', or 'solana'.`) }],
+            isError: true,
+          };
+        }
         const client = getClient() as unknown as RawClient;
         const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
         recordSpending(budget, estimatedCost, agent_id);

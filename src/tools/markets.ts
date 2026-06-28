@@ -5,6 +5,7 @@ import { checkBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 function estimateMarketCost(path: string, body: unknown): number {
@@ -87,6 +88,11 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
     async ({ path, params, body, agent_id }) => {
       try {
         body = coerceBody(body);
+        // `path` is forwarded verbatim into /v1/pm/${path}; a `..` segment would
+        // normalize past the namespace, so reject traversal before billing.
+        if (hasPathTraversal(path)) {
+          return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
         const estimatedCost = estimateMarketCost(path, body);
         const budgetCheck = checkBudget(budget, agent_id, estimatedCost);
         if (!budgetCheck.allowed) {
