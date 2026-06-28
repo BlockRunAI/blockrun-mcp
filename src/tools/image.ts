@@ -6,6 +6,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
+import { isBlockedFetchHost } from "../utils/ssrf.js";
 import { readFile } from "node:fs/promises";
 
 // The gateway's /v1/images/image2image only accepts base64 data URIs for the
@@ -30,7 +31,25 @@ export async function toImageDataUri(ref: string): Promise<string> {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      const res = await fetch(ref, { signal: ctrl.signal });
+      // Follow redirects manually so each hop's host is re-validated against the
+      // SSRF deny-list — a supplied/prompt-injected URL must not reach (or 30x
+      // into) localhost, the cloud metadata endpoint, or the private network.
+      let url = ref;
+      let res: Response;
+      for (let hop = 0; ; hop++) {
+        const host = new URL(url).hostname;
+        if (isBlockedFetchHost(host)) {
+          throw new Error(`refusing to fetch a private/loopback/link-local address: ${host}`);
+        }
+        res = await fetch(url, { signal: ctrl.signal, redirect: "manual" });
+        const location = res.headers.get("location");
+        if (res.status >= 300 && res.status < 400 && location) {
+          if (hop >= 5) throw new Error("too many redirects");
+          url = new URL(location, url).toString();
+          continue;
+        }
+        break;
+      }
       if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
       const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
       if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);

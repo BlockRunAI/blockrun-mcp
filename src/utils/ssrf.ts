@@ -1,0 +1,55 @@
+// src/utils/ssrf.ts
+//
+// Guard for server-side fetches of caller/model-supplied URLs (blockrun_image's
+// reference image/mask). The MCP server runs on the user's machine, which can
+// reach localhost dev servers, cloud metadata endpoints (169.254.169.254), and
+// internal hosts — so a supplied (or prompt-injected) URL must not be allowed to
+// probe the private network. This is a literal-host deny-list applied to every
+// redirect hop; it is not full DNS-rebinding protection (a public name resolving
+// to a private IP would still pass), but it blocks the realistic vectors.
+
+function ipv4Blocked(host: string): boolean | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return null; // not a dotted-quad
+  const o = m.slice(1).map(Number);
+  if (o.some((n) => n > 255)) return true; // malformed → block
+  const [a, b] = o;
+  return (
+    a === 0 ||                                  // 0.0.0.0/8
+    a === 127 ||                                // loopback
+    a === 10 ||                                 // private
+    (a === 172 && b >= 16 && b <= 31) ||        // private
+    (a === 192 && b === 168) ||                 // private
+    (a === 169 && b === 254) ||                 // link-local (incl. metadata)
+    (a === 100 && b >= 64 && b <= 127)          // CGNAT
+  );
+}
+
+/**
+ * True when a hostname must NOT be fetched server-side: loopback, private,
+ * link-local/metadata, CGNAT, or an internal-only name. Accepts bare hosts and
+ * bracketed IPv6 (`[::1]`).
+ */
+export function isBlockedFetchHost(hostname: string): boolean {
+  let host = hostname.trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (!host) return true;
+
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.endsWith(".internal") || host.endsWith(".local")) return true;
+
+  const v4 = ipv4Blocked(host);
+  if (v4 !== null) return v4;
+
+  // IPv6: loopback, unique-local (fc00::/7 → fc/fd), link-local (fe80::/10),
+  // unspecified, and IPv4-mapped (::ffff:a.b.c.d → check the embedded v4).
+  if (host.includes(":")) {
+    if (host === "::1" || host === "::") return true;
+    if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return true;
+    const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
+    if (mapped) return ipv4Blocked(mapped[1]) === true;
+    return false;
+  }
+
+  return false;
+}
