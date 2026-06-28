@@ -56,12 +56,17 @@ export function getChain(): "base" | "solana" {
   if (process.env.SOLANA_WALLET_KEY) return "solana";
 
   // 3. Fall back to wallet-file autodetection for first-run users who never
-  //    set a chain preference but already have a Solana session on disk. Use
-  //    loadSolanaWallet (non-empty key) rather than bare existsSync: an empty/
-  //    truncated session file would otherwise pin every tool to a Solana client
-  //    that can't be built ("Private key required").
+  //    set a chain preference but already have a Solana session on disk. Read
+  //    the specific session file and require it to be NON-EMPTY: a bare
+  //    existsSync would pin an empty/truncated file to a Solana client that
+  //    can't be built ("Private key required"), but loadSolanaWallet() scans the
+  //    whole home directory and getChain() is a hot path — so check the one file
+  //    cheaply instead.
   try {
-    if (loadSolanaWallet()) return "solana";
+    if (fs.existsSync(SOLANA_WALLET_FILE_PATH) &&
+        fs.readFileSync(SOLANA_WALLET_FILE_PATH, "utf-8").trim()) {
+      return "solana";
+    }
   } catch { /* ignore */ }
 
   return "base";
