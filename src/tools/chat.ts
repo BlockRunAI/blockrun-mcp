@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LLMClient } from "@blockrun/llm";
-import { getClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
+import { buildClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
@@ -121,7 +121,10 @@ Run blockrun_models to see all available models with pricing.`,
       },
     },
     async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
-      const llm = getClient();
+      // Fresh per-call client so withSettledCost's getSpending() delta isolates
+      // THIS call's cost (the shared singleton's cumulative counter double-counts
+      // concurrent calls — see buildClient).
+      const llm = buildClient();
 
       // OpenAI-compatible response shaping, forwarded to every call path below.
       const responseFormat = response_format ? ({ type: response_format } as const) : undefined;

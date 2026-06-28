@@ -1,6 +1,7 @@
 // src/tools/dex.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { fetchWithTimeout } from "../utils/http.js";
 
 export function registerDexTool(server: McpServer): void {
   server.registerTool(
@@ -40,7 +41,7 @@ Examples:
           };
         }
 
-        const response = await fetch(url);
+        const response = await fetchWithTimeout(url, {}, 8000);
         if (!response.ok) {
           throw new Error(`DexScreener API error: ${response.status}`);
         }

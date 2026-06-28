@@ -56,9 +56,12 @@ export function getChain(): "base" | "solana" {
   if (process.env.SOLANA_WALLET_KEY) return "solana";
 
   // 3. Fall back to wallet-file autodetection for first-run users who never
-  //    set a chain preference but already have a Solana session on disk.
+  //    set a chain preference but already have a Solana session on disk. Use
+  //    loadSolanaWallet (non-empty key) rather than bare existsSync: an empty/
+  //    truncated session file would otherwise pin every tool to a Solana client
+  //    that can't be built ("Private key required").
   try {
-    if (fs.existsSync(SOLANA_WALLET_FILE_PATH)) return "solana";
+    if (loadSolanaWallet()) return "solana";
   } catch { /* ignore */ }
 
   return "base";
@@ -177,6 +180,19 @@ export function buildClientWithTimeout(timeoutMs: number): ApiClient {
 }
 
 /**
+ * A FRESH (non-cached) client for the active chain at the default timeout. Used
+ * by blockrun_chat so the per-call getSpending() delta in withSettledCost
+ * reflects ONLY that call. The shared singleton's getSpending() is a cumulative
+ * counter, so concurrent calls (the MCP SDK dispatches in parallel) would each
+ * read the other's settlement in their delta — over-recording spend and
+ * misattributing it across agent_ids.
+ */
+export function buildClient(): ApiClient {
+  if (getChain() === "solana") return buildSolanaClient();
+  return new LLMClient({ privateKey: getOrCreateWalletKey() });
+}
+
+/**
  * Native Anthropic client → BlockRun's `/v1/messages` endpoint, which forwards
  * Claude requests/responses to api.anthropic.com VERBATIM (thinking blocks +
  * signatures + upstream identity headers, zero model substitution, no fallback).
@@ -276,6 +292,7 @@ async function getBaseUsdcBalance(address: string): Promise<number | null> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
+        signal: AbortSignal.timeout(8000),
       });
       const result = await response.json() as { result?: string };
       const usd = parseBaseUsdcCallResult(result.result);

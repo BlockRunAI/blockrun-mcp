@@ -181,6 +181,19 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // the estimate, so the budget cap reflects what was actually settled.
         const settledUsd = amountToUsd(details.amount);
 
+        // The 402 carries the REAL price; Seedance/Sora are token-priced, so a
+        // 1080p/2K/4K render can far exceed the per-second estimate reserved at
+        // the gate. Re-reserve against the cap BEFORE paying so a single high-res
+        // call can't settle past the budget (and concurrent jobs hold the true
+        // amount, not the low estimate, for the whole polling window).
+        if (settledUsd !== null && settledUsd > estimatedCost) {
+          gate?.release();
+          gate = reserveBudget(budget, agent_id, settledUsd);
+          if (!gate.allowed) {
+            return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
+          }
+        }
+
         const paymentPayload = await createPaymentPayload(
           privateKey,
           account.address,
@@ -306,7 +319,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         const lines = [
           `🎬 Video ready!`,
           `URL: ${completed.url}`,
-          `Duration: ${completed.duration_seconds ? `${completed.duration_seconds}s` : "8s"}`,
+          `Duration: ${completed.duration_seconds ?? billedSeconds}s`,
           `Model: ${completed.modelReturned || selectedModel}`,
           ...(completed.backed_up ? [`Backed up to BlockRun storage (URL is permanent)`] : completed.source_url ? [`Source URL: ${completed.source_url}`] : []),
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),

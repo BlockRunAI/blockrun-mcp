@@ -15,9 +15,10 @@ export const BASE_RPC_URLS = [
 ];
 
 // Models organized by provider:
-// OpenAI (13): openai/gpt-5.4, openai/gpt-5.4-pro, openai/gpt-5.3, openai/gpt-5.2,
-//   openai/gpt-5.4-mini, openai/gpt-5-mini, openai/gpt-5.4-nano, openai/gpt-5.2-pro,
-//   openai/gpt-5.3-codex, openai/o1, openai/o1-mini, openai/o3, openai/o3-mini
+// OpenAI (14): openai/gpt-5.5 (balanced default), openai/gpt-5.4, openai/gpt-5.4-pro,
+//   openai/gpt-5.3, openai/gpt-5.2, openai/gpt-5.4-mini, openai/gpt-5-mini,
+//   openai/gpt-5.4-nano, openai/gpt-5.2-pro, openai/gpt-5.3-codex, openai/o1,
+//   openai/o1-mini, openai/o3, openai/o3-mini
 // Anthropic (flagships): anthropic/claude-opus-4.8 (most capable, 1M context, 128k output),
 //   anthropic/claude-opus-4.7 (1M context), anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.6,
 //   anthropic/claude-haiku-4.5 (plus opus-4.5, opus-4, sonnet-4 legacy)

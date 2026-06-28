@@ -16,7 +16,10 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // models tool and the models resource call through here so the fetch + TTL logic
 // lives in one place.
 export async function loadModels(llm: ModelLister, cache: ModelCache): Promise<ModelEntry[]> {
-  if (!cache.models) {
+  // Treat an empty array as "not loaded" too: `![]` is false, so a transient
+  // empty upstream result would otherwise be pinned as a valid cache for the
+  // whole TTL ("Models (0):") and never re-fetched even after recovery.
+  if (cache.models === null || cache.models.length === 0) {
     cache.models = llm.listAllModels
       ? await llm.listAllModels()
       : await llm.listModels();
