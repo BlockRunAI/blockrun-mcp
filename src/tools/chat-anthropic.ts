@@ -61,6 +61,9 @@ export interface AnthropicNativeArgs {
   temperature?: number;
   stop?: string[];
   thinking?: { type: "enabled"; budget_tokens: number };
+  // Anthropic's /v1/messages has no OpenAI-style response_format field, so JSON
+  // mode is honored by injecting a system instruction instead.
+  responseFormat?: { type: "text" | "json_object" };
   budget: BudgetState;
   agentId?: string;
   estimatedCost: number;
@@ -119,7 +122,7 @@ function isThinkingBlock(b: Anthropic.ContentBlock): b is Anthropic.ThinkingBloc
 export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<McpResult> {
   const {
     client, model, message, system, messages,
-    maxTokens, temperature, stop, thinking,
+    maxTokens, temperature, stop, thinking, responseFormat,
     budget, agentId, estimatedCost,
   } = args;
 
@@ -139,6 +142,13 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     }
     apiMessages.push({ role: m.role, content: toAnthropicContent(m.content) });
   }
+  // JSON mode: /v1/messages has no response_format param, so steer the model
+  // with a system instruction (keeps the documented "works across all
+  // providers" promise true for the native Claude path).
+  if (responseFormat?.type === "json_object") {
+    systemParts.push("Respond with only valid JSON. Do not wrap it in markdown code fences or add any prose before or after.");
+  }
+
   // `message` is the final user turn (matches the OpenAI multi-turn convention).
   if (message.trim()) apiMessages.push({ role: "user", content: message });
   if (apiMessages.length === 0) {

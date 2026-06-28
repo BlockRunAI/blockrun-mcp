@@ -19,7 +19,7 @@ import type { BudgetState } from "../types.js";
  * cost (LLMClient.getSpending delta), so over-reserving here only affects the
  * gate, never the ledger.
  */
-function estimateChatCost(
+export function estimateChatCost(
   maxTokens: number | undefined,
   mode: string | undefined,
   model: string | undefined,
@@ -29,7 +29,10 @@ function estimateChatCost(
   // Free paths bypass the gate entirely.
   if (mode === "free") return 0;
   if (model?.startsWith("nvidia/")) return 0;
-  if (routing === "smart" && routingProfile === "free") return 0;
+  // NOTE: routing_profile:"free" is NOT a free path. @blockrun/llm 2.x dropped
+  // the free routing profile, so it maps to undefined → the gateway picks a PAID
+  // auto-tier model. Reserving $0 here previously let an agent loop drain the
+  // wallet past the cap. It falls through to the smart-routing reserve below.
 
   const out = Math.max(maxTokens ?? 1024, 256);
   // ~$20 / 1M output tokens — a conservative upper bound covering premium
@@ -94,7 +97,7 @@ Run blockrun_models to see all available models with pricing.`,
         model: z.string().optional().describe("Specific model ID (e.g., 'zai/glm-5', 'openai/o3')"),
         mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: glm = Zhipu GLM-5/GLM-5-Turbo ($0.001/call, great for coding), coding = GLM-5 + code models, cheap = GLM-5 + budget, free = NVIDIA only (ignored if model specified)"),
         routing: z.enum(["smart"]).optional().describe('Set to "smart" to auto-select the optimal model via ClawRouter (14-dimension AI routing)'),
-        routing_profile: z.enum(["free", "eco", "auto", "premium"]).optional().default("auto").describe('Cost/quality profile for ClawRouter: "free" (zero cost NVIDIA), "eco" (budget), "auto" (balanced, default), "premium" (best quality) (only applies when routing: "smart")'),
+        routing_profile: z.enum(["free", "eco", "auto", "premium"]).optional().default("auto").describe('Cost/quality profile for ClawRouter: "eco" (budget), "auto" (balanced, default), "premium" (best quality). Note: "free" maps to "auto" (the SDK dropped the free profile) and still settles a PAID model — for zero-cost generation use mode:"free" or model:"nvidia/...". Only applies when routing:"smart".'),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
@@ -159,6 +162,7 @@ Run blockrun_models to see all available models with pricing.`,
           temperature,
           stop,
           thinking,
+          responseFormat,
           budget,
           agentId: agent_id,
           estimatedCost,
@@ -167,6 +171,15 @@ Run blockrun_models to see all available models with pricing.`,
 
       // ClawRouter smart routing (EVM/Base only)
       if (routing === "smart") {
+        // smartChat() takes a single prompt string and cannot carry a `messages`
+        // array, so combining the two would silently drop the conversation
+        // history. Reject the combination instead of answering without context.
+        if (messages && messages.length > 0) {
+          return {
+            content: [{ type: "text", text: formatError('routing:"smart" does not support multi-turn `messages` — smart routing answers a single prompt. Send the conversation via `messages` with an explicit `model`/`mode` (no routing), or send a single `message` with routing:"smart".') }],
+            isError: true,
+          };
+        }
         if (!(llm instanceof LLMClient)) {
           return {
             content: [{ type: "text", text: "Smart routing (ClawRouter) is not available on Solana. Use a specific model or mode instead." }],
