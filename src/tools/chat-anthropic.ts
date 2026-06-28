@@ -81,13 +81,18 @@ export function isAnthropicModel(model: string): boolean {
   return /^anthropic\//i.test(id) || /^claude-/i.test(id);
 }
 
-/** Parse a data: URI into the components Anthropic's base64 image source needs. */
+/** Parse a data: URI into the components Anthropic's base64 image source needs.
+ * Tolerates the common `jpg` alias and extra parameters (e.g. `;name=x`); rejects
+ * media types Anthropic doesn't accept so the caller can skip them. */
 function parseDataUri(url: string): Anthropic.Base64ImageSource | null {
-  const match = /^data:(image\/(?:jpeg|png|gif|webp));base64,(.+)$/i.exec(url.trim());
+  const match = /^data:image\/([a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/i.exec(url.trim());
   if (!match) return null;
+  let subtype = match[1].toLowerCase();
+  if (subtype === "jpg") subtype = "jpeg";
+  if (!["jpeg", "png", "gif", "webp"].includes(subtype)) return null;
   return {
     type: "base64",
-    media_type: match[1].toLowerCase() as Anthropic.Base64ImageSource["media_type"],
+    media_type: `image/${subtype}` as Anthropic.Base64ImageSource["media_type"],
     data: match[2],
   };
 }
@@ -102,11 +107,15 @@ function toAnthropicContent(content: InboundContent): string | Anthropic.Content
     } else if (part.type === "image_url") {
       const url = part.image_url?.url;
       if (!url) continue;
-      const base64 = parseDataUri(url);
-      const source: Anthropic.ImageBlockParam["source"] = base64
-        ? base64
-        : ({ type: "url", url } as Anthropic.URLImageSource);
-      blocks.push({ type: "image", source });
+      if (/^data:/i.test(url)) {
+        // A data: URI must be sent as a base64 source — forwarding it as a
+        // type:"url" source 400s upstream. Skip an unsupported/malformed one.
+        const base64 = parseDataUri(url);
+        if (!base64) continue;
+        blocks.push({ type: "image", source: base64 });
+      } else {
+        blocks.push({ type: "image", source: { type: "url", url } as Anthropic.URLImageSource });
+      }
     }
   }
   return blocks;
@@ -140,7 +149,11 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
       if (text) systemParts.push(text);
       continue;
     }
-    apiMessages.push({ role: m.role, content: toAnthropicContent(m.content) });
+    const content = toAnthropicContent(m.content);
+    // A content array that reduced to nothing (e.g. only an unsupported image)
+    // would 400 as an empty-content message — drop the turn instead.
+    if (Array.isArray(content) && content.length === 0) continue;
+    apiMessages.push({ role: m.role, content });
   }
   // JSON mode: /v1/messages has no response_format param, so steer the model
   // with a system instruction (keeps the documented "works across all

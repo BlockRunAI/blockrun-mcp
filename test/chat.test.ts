@@ -23,6 +23,12 @@ test("estimateChatCost: smart+free reserves the same as smart+auto", () => {
   );
 });
 
+test("estimateChatCost reserves for the extended-thinking budget, not just max_tokens", () => {
+  const noThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8", undefined, undefined);
+  const withThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8", undefined, undefined, 100_000);
+  assert.ok(withThink > noThink * 10, `100k thinking budget should reserve far more (got ${withThink} vs ${noThink})`);
+});
+
 test("estimateChatCost keeps genuinely-free paths at $0", () => {
   assert.equal(estimateChatCost(1024, "free", undefined, undefined, undefined), 0);
   assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash", undefined, undefined), 0);
@@ -50,6 +56,24 @@ test("handleAnthropicNative folds json_object into the system prompt", async () 
     estimatedCost: 0.01,
   });
   assert.match(String(captured.system ?? ""), /json/i);
+});
+
+test("handleAnthropicNative sends a data:image/jpg URI as a base64 image source", async () => {
+  let captured: any;
+  const client = { messages: { create: async (p: any) => { captured = p; return fakeNative(); } } };
+  await handleAnthropicNative({
+    client: client as any,
+    model: "anthropic/claude-haiku-4.5",
+    message: "describe",
+    messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/jpg;base64,QQ==" } }] }],
+    budget: newBudget(),
+    estimatedCost: 0.01,
+  });
+  const blocks = (captured.messages as any[]).flatMap((m) => Array.isArray(m.content) ? m.content : []);
+  const img = blocks.find((b: any) => b.type === "image");
+  assert.ok(img, "an image block should be sent");
+  assert.equal(img.source.type, "base64");
+  assert.equal(img.source.media_type, "image/jpeg"); // jpg normalized to jpeg
 });
 
 test("handleAnthropicNative adds no JSON instruction for plain text", async () => {

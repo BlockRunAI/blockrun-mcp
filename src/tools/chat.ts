@@ -25,6 +25,7 @@ export function estimateChatCost(
   model: string | undefined,
   routing: string | undefined,
   routingProfile: string | undefined,
+  thinkingBudget?: number,
 ): number {
   // Free paths bypass the gate entirely.
   if (mode === "free") return 0;
@@ -34,7 +35,11 @@ export function estimateChatCost(
   // auto-tier model. Reserving $0 here previously let an agent loop drain the
   // wallet past the cap. It falls through to the smart-routing reserve below.
 
-  const out = Math.max(maxTokens ?? 1024, 256);
+  // Anthropic bills extended-thinking tokens as output, so the thinking budget —
+  // not max_tokens — is the dominant cost driver on the native claude-* path.
+  // Fold it into the reserved output size so the gate can't be bypassed by a
+  // tiny max_tokens + a huge budget_tokens.
+  const out = Math.max((maxTokens ?? 1024) + (thinkingBudget ?? 0), 256);
   // ~$20 / 1M output tokens — a conservative upper bound covering premium
   // frontier output, floored so tiny completions still reserve something real.
   const frontierReserve = Math.max(0.01, (out / 1_000_000) * 20);
@@ -105,7 +110,7 @@ Run blockrun_models to see all available models with pricing.`,
         stop: z.array(z.string()).max(4).optional().describe("Up to 4 stop sequences; generation halts when any is produced"),
         thinking: z.object({
           type: z.literal("enabled"),
-          budget_tokens: z.number().min(1).describe("Tokens Claude may spend reasoning before answering. max_tokens is auto-raised above this if needed."),
+          budget_tokens: z.number().int().min(1).max(100_000).describe("Tokens Claude may spend reasoning before answering (1–100000). max_tokens is auto-raised above this if needed; counts toward the budget reserve."),
         }).optional().describe("Anthropic extended thinking. Only honored for anthropic/claude-* models — these go direct to the native /v1/messages endpoint and the response includes verbatim type:'thinking' blocks with their original signature. Ignored for non-Claude models (no native thinking channel)."),
         agent_id: z.string().optional().describe("Agent identifier. If a budget was delegated for this agent_id via blockrun_wallet action:'delegate', spending is tracked and enforced. The agent is hard-stopped when its budget is exhausted."),
         messages: z.array(z.object({
@@ -133,7 +138,7 @@ Run blockrun_models to see all available models with pricing.`,
       // Smart routing picks the model AFTER the gate, so use a per-profile
       // worst-case estimate so a single premium-profile call cannot blow past
       // a near-exhausted budget. Mode-based heuristics escalate similarly.
-      const estimatedCost = estimateChatCost(max_tokens, mode, model, routing, routing_profile);
+      const estimatedCost = estimateChatCost(max_tokens, mode, model, routing, routing_profile, thinking?.budget_tokens);
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails (the
       // real settled cost is booked separately via recordActualSpend).
