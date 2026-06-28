@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.24.2
+
+A third audit pass — focused on regression-hunting the 0.24.1 changes plus the previously thin Anthropic path, zod schemas, and docs — surfaced a small batch of fixes (one of them a regression introduced by 0.24.1 itself).
+
+- **`fix(chat)` — extended-thinking `budget_tokens` no longer bypasses the budget gate.** The pre-pay reserve was derived from `max_tokens`, but Anthropic bills thinking tokens as output, so a tiny `max_tokens` plus a large `thinking.budget_tokens` passed a ~$0.02 gate while settling for several dollars. The thinking budget is now folded into the reserve, and the param is bounded (`int`, 1–100000) instead of unbounded.
+- **`fix(chat)` — native Anthropic data-URI images.** `parseDataUri` only matched `image/{jpeg,png,gif,webp}` with no parameters, so a `data:image/jpg;base64,…` (the common alias) or a URI with `;name=` was forwarded as a `type:"url"` source and 400'd upstream. It now accepts the `jpg` alias and extra params, rejects unsupported media types, skips an unparseable data URI instead of forwarding a broken source, and drops a message whose content reduced to empty.
+- **`fix(perf)` — `getChain()` no longer scans the home directory on every call.** 0.24.1's empty-session-file fix switched Solana autodetection to `loadSolanaWallet()`, which `readdir`+`stat`s every hidden dir in `$HOME` — on every `getChain()` call (a hot path hit by every tool, `getWalletInfo`, and `formatError`). It now reads just the session file and requires it non-empty, keeping the guard without the per-call scan.
+- **`docs(readme)`** — reconcile with code: Node **≥ 20.19** (was ≥ 18; `engines` requires 20.19), add `blockrun_realface` (enroll/portrait) to both Base-only lists, and note `blockrun_search` covers **X/Twitter** (not just web + news).
+
 ## 0.24.1
 
 A second audit pass (every finding adversarially re-verified) over the 0.24.0 code — including the changes 0.24.0 itself introduced — surfaced a batch of hardening fixes. None critical; the two notable ones are residuals of the 0.24.0 budget work.
