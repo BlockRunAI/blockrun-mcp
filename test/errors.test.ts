@@ -1,7 +1,7 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatError } from "../src/utils/errors.js";
+import { formatError, isPaymentRejectionError } from "../src/utils/errors.js";
 
 test("model-unavailable (token360) → steers to a sibling model, not a generic blip", () => {
   const msg = "Video generation failed: API error 500: token360 video submit failed: Model 'seedance-2.0-fast' not found or not active for requested provider";
@@ -43,4 +43,26 @@ test("plain validation message gets no canned guidance appended", () => {
 test("a dollar amount like $1.4020 is not misread as a 402", () => {
   const out = formatError("charged $1.4020 for the call");
   assert.equal(out, "Error: charged $1.4020 for the call"); // no funding/server text
+});
+
+test("the integer part of a decimal amount is not misread as a status code", () => {
+  // $402.50 / $500.00 / 402.99 — the '.' that follows the code used to satisfy
+  // the old trailing boundary, misclassifying these as 402/500 errors.
+  assert.equal(formatError("settled $402.50 for the call"), "Error: settled $402.50 for the call");
+  assert.equal(formatError("refunded $500.00 to the wallet"), "Error: refunded $500.00 to the wallet");
+  assert.equal(formatError("cost 402.99 usdc"), "Error: cost 402.99 usdc");
+});
+
+test("genuine status codes still classify after the regex tightening", () => {
+  assert.match(formatError("got 402"), /needs funding/);
+  assert.match(formatError("error 500 occurred"), /temporary API issue/);
+  assert.match(formatError("API error 402: declined"), /needs funding/);
+});
+
+test("isPaymentRejectionError matches settlement failures, not outage status text", () => {
+  assert.equal(isPaymentRejectionError("Payment rejected. Check your wallet balance."), true);
+  assert.equal(isPaymentRejectionError("insufficient balance"), true);
+  // A non-402 probe response is an outage/validation error, NOT a funding issue.
+  assert.equal(isPaymentRejectionError('Unexpected response 500 (expected a 402 payment challenge): {"error":"bad gateway"}'), false);
+  assert.equal(isPaymentRejectionError("Unexpected response 425 (expected a 402 payment challenge): liveness not finished"), false);
 });

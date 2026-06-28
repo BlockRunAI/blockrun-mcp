@@ -34,6 +34,20 @@ export function extractErrorMessage(err: unknown): string {
 }
 
 /**
+ * True when an error from the manual-402 media tools (speech/music/video/
+ * realface) is a GENUINE payment failure — an on-chain settlement rejection or
+ * insufficient balance — not an upstream outage whose status text merely
+ * contains "402". Those tools probe the endpoint UNPAID and throw on any
+ * non-402 response, so the old `includes("402")` / `includes("payment")`
+ * classifier reported 5xx/4xx outages (and RealFace's 425 liveness-not-ready) as
+ * "fund your wallet". Match only the real settlement signals.
+ */
+export function isPaymentRejectionError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("insufficient") || m.includes("balance") || m.includes("rejected");
+}
+
+/**
  * Format an error for return to the caller, appending actionable guidance for
  * the three common failure classes (upstream model unavailable, server blip,
  * payment/balance). `opts.altModels` lets a tool suggest a SAME-DOMAIN fallback
@@ -44,8 +58,10 @@ export function formatError(message: string, opts?: { altModels?: string }): str
   const msgLower = message.toLowerCase();
 
   // Match HTTP status codes as standalone tokens, not substrings — "max 5000
-  // characters" or "$1.4020" must not classify as 500/402 errors.
-  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}([^0-9]|$)`).test(msgLower);
+  // characters", "$1.4020", or "$402.50" must not classify as 500/402 errors.
+  // The trailing boundary excludes a following digit AND a following dot, so the
+  // integer part of a decimal amount ($402.50) is not misread as a status code.
+  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}($|[^0-9.])`).test(msgLower);
 
   const isPaymentError = hasStatus("402") ||
     msgLower.includes("balance") ||

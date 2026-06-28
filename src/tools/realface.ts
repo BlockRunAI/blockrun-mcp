@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
-import { formatError } from "../utils/errors.js";
+import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
@@ -37,7 +37,7 @@ async function payAndPostJson(
 
   if (resp402.status !== 402) {
     const data = await resp402.json().catch(() => ({})) as Record<string, any>;
-    throw new Error(`Expected 402, got ${resp402.status}: ${data.message || data.error || JSON.stringify(data)}`);
+    throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${data.message || data.error || JSON.stringify(data)}`);
   }
 
   const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
@@ -325,7 +325,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (resp402.status !== 402) {
             const data = await resp402.json().catch(() => ({})) as Record<string, any>;
             // Surface group-not-active (425) and validation (400) clearly.
-            throw new Error(`Expected 402, got ${resp402.status}: ${data.message || data.error || JSON.stringify(data)}`);
+            throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${data.message || data.error || JSON.stringify(data)}`);
           }
 
           const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
@@ -405,7 +405,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         return { content: [{ type: "text", text: formatError(`Unknown action: ${action}`) }], isError: true };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("balance") || errMsg.includes("payment") || errMsg.includes("402") || errMsg.includes("rejected")) {
+        if (isPaymentRejectionError(errMsg)) {
           return {
             content: [{ type: "text", text: `RealFace enrollment requires payment. Run blockrun_wallet with action: "setup" for funding instructions.\nError: ${errMsg}` }],
             isError: true,

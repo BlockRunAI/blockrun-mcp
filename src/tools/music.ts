@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { amountToUsd, checkBudget, recordActualSpend } from "../utils/budget.js";
-import { formatError } from "../utils/errors.js";
+import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
@@ -75,8 +75,8 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
         }, 15_000);
 
         if (resp402.status !== 402) {
-          const data = await resp402.json() as Record<string, unknown>;
-          throw new Error(`Expected 402, got ${resp402.status}: ${JSON.stringify(data)}`);
+          const data = await resp402.json().catch(() => ({})) as Record<string, unknown>;
+          throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${JSON.stringify(data)}`);
         }
 
         const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
@@ -152,7 +152,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("balance") || errMsg.includes("payment") || errMsg.includes("402") || errMsg.includes("rejected")) {
+        if (isPaymentRejectionError(errMsg)) {
           return {
             content: [{ type: "text", text: `Music generation requires payment. Run blockrun_wallet with action: "setup" for funding instructions.\nError: ${errMsg}` }],
             isError: true,
