@@ -313,69 +313,26 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
 
-          const privateKey = getOrCreateWalletKey();
-          const account = privateKeyToAccount(privateKey);
-          const enrollUrl = `${BLOCKRUN_API}/v1/realface/enroll`;
-          const reqBody = JSON.stringify({ name, image_url, group_id });
-
-          // Step 1: get 402 with price + requirements
-          const resp402 = await fetchWithTimeout(enrollUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: reqBody,
-          }, 15_000);
-
-          if (resp402.status !== 402) {
-            const data = await resp402.json().catch(() => ({})) as Record<string, any>;
-            // Surface group-not-active (425) and validation (400) clearly.
-            throw new Error(`Unexpected response ${resp402.status} (expected a 402 payment challenge): ${data.message || data.error || JSON.stringify(data)}`);
-          }
-
-          const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
-          if (!prHeader) throw new Error("No PAYMENT-REQUIRED header in 402 response");
-
-          const paymentRequired = parsePaymentRequired(prHeader);
-          const details = extractPaymentDetails(paymentRequired);
-          const settledUsd = amountToUsd(details.amount);
-
-          const paymentPayload = await createPaymentPayload(
-            privateKey,
-            account.address,
-            details.recipient,
-            details.amount,
-            details.network || "eip155:8453",
-            {
-              resourceUrl: details.resource?.url || enrollUrl,
-              resourceDescription: details.resource?.description || "BlockRun RealFace enrollment",
-              maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, 120),
-              extra: details.extra,
-            }
+          // Same x402 probe/sign/resubmit flow as the portrait action — shared
+          // via payAndPostJson. The server uploads the photo, waits for the
+          // BytePlus face-match, and only settles once the asset is active.
+          const { status, data, settledUsd } = await payAndPostJson(
+            `${BLOCKRUN_API}/v1/realface/enroll`,
+            JSON.stringify({ name, image_url, group_id }),
+            "BlockRun RealFace enrollment",
           );
 
-          // Step 2: submit with payment. Server uploads the photo, waits for the
-          // BytePlus face-match, and only settles once the asset is active.
-          const resp = await fetchWithTimeout(enrollUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "PAYMENT-SIGNATURE": paymentPayload,
-            },
-            body: reqBody,
-          }, 90_000);
-
-          const data = await resp.json().catch(() => ({})) as Record<string, any>;
-
-          if (resp.status === 402) {
+          if (status === 402) {
             throw new Error("Payment rejected. Check your wallet balance.");
           }
-          if (resp.status === 425) {
+          if (status === 425) {
             return { content: [{ type: "text", text: formatError(`Group not active yet — ${data.message || "finish the phone liveness check first"}. No payment taken.`) }], isError: true };
           }
-          if (resp.status === 422) {
+          if (status === 422) {
             return { content: [{ type: "text", text: formatError(`Face match failed — ${data.hint || "use a clearer front-facing photo of the same person"}. No payment taken.`) }], isError: true };
           }
-          if (!resp.ok) {
-            throw new Error(`Enroll error ${resp.status}: ${data.error || JSON.stringify(data)}`);
+          if (status < 200 || status >= 300) {
+            throw new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`);
           }
 
           const assetId: string | undefined = data.asset_id;
