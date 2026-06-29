@@ -110,7 +110,7 @@ Run blockrun_models to see all available models with pricing.`,
         stop: z.array(z.string()).max(4).optional().describe("Up to 4 stop sequences; generation halts when any is produced"),
         thinking: z.object({
           type: z.literal("enabled"),
-          budget_tokens: z.number().int().min(1).max(100_000).describe("Tokens Claude may spend reasoning before answering (1–100000). max_tokens is auto-raised above this if needed; counts toward the budget reserve."),
+          budget_tokens: z.number().int().min(1024).max(100_000).describe("Tokens Claude may spend reasoning before answering (1024–100000; Anthropic requires ≥1024). max_tokens is auto-raised above this if needed; counts toward the budget reserve."),
         }).optional().describe("Anthropic extended thinking. Only honored for anthropic/claude-* models — these go direct to the native /v1/messages endpoint and the response includes verbatim type:'thinking' blocks with their original signature. Ignored for non-Claude models (no native thinking channel)."),
         agent_id: z.string().optional().describe("Agent identifier. If a budget was delegated for this agent_id via blockrun_wallet action:'delegate', spending is tracked and enforced. The agent is hard-stopped when its budget is exhausted."),
         messages: z.array(z.object({
