@@ -2,6 +2,14 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.25.0
+
+- **`feat(image)` — optional inline preview + opt-in spend confirmation.** Two UX layers for `blockrun_image`, both off by default (no behavior change unless enabled):
+  - **Inline preview** — an `inline` param (or `BLOCKRUN_INLINE_IMAGES=1`) returns a downscaled JPEG thumbnail as a `type:"image"` block **alongside** the full-resolution URL, so rich clients (e.g. the VS Code extension) render the result in-conversation. Best-effort: auto-skips above a size cap and on any fetch/encode error (URL-only fallback), with source download/decode caps. Tunable via `BLOCKRUN_INLINE_MAX_DIM` / `_QUALITY` / `_MAX_BYTES`.
+  - **Spend confirmation** — before charging, the server asks via **MCP elicitation** (showing the estimated cost) with an "approve all this session" checkbox. **Off by default — opt in with `BLOCKRUN_CONFIRM_SPEND=on`** (avoids double-prompting when a PreToolUse hook already gates spend); threshold via `BLOCKRUN_CONFIRM_THRESHOLD`. No-ops on clients without elicitation and **fails open** — only an explicit *decline* aborts (a decline releases the budget reservation and charges nothing), and session auto-approve latches only on an explicit *accept*.
+
+  Thanks @KillerQueen-Z! (#21) — re-integrated on top of the 0.24.x charge path so the SSRF guard, Content-Length cap, and the concurrency-safe `reserveBudget` reservation all stay intact; the confirmation runs once inside the reserve→record→release flow.
+
 ## 0.24.3
 
 A fourth audit pass (regression-hunting the 0.24.1–0.24.2 fixes plus the packaging/build surface) found two issues — both in fixes shipped earlier in the 0.24.x line.
