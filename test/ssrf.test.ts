@@ -17,6 +17,25 @@ test("isBlockedFetchHost blocks loopback/private/link-local/metadata", () => {
   }
 });
 
+test("isBlockedFetchHost blocks IPv4-mapped IPv6 in the hex form the URL parser emits", () => {
+  // new URL('http://[::ffff:127.0.0.1]/').hostname === '[::ffff:7f00:1]' — the
+  // decimal ::ffff:a.b.c.d form is never what the real caller passes.
+  for (const h of ["::ffff:7f00:1", "[::ffff:7f00:1]", "::ffff:a9fe:a9fe", "::ffff:a00:5"]) {
+    assert.equal(isBlockedFetchHost(h), true, `should block ${h}`);
+  }
+  assert.equal(isBlockedFetchHost("::ffff:808:808"), false, "8.8.8.8 mapped is public");
+});
+
+test("isBlockedFetchHost blocks the hostname new URL() actually produces for mapped literals", () => {
+  for (const u of [
+    "http://[::ffff:127.0.0.1]/x.png",
+    "http://[::ffff:169.254.169.254]/",
+    "http://[::ffff:10.0.0.5]/internal.png",
+  ]) {
+    assert.equal(isBlockedFetchHost(new URL(u).hostname), true, u);
+  }
+});
+
 test("isBlockedFetchHost allows public hosts", () => {
   for (const h of [
     "example.com", "cdn.openai.com", "blockrun.ai",

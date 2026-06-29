@@ -46,8 +46,17 @@ export function isBlockedFetchHost(hostname: string): boolean {
   if (host.includes(":")) {
     if (host === "::1" || host === "::") return true;
     if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return true;
+    // IPv4-mapped, decimal form (::ffff:127.0.0.1).
     const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
     if (mapped) return ipv4Blocked(mapped[1]) === true;
+    // IPv4-mapped, HEX-compressed form (::ffff:7f00:1) — this is what the WHATWG
+    // URL parser actually emits for new URL('http://[::ffff:127.0.0.1]/'), so it
+    // must be decoded too or the deny-list is bypassable.
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16), lo = parseInt(mappedHex[2], 16);
+      return ipv4Blocked(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`) === true;
+    }
     return false;
   }
 
