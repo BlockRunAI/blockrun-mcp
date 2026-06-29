@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.25.1
+
+- **`fix(image)` — validate the env knobs on the 0.25.0 features.** The new opt-in features parsed their numeric env vars with bare `Number(env || default)`, which only falls back on unset/empty (a non-empty string is truthy) — so a typo became `NaN` and silently changed behavior: `BLOCKRUN_CONFIRM_THRESHOLD="$0.05"` flipped the confirm gate to "ask on every paid call", and (fail-open) a malformed `BLOCKRUN_INLINE_MAX_BYTES` removed the inline base64 context-bloat ceiling (`data.length > NaN` is always false). `confirm-spend` now reuses the validated `parseBudgetLimitEnv` (trims, strips a leading `$`, requires a finite positive number); `inline-image` uses a validating `envInt` that falls back to the default on a non-finite/non-positive value and clamps quality to 1–100. Both opt-in and off by default; no behavior change for valid configs.
+
 ## 0.25.0
 
 - **`feat(image)` — optional inline preview + opt-in spend confirmation.** Two UX layers for `blockrun_image`, both off by default (no behavior change unless enabled):

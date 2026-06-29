@@ -21,13 +21,18 @@
 // better than failing the call on clients that can't ask.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { parseBudgetLimitEnv } from "./budget.js";
 
 // Session-scoped "approve all" flag. The MCP server is one process per session,
 // so a module-level flag is exactly session lifetime.
 let sessionAutoApprove = false;
 
 const CONFIRM_ON = /^(1|true|on|yes)$/i.test(process.env.BLOCKRUN_CONFIRM_SPEND ?? "");
-const THRESHOLD = Number(process.env.BLOCKRUN_CONFIRM_THRESHOLD || 0);
+// Reuse the validated budget-env parser (trims, strips a leading $, requires a
+// finite positive number) so a typo like "$0.05" or "0.05usd" deterministically
+// falls back to 0 (confirm everything above free) instead of NaN — which would
+// silently flip the gate to "confirm on every call".
+const THRESHOLD = parseBudgetLimitEnv(process.env.BLOCKRUN_CONFIRM_THRESHOLD) ?? 0;
 
 export interface ConfirmResult {
   ok: boolean;

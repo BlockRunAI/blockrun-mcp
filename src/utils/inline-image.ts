@@ -12,13 +12,25 @@
 
 import sharp from "sharp";
 
+// Parse a positive-integer env knob, falling back to the default on an
+// unset/empty/malformed/non-positive value. Bare `Number(env || default)` only
+// catches empty/unset (a non-empty string is truthy), so a typo would become
+// NaN and silently defeat the cap it guards — e.g. `data.length > NaN` is
+// always false, removing the context-bloat ceiling.
+function envInt(name: string, def: number, min = 1, max = Infinity): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return def;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= min ? Math.min(Math.floor(n), max) : def;
+}
+
 // Thumbnail bounds — small enough that the base64 stays cheap in context.
-const MAX_DIM = Number(process.env.BLOCKRUN_INLINE_MAX_DIM || 512);
-const JPEG_QUALITY = Number(process.env.BLOCKRUN_INLINE_QUALITY || 70);
+const MAX_DIM = envInt("BLOCKRUN_INLINE_MAX_DIM", 512);
+const JPEG_QUALITY = envInt("BLOCKRUN_INLINE_QUALITY", 70, 1, 100);
 // Hard ceiling on the BASE64-encoded thumbnail (the string that actually lands
 // in the context window — base64 inflates the raw JPEG ~33%). Above this we
 // skip inlining entirely (URL-only) so a single image can't blow up context.
-const MAX_BYTES = Number(process.env.BLOCKRUN_INLINE_MAX_BYTES || 900_000);
+const MAX_BYTES = envInt("BLOCKRUN_INLINE_MAX_BYTES", 900_000);
 // Defensive caps on the SOURCE download/decode. Upstream is the trusted
 // blockrun-hosted asset, but bounding the buffer + decode keeps a pathological
 // response from ballooning memory before the thumbnail step runs.
