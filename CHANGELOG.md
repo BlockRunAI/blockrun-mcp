@@ -2,6 +2,13 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.24.3
+
+A fourth audit pass (regression-hunting the 0.24.1–0.24.2 fixes plus the packaging/build surface) found two issues — both in fixes shipped earlier in the 0.24.x line.
+
+- **`fix(security)` — the image SSRF deny-list no longer misses IPv4-mapped IPv6 literals.** `isBlockedFetchHost` (added in 0.24.1) only decoded the decimal `::ffff:127.0.0.1` form, but the WHATWG URL parser canonicalizes a mapped literal to the hex-compressed form (`new URL('http://[::ffff:127.0.0.1]/').hostname` → `[::ffff:7f00:1]`), which slipped the guard — so `http://[::ffff:169.254.169.254]/` reached the cloud metadata endpoint and `http://[::ffff:127.0.0.1]/` reached loopback. The hex `::ffff:hi:lo` form is now decoded to its embedded IPv4 and re-checked, and the test exercises the hostname `new URL()` actually emits (the prior test only checked the decimal form the real caller never produces).
+- **`fix(chat)` — `thinking.budget_tokens` floor is now 1024.** 0.24.2 set the schema floor to 1, but Anthropic's extended thinking requires `≥1024` and the value is forwarded verbatim, so `[1,1023]` always 400'd. The floor matches Anthropic's minimum.
+
 ## 0.24.2
 
 A third audit pass — focused on regression-hunting the 0.24.1 changes plus the previously thin Anthropic path, zod schemas, and docs — surfaced a small batch of fixes (one of them a regression introduced by 0.24.1 itself).
