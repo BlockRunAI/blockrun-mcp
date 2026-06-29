@@ -7,6 +7,8 @@ import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
 import { isBlockedFetchHost } from "../utils/ssrf.js";
+import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { readFile } from "node:fs/promises";
 
 // The gateway's /v1/images/image2image only accepts base64 data URIs for the
@@ -180,10 +182,11 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         mask: z.string().optional().describe("Inpaint mask for edit action (openai/gpt-image-* only): a base64 data URI, http(s) URL, or local file path. Transparent areas of the mask are regenerated. Cannot be combined with multiple source images."),
         size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro)"),
         quality: z.enum(["standard", "hd"]).optional().default("standard"),
+        inline: z.boolean().optional().describe("Return a small inline image preview (thumbnail) the client can render in-conversation, in addition to the full-resolution URL. Defaults to the BLOCKRUN_INLINE_IMAGES env setting (off unless set). Rich clients (e.g. the VS Code extension) render it; plain terminals ignore it. Off keeps responses lightweight."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, action, model, image, mask, size, quality, agent_id }) => {
+    async ({ prompt, action, model, image, mask, size, quality, inline, agent_id }) => {
       try {
         if (getChain() !== "base") {
           return {
@@ -193,8 +196,13 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         }
 
         const selectedModel = model || "openai/gpt-image-2";
-        let response;
 
+        // Edit-mode inputs, normalized to data URIs in the branch below and
+        // consumed at the shared charge site after the spend confirmation.
+        let normalizedImage: string | string[] | undefined;
+        let normalizedMask: string | undefined;
+
+        // Validate the edit action up front (before estimating/charging).
         if (action === "edit") {
           if (!image) {
             return {
@@ -230,8 +238,6 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               };
             }
           }
-          let normalizedImage: string | string[];
-          let normalizedMask: string | undefined;
           try {
             const dataUris = await Promise.all(sourceImages.map(toImageDataUri));
             normalizedImage = dataUris.length === 1 ? dataUris[0] : dataUris;
@@ -242,58 +248,60 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               isError: true,
             };
           }
-          const estimatedCost = estimateCost(selectedModel, size);
-          const gate = reserveBudget(budget, agent_id, estimatedCost);
-          if (!gate.allowed) {
-            return {
-              content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
-              isError: true,
-            };
-          }
-          try {
-            response = await getImageClient().edit(prompt, normalizedImage, {
-              model: selectedModel,
-              size,
-              ...(normalizedMask ? { mask: normalizedMask } : {}),
-            });
-            recordSpending(budget, estimatedCost, agent_id);
-          } finally {
-            gate.release();
-          }
-        } else {
-          const estimatedCost = estimateCost(selectedModel, size);
-          const gate = reserveBudget(budget, agent_id, estimatedCost);
-          if (!gate.allowed) {
-            return {
-              content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
-              isError: true,
-            };
-          }
-          try {
-            response = await getImageClient().generate(prompt, {
-              model: selectedModel,
-              size,
-              quality: quality as "standard" | "hd",
-            });
-            recordSpending(budget, estimatedCost, agent_id);
-          } finally {
-            gate.release();
-          }
         }
 
-        const imageUrl = response.data?.[0]?.url;
-
-        if (!imageUrl) {
+        // Shared charge site: reserve the estimate, confirm the spend, call, and
+        // record the real cost — releasing the reservation in finally on every
+        // path (including a decline, which charges nothing).
+        const estimatedCost = estimateCost(selectedModel, size);
+        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        if (!gate.allowed) {
           return {
-            content: [{ type: "text", text: formatError("No image URL in response") }],
+            content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
             isError: true,
           };
         }
+        try {
+          // Confirm the spend before charging (elicitation; user can approve
+          // once, approve all for the session, or decline to abort). No-ops on
+          // clients without elicitation or when disabled via env.
+          const confirm = await confirmSpend(server, {
+            usd: estimatedCost,
+            label: `${action === "edit" ? "image edit" : "image"} · ${selectedModel}`,
+          });
+          if (!confirm.ok) {
+            return { content: [{ type: "text", text: confirm.reason || "Charge cancelled." }] };
+          }
 
-        return {
-          content: [{ type: "text", text: `Image: ${imageUrl}\nPrompt: ${prompt}\nModel: ${selectedModel}` }],
-          structuredContent: { url: imageUrl, prompt, model: selectedModel },
-        };
+          const response = action === "edit"
+            ? await getImageClient().edit(prompt, normalizedImage!, {
+                model: selectedModel,
+                size,
+                ...(normalizedMask ? { mask: normalizedMask } : {}),
+              })
+            : await getImageClient().generate(prompt, { model: selectedModel, size, quality: quality as "standard" | "hd" });
+          recordSpending(budget, estimatedCost, agent_id);
+
+          const imageUrl = response.data?.[0]?.url;
+          if (!imageUrl) {
+            return {
+              content: [{ type: "text", text: formatError("No image URL in response") }],
+              isError: true,
+            };
+          }
+
+          const textBlock = { type: "text" as const, text: `Image: ${imageUrl}\nPrompt: ${prompt}\nModel: ${selectedModel}` };
+          // Optional inline preview (thumbnail) for rich clients. Best-effort:
+          // on failure or if disabled, fall back to the URL-only text block.
+          const previewBlock = shouldInline(inline) ? await buildInlineImageBlock(imageUrl) : null;
+
+          return {
+            content: previewBlock ? [previewBlock, textBlock] : [textBlock],
+            structuredContent: { url: imageUrl, prompt, model: selectedModel, inlined: Boolean(previewBlock) },
+          };
+        } finally {
+          gate.release();
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (err instanceof PaymentError) {
