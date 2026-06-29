@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.25.2
+
+- **`security(deps)` — patch the `ws` memory-exhaustion DoS chain.** A pinned `viem` transitive `ws@8.20.1` (below the ≥8.21.0 patch) was reaching consumers and flagging the entire `ws → viem → @x402/evm → @blockrun/clawrouter → @blockrun/llm` chain (5 high). An `overrides` entry forces `viem`'s `ws` to 8.21.0, clearing all of them — `npm audit` drops **15 → 11**, the ws chain gone. The override ships in `package.json`, so every `npx` install gets the patched `ws`. The remaining advisories are the Solana web3.js-v1 tree (no upstream fix for `bigint-buffer`; npm's only suggested "fix" is a breaking downgrade), the intentional `rpc-websockets@9.3.0` pin (bumping re-introduces the Node <20.19 ESM break), and a dev-only `esbuild`. Also fixed at the source in **`@blockrun/llm@3.5.1`**. No source changes; 84 tests + build + live wallet smoke green.
+
 ## 0.25.1
 
 - **`fix(image)` — validate the env knobs on the 0.25.0 features.** The new opt-in features parsed their numeric env vars with bare `Number(env || default)`, which only falls back on unset/empty (a non-empty string is truthy) — so a typo became `NaN` and silently changed behavior: `BLOCKRUN_CONFIRM_THRESHOLD="$0.05"` flipped the confirm gate to "ask on every paid call", and (fail-open) a malformed `BLOCKRUN_INLINE_MAX_BYTES` removed the inline base64 context-bloat ceiling (`data.length > NaN` is always false). `confirm-spend` now reuses the validated `parseBudgetLimitEnv` (trims, strips a leading `$`, requires a finite positive number); `inline-image` uses a validating `envInt` that falls back to the default on a non-finite/non-positive value and clamps quality to 1–100. Both opt-in and off by default; no behavior change for valid configs.
