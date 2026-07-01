@@ -14,20 +14,26 @@ import {
 } from "@blockrun/llm";
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
-const MUSIC_TIMEOUT = 200_000; // 200s — music gen takes 1-3 min
 const MUSIC_COST = 0.1575;
+// Async slow-path polling. MiniMax music takes 1-3 min: fast tracks complete
+// inline (200), slower ones return 202 + poll_url and we poll like blockrun_video.
+const MUSIC_POLL_INTERVAL_MS = 5_000;
+const MUSIC_POLL_BUDGET_MS = 240_000; // 4 min overall budget for submit + polling
 
 export function registerMusicTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_music",
     {
-      description: `Generate music tracks via BlockRun x402.
+      description: `Generate music tracks via BlockRun x402 (async, client-polled).
 
-Generates a full-length ~3 minute MP3 track. Takes 1-3 minutes to complete.
+Generates a full-length ~3 minute MP3 track. Takes 1-3 minutes to complete. The
+tool submits the job and, for slower tracks, polls until it is ready; payment
+settles only when a finished track is returned — if it fails or times out, you
+are not charged.
 
 Models: minimax/music-2.5+ ($0.1575), minimax/music-2.5 ($0.1575)
 
-Returns a time-limited CDN URL — download immediately if you need to keep the file.`,
+Returns a permanent BlockRun-hosted URL.`,
       inputSchema: {
         prompt: z.string().describe("Music style, mood, or description. E.g. 'upbeat synthwave with neon pads', 'chill lo-fi beats', 'epic orchestral film score'"),
         instrumental: z.boolean().optional().default(true).describe("Generate without vocals (default: true)"),
@@ -102,45 +108,94 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
           }
         );
 
-        // Step 2: generate with payment (takes 1-3 min)
-        const resp = await fetchWithTimeout(url, {
+        // Step 2: submit with payment. Fast tracks complete inline (200); slower
+        // ones (MiniMax music is 1-3 min) return 202 + poll_url — the server
+        // verified the payment but does NOT settle until a completed poll.
+        const submitResp = await fetchWithTimeout(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "PAYMENT-SIGNATURE": paymentPayload,
           },
           body: JSON.stringify(body),
-        }, MUSIC_TIMEOUT);
+        }, 95_000);
 
-        if (resp.status === 402) {
+        if (submitResp.status === 402) {
           throw new Error("Payment rejected. Check your wallet balance.");
         }
-
-        if (!resp.ok) {
-          const errBody = await resp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
-          throw new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`);
+        if (!submitResp.ok && submitResp.status !== 202) {
+          const errBody = await submitResp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
+          throw new Error(`API error ${submitResp.status}: ${JSON.stringify(errBody)}`);
         }
 
-        const data = await resp.json() as {
-          data: Array<{ url: string; duration_seconds?: number; lyrics?: string }>;
-          model?: string;
-        };
+        let track: { url: string; duration_seconds?: number; lyrics?: string } | undefined;
+        let modelReturned: string | undefined;
+        let txHash: string | null | undefined;
 
-        const track = data.data?.[0];
-        if (!track?.url) throw new Error("No track URL in response");
+        if (submitResp.status === 202) {
+          // Async slow path: poll with the SAME payment header until completed.
+          // Settlement happens on the first completed poll; failure or giving up
+          // = no charge.
+          const submitData = await submitResp.json() as { id?: string; poll_url?: string; status?: string };
+          if (!submitData.poll_url) throw new Error(`Async submit missing poll_url: ${JSON.stringify(submitData)}`);
+          const pollAbsoluteUrl = submitData.poll_url.startsWith("http")
+            ? submitData.poll_url
+            : `${BLOCKRUN_API.replace(/\/api$/, "")}${submitData.poll_url}`;
 
-        const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
+          const startedAt = Date.now();
+          let lastStatus = submitData.status || "queued";
+          while (Date.now() - startedAt < MUSIC_POLL_BUDGET_MS) {
+            await new Promise((r) => setTimeout(r, MUSIC_POLL_INTERVAL_MS));
+
+            const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
+              method: "GET",
+              headers: { "PAYMENT-SIGNATURE": paymentPayload },
+            }, 90_000);
+
+            const pollData = await pollResp.json().catch(() => ({})) as {
+              status?: string;
+              data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }>;
+              error?: string;
+              model?: string;
+            };
+            lastStatus = pollData.status || lastStatus;
+
+            if (pollResp.status === 202 && (lastStatus === "queued" || lastStatus === "in_progress")) continue;
+            if (lastStatus === "failed") throw new Error(`Upstream generation failed: ${pollData.error || "unknown"}. No payment taken.`);
+            if (pollResp.ok && lastStatus === "completed") {
+              const t = pollData.data?.[0];
+              if (!t?.url) throw new Error("Completed poll missing track URL");
+              track = t;
+              modelReturned = pollData.model;
+              txHash = pollResp.headers.get("X-Payment-Receipt") || pollResp.headers.get("x-payment-receipt");
+              break;
+            }
+            if (!pollResp.ok && pollResp.status !== 202 && pollResp.status !== 504) {
+              throw new Error(`Poll error ${pollResp.status}: ${JSON.stringify(pollData)}`);
+            }
+            // 504 on poll = transient upstream poll timeout — retry.
+          }
+          if (!track) throw new Error(`Music generation did not complete within ${Math.round(MUSIC_POLL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
+        } else {
+          // Inline fast path (200): the track finished within the server's inline window.
+          const data = await submitResp.json() as { data: Array<{ url: string; duration_seconds?: number; lyrics?: string }>; model?: string };
+          track = data.data?.[0];
+          if (!track?.url) throw new Error("No track URL in response");
+          modelReturned = data.model;
+          txHash = submitResp.headers.get("X-Payment-Receipt") || submitResp.headers.get("x-payment-receipt");
+        }
+
         recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
 
         const lines = [
           `🎵 Track ready!`,
           `URL: ${track.url}`,
           `Duration: ${track.duration_seconds ? `${track.duration_seconds}s` : "~3 min"}`,
-          `Model: ${data.model || model}`,
+          `Model: ${modelReturned || model}`,
           ...(track.lyrics ? [`Lyrics: ${track.lyrics.slice(0, 200)}${track.lyrics.length > 200 ? "..." : ""}`] : []),
           ...(txHash ? [`Tx: ${txHash}`] : []),
           ``,
-          `Note: This URL expires in ~24h. Download it now if you need to keep the file.`,
+          `Note: The URL is a permanent BlockRun-hosted link.`,
         ];
 
         return {
@@ -148,7 +203,7 @@ Returns a time-limited CDN URL — download immediately if you need to keep the 
           structuredContent: {
             url: track.url,
             duration_seconds: track.duration_seconds,
-            model: data.model || model,
+            model: modelReturned || model,
             ...(track.lyrics ? { lyrics: track.lyrics } : {}),
             ...(txHash ? { txHash } : {}),
           },
