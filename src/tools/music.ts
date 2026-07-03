@@ -103,7 +103,12 @@ Returns a permanent BlockRun-hosted URL.`,
           {
             resourceUrl: details.resource?.url || url,
             resourceDescription: details.resource?.description || "BlockRun Music Generation",
-            maxTimeoutSeconds: details.maxTimeoutSeconds || 300,
+            // Bump to 10 min so the signed authorization stays valid through the
+            // whole submit (≤95s) + poll (≤240s, plus per-poll fetch) window.
+            // The gateway's default (300s) expires before a slow MiniMax track
+            // completes, so settlement fails for a track that actually generated
+            // (mirrors blockrun_video's fix).
+            maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, 600),
             extra: details.extra,
           }
         );
