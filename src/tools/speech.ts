@@ -204,6 +204,12 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           throw new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`);
         }
 
+        // A 200 means the call settled on-chain (X-Payment-Receipt is set). Book
+        // the charge NOW, before reading the body — a truncated/unreadable body
+        // below must not un-record a spend that already left the wallet.
+        const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
+        recordActualSpend(budget, billedUsd, cost, agent_id);
+
         const data = await resp.json() as {
           data: Array<{ url: string; format?: string; characters?: number; duration_seconds?: number }>;
           model?: string;
@@ -211,9 +217,6 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         const clip = data.data?.[0];
         if (!clip?.url) throw new Error("No audio URL in response");
-
-        const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
-        recordActualSpend(budget, billedUsd, cost, agent_id);
 
         const lines = [
           action === "sound_effect" ? `🔊 Sound effect ready!` : `🗣️ Speech ready!`,

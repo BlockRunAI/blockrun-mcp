@@ -182,12 +182,17 @@ Returns a permanent BlockRun-hosted URL.`,
           }
           if (!track) throw new Error(`Music generation did not complete within ${Math.round(MUSIC_POLL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
         } else {
-          // Inline fast path (200): the track finished within the server's inline window.
-          const data = await submitResp.json() as { data: Array<{ url: string; duration_seconds?: number; lyrics?: string }>; model?: string };
-          track = data.data?.[0];
-          if (!track?.url) throw new Error("No track URL in response");
-          modelReturned = data.model;
+          // Inline fast path (200): settled inline. Read the receipt first and
+          // parse defensively — a truncated body must not un-record a charge that
+          // already settled on-chain.
           txHash = submitResp.headers.get("X-Payment-Receipt") || submitResp.headers.get("x-payment-receipt");
+          const data = await submitResp.json().catch(() => null) as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }>; model?: string } | null;
+          track = data?.data?.[0];
+          modelReturned = data?.model;
+          if (!track?.url) {
+            if (txHash) recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
+            throw new Error("No track URL in response");
+          }
         }
 
         recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
