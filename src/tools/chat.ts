@@ -54,12 +54,27 @@ export function estimateChatCost(
     }
   }
 
-  // Reasoning/powerful tiers and any explicit single model can be a frontier
-  // model whose real price we can't know up front — reserve conservatively.
-  if (mode === "reasoning" || mode === "powerful") return frontierReserve;
+  // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
+  // single model, can settle at a price we can't know up front — reserve
+  // conservatively. balanced[0] = openai/gpt-5.5 and coding[0] =
+  // anthropic/claude-opus-4.8 (see MODEL_TIERS), the same frontier primaries as
+  // reasoning/powerful, and a no-mode chat resolves to "balanced" (see the
+  // routing loop below) — so undefined counts too. Reserving the cheap heuristic
+  // for these let a near-exhausted budget authorize a frontier completion, and
+  // let N concurrent default calls each pass the gate and collectively blow the
+  // cap (the exact TOCTOU that reserveBudget exists to close).
+  const effectiveMode = mode ?? "balanced";
+  if (
+    effectiveMode === "reasoning" ||
+    effectiveMode === "powerful" ||
+    effectiveMode === "balanced" ||
+    effectiveMode === "coding"
+  ) {
+    return frontierReserve;
+  }
   if (model) return frontierReserve;
 
-  // Heuristic cheap/balanced/coding/glm/fast modes pick budget models.
+  // Only the explicitly-cheap tiers (cheap/fast/glm) pick budget models.
   return Math.max(0.002, (out / 1_000_000) * 3);
 }
 
