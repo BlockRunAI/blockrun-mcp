@@ -37,6 +37,15 @@ export async function solanaPaidPost(
   endpoint: string,
   body: Record<string, unknown>,
   paidTimeoutMs: number,
+  opts?: {
+    /**
+     * Invoked with the quoted USD (from the 402 `details.amount`) AFTER the quote
+     * is parsed but BEFORE anything is signed or paid. Throw from here to abort
+     * without paying — e.g. to re-check the real price against a budget cap when
+     * the Solana gateway's marked-up amount exceeds the caller's estimate.
+     */
+    onQuote?: (quotedUsd: number | null) => void;
+  },
 ): Promise<SolanaPaidPostResult> {
   const privateKey = process.env.SOLANA_WALLET_KEY || loadSolanaWallet();
   if (!privateKey) {
@@ -77,6 +86,11 @@ export async function solanaPaidPost(
   }
   const feePayer = (details.extra as { feePayer?: string } | undefined)?.feePayer;
   if (!feePayer) throw new PaymentError("Missing feePayer in the 402 quote's extra field");
+
+  // Hand the caller the REAL quoted price before we sign/pay, so it can re-check
+  // the marked-up Solana amount against its budget cap and abort (by throwing)
+  // if it would overshoot — the amount is only known now, after the quote.
+  opts?.onQuote?.(amountToUsd(details.amount));
 
   // Only sign for a resource on the gateway's own origin — a spoofed quote must
   // not relabel the payment as authorizing some other resource.

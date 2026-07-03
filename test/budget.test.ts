@@ -7,6 +7,7 @@ import {
   parseBudgetLimitEnv,
   recordActualSpend,
   recordSpending,
+  reReserveIfHigher,
   reserveBudget,
 } from "../src/utils/budget.js";
 import type { BudgetState } from "../src/types.js";
@@ -124,6 +125,35 @@ test("reserveBudget enforces per-agent caps across concurrent calls", () => {
   b.agents.set("a1", { limit: 1, spent: 0, calls: 0 });
   assert.equal(reserveBudget(b, "a1", 0.6).allowed, true);
   assert.equal(reserveBudget(b, "a1", 0.6).allowed, false); // 0.6 + 0.6 > 1 for agent
+});
+
+test("reReserveIfHigher swaps to the higher actual and holds only that amount", () => {
+  // A quote (0.09) higher than the estimate reserved (0.05): release the
+  // estimate, re-reserve the true amount, so the gate holds 0.09 for the cap.
+  const b = newBudget(10);
+  const g0 = reserveBudget(b, undefined, 0.05);
+  const g1 = reReserveIfHigher(b, g0, undefined, 0.05, 0.09);
+  assert.equal(g1.allowed, true);
+  assert.equal(Math.round(b.spent * 100) / 100, 0.09);
+});
+
+test("reReserveIfHigher keeps the original reservation when actual is <= estimate or unknown", () => {
+  const b = newBudget(10);
+  const g0 = reserveBudget(b, undefined, 0.05);
+  assert.equal(reReserveIfHigher(b, g0, undefined, 0.05, 0.04), g0, "lower actual → same gate");
+  assert.equal(reReserveIfHigher(b, g0, undefined, 0.05, null), g0, "unknown actual → same gate");
+  assert.equal(reReserveIfHigher(b, g0, undefined, 0.05, 0.05), g0, "equal actual → same gate");
+  assert.equal(b.spent, 0.05, "still holding just the one estimate");
+});
+
+test("reReserveIfHigher denies (allowed:false) when the higher actual would blow the cap, leaving no reservation", () => {
+  const b = newBudget(0.10);
+  b.spent = 0.05; // prior spend on the ledger
+  const g0 = reserveBudget(b, undefined, 0.04); // 0.05 + 0.04 = 0.09 ≤ 0.10 → allowed
+  assert.equal(g0.allowed, true);
+  const g1 = reReserveIfHigher(b, g0, undefined, 0.04, 0.09); // 0.05 + 0.09 = 0.14 > 0.10
+  assert.equal(g1.allowed, false);
+  assert.equal(Math.round(b.spent * 100) / 100, 0.05, "estimate released, higher reserve denied → back to prior spend");
 });
 
 test("parseBudgetLimitEnv parses a default cap, ignores junk", () => {

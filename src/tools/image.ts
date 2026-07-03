@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend, reReserveIfHigher, BudgetExceededError } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
@@ -307,7 +307,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         // record the real cost — releasing the reservation in finally on every
         // path (including a decline, which charges nothing).
         const estimatedCost = estimateCost(selectedModel, size);
-        const gate = reserveBudget(budget, agent_id, estimatedCost);
+        let gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {
             content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }],
@@ -340,7 +340,18 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
-            const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS);
+            const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS, {
+              // The Solana gateway prices carry a markup over the Base estimate
+              // table, so the real quote can exceed what we reserved. Re-reserve
+              // the true amount against the cap BEFORE the transfer is signed
+              // (mirrors blockrun_video); throwing here aborts before any payment.
+              onQuote: (quotedUsd) => {
+                gate = reReserveIfHigher(budget, gate, agent_id, estimatedCost, quotedUsd);
+                if (!gate.allowed) {
+                  throw new BudgetExceededError(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.`);
+                }
+              },
+            });
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
             imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
           } else {
@@ -381,6 +392,9 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        if (err instanceof BudgetExceededError) {
+          return { content: [{ type: "text", text: errMsg }], isError: true };
+        }
         if (err instanceof PaymentError) {
           return {
             content: [{ type: "text", text: `Image generation requires payment. Run blockrun_wallet with action: "setup" for funding instructions.\nError: ${errMsg}` }],
