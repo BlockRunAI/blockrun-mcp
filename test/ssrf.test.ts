@@ -36,9 +36,23 @@ test("isBlockedFetchHost blocks the hostname new URL() actually produces for map
   }
 });
 
+test("isBlockedFetchHost blocks the trailing-dot FQDN form the URL parser preserves", () => {
+  // new URL("http://metadata.google.internal./x").hostname keeps the root dot,
+  // which slips past the exact/endsWith name checks while DNS still resolves it.
+  for (const h of [
+    "localhost.", "foo.localhost.",
+    "metadata.google.internal.", "svc.internal.", "printer.local.",
+    "metadata.google.internal..", // extra root dots must not re-open the bypass
+  ]) {
+    assert.equal(isBlockedFetchHost(h), true, `should block ${h}`);
+  }
+  assert.equal(isBlockedFetchHost(new URL("http://metadata.google.internal./x").hostname), true);
+  assert.equal(isBlockedFetchHost(new URL("http://localhost./").hostname), true);
+});
+
 test("isBlockedFetchHost allows public hosts", () => {
   for (const h of [
-    "example.com", "cdn.openai.com", "blockrun.ai",
+    "example.com", "cdn.openai.com", "blockrun.ai", "example.com.",
     "8.8.8.8", "1.1.1.1", "172.32.0.1", "11.0.0.1",
     "2606:4700:4700::1111",
   ]) {
