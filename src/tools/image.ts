@@ -2,14 +2,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
+import { solanaPaidPost } from "../utils/solana-402.js";
 import { isBlockedFetchHost } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 // The gateway's /v1/images/image2image only accepts base64 data URIs for the
 // source image(s). Callers naturally have local file paths or http(s) URLs, so
@@ -149,11 +153,67 @@ function estimateCost(model: string, size: string): number {
   return base;
 }
 
+// The Solana gateway routes render synchronously (generation runs 10-180s,
+// then the result is mirrored to GCS before the response returns), so the
+// paid request's timeout must cover the whole render — not just a round-trip.
+const SOLANA_IMAGE_TIMEOUT_MS = 300_000;
+
+/**
+ * The image2image routes (both gateways) ship the provider's output verbatim —
+ * google/nano-banana returns a multi-megabyte base64 data URI, not a hosted
+ * URL. Returning that inline would flood the MCP client's context, so persist
+ * it to a temp file and hand back the path. Non-data URLs pass through.
+ */
+export async function materializeImageUrl(imageUrl: string): Promise<string> {
+  if (!imageUrl.startsWith("data:image/")) return imageUrl;
+  const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/is.exec(imageUrl);
+  if (!m) return imageUrl; // undecodable — better to return the paid result verbatim than drop it
+  const ext = m[1].toLowerCase() === "jpeg" ? "jpg" : m[1].toLowerCase();
+  const file = join(tmpdir(), `blockrun-image-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`);
+  await writeFile(file, Buffer.from(m[2], "base64"));
+  return file;
+}
+
+/**
+ * Endpoint + body for a Solana-gateway image call. The gateway's zod schema
+ * takes quality as low|medium|high|auto (the OpenAI latency knob), not this
+ * tool's standard|hd — map hd→high and drop standard (the gateway default)
+ * so the request isn't rejected with a 400.
+ */
+export function buildSolanaImageRequest(
+  action: "generate" | "edit",
+  params: { model: string; prompt: string; size: string; quality?: string; image?: string | string[]; mask?: string },
+): { endpoint: string; body: Record<string, unknown> } {
+  if (action === "edit") {
+    return {
+      endpoint: "/v1/images/image2image",
+      body: {
+        model: params.model,
+        prompt: params.prompt,
+        image: params.image,
+        size: params.size,
+        n: 1,
+        ...(params.mask ? { mask: params.mask } : {}),
+      },
+    };
+  }
+  return {
+    endpoint: "/v1/images/generations",
+    body: {
+      model: params.model,
+      prompt: params.prompt,
+      size: params.size,
+      n: 1,
+      ...(params.quality === "hd" ? { quality: "high" } : {}),
+    },
+  };
+}
+
 export function registerImageTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_image",
     {
-      description: `Generate or edit images via BlockRun. Pays with USDC — no separate API keys needed.
+      description: `Generate or edit images via BlockRun. Pays with USDC on the ACTIVE chain — Base or Solana (see blockrun_wallet) — no separate API keys needed.
 
 Actions:
 - generate (default): Create image from text prompt
@@ -188,13 +248,6 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
     },
     async ({ prompt, action, model, image, mask, size, quality, inline, agent_id }) => {
       try {
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_image currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
-        }
-
         const selectedModel = model || "openai/gpt-image-2";
 
         // Edit-mode inputs, normalized to data URIs in the branch below and
@@ -273,16 +326,35 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             return { content: [{ type: "text", text: confirm.reason || "Charge cancelled." }] };
           }
 
-          const response = action === "edit"
-            ? await getImageClient().edit(prompt, normalizedImage!, {
-                model: selectedModel,
-                size,
-                ...(normalizedMask ? { mask: normalizedMask } : {}),
-              })
-            : await getImageClient().generate(prompt, { model: selectedModel, size, quality: quality as "standard" | "hd" });
-          recordSpending(budget, estimatedCost, agent_id);
+          let imageUrl: string | undefined;
+          if (getChain() === "solana") {
+            // Solana: manual x402 against the sol.blockrun.ai gateway (the SDK's
+            // ImageClient signs Base/EVM payments only). Record the ACTUAL cost
+            // from the 402 quote — the Solana gateway prices carry a markup over
+            // the Base table above.
+            const { endpoint, body } = buildSolanaImageRequest(action, {
+              model: selectedModel,
+              prompt,
+              size,
+              quality,
+              image: normalizedImage,
+              mask: normalizedMask,
+            });
+            const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS);
+            recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+            imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
+          } else {
+            const response = action === "edit"
+              ? await getImageClient().edit(prompt, normalizedImage!, {
+                  model: selectedModel,
+                  size,
+                  ...(normalizedMask ? { mask: normalizedMask } : {}),
+                })
+              : await getImageClient().generate(prompt, { model: selectedModel, size, quality: quality as "standard" | "hd" });
+            recordSpending(budget, estimatedCost, agent_id);
+            imageUrl = response.data?.[0]?.url;
+          }
 
-          const imageUrl = response.data?.[0]?.url;
           if (!imageUrl) {
             return {
               content: [{ type: "text", text: formatError("No image URL in response") }],
@@ -290,14 +362,19 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             };
           }
 
-          const textBlock = { type: "text" as const, text: `Image: ${imageUrl}\nPrompt: ${prompt}\nModel: ${selectedModel}` };
+          const delivered = await materializeImageUrl(imageUrl);
+          const savedLocally = delivered !== imageUrl;
+          const textBlock = {
+            type: "text" as const,
+            text: `Image: ${delivered}${savedLocally ? " (saved locally — the gateway returned inline image data)" : ""}\nPrompt: ${prompt}\nModel: ${selectedModel}`,
+          };
           // Optional inline preview (thumbnail) for rich clients. Best-effort:
           // on failure or if disabled, fall back to the URL-only text block.
           const previewBlock = shouldInline(inline) ? await buildInlineImageBlock(imageUrl) : null;
 
           return {
             content: previewBlock ? [previewBlock, textBlock] : [textBlock],
-            structuredContent: { url: imageUrl, prompt, model: selectedModel, inlined: Boolean(previewBlock) },
+            structuredContent: { url: delivered, prompt, model: selectedModel, inlined: Boolean(previewBlock) },
           };
         } finally {
           gate.release();

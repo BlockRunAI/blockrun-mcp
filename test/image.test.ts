@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { toImageDataUri } from "../src/tools/image.js";
+import { readFileSync } from "node:fs";
+import { toImageDataUri, buildSolanaImageRequest, materializeImageUrl } from "../src/tools/image.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "blockrun-img-"));
 
@@ -52,4 +53,73 @@ test("toImageDataUri refuses to fetch a loopback/link-local URL (SSRF guard)", a
   await assert.rejects(() => toImageDataUri("http://127.0.0.1:1/x.png"), /refusing to fetch/i);
   await assert.rejects(() => toImageDataUri("http://169.254.169.254/latest/meta-data/"), /refusing to fetch/i);
   await assert.rejects(() => toImageDataUri("http://10.0.0.5/internal.png"), /refusing to fetch/i);
+});
+
+test("buildSolanaImageRequest generate targets /v1/images/generations with quality omitted for standard", () => {
+  const { endpoint, body } = buildSolanaImageRequest("generate", {
+    model: "openai/gpt-image-2",
+    prompt: "a fox",
+    size: "1024x1024",
+    quality: "standard",
+  });
+  assert.equal(endpoint, "/v1/images/generations");
+  assert.deepEqual(body, { model: "openai/gpt-image-2", prompt: "a fox", size: "1024x1024", n: 1 });
+});
+
+test("buildSolanaImageRequest maps quality hd → high (the gateway's zod enum has no 'hd')", () => {
+  const { body } = buildSolanaImageRequest("generate", {
+    model: "openai/gpt-image-2",
+    prompt: "a fox",
+    size: "1024x1024",
+    quality: "hd",
+  });
+  assert.equal(body.quality, "high");
+});
+
+test("buildSolanaImageRequest edit targets /v1/images/image2image with image and optional mask", () => {
+  const withMask = buildSolanaImageRequest("edit", {
+    model: "openai/gpt-image-1",
+    prompt: "add a hat",
+    size: "1024x1024",
+    image: "data:image/png;base64,AAAA",
+    mask: "data:image/png;base64,BBBB",
+  });
+  assert.equal(withMask.endpoint, "/v1/images/image2image");
+  assert.deepEqual(withMask.body, {
+    model: "openai/gpt-image-1",
+    prompt: "add a hat",
+    image: "data:image/png;base64,AAAA",
+    size: "1024x1024",
+    n: 1,
+    mask: "data:image/png;base64,BBBB",
+  });
+
+  const noMask = buildSolanaImageRequest("edit", {
+    model: "google/nano-banana",
+    prompt: "fuse these",
+    size: "1024x1024",
+    image: ["data:image/png;base64,AAAA", "data:image/png;base64,BBBB"],
+  });
+  assert.equal("mask" in noMask.body, false);
+  assert.deepEqual(noMask.body.image, ["data:image/png;base64,AAAA", "data:image/png;base64,BBBB"]);
+});
+
+test("materializeImageUrl passes hosted URLs and local paths through unchanged", async () => {
+  const url = "https://sol.blockrun.ai/api/media/images/x.png";
+  assert.equal(await materializeImageUrl(url), url);
+  assert.equal(await materializeImageUrl("/tmp/pic.png"), "/tmp/pic.png");
+});
+
+test("materializeImageUrl saves a data: URI to a temp file with the right bytes", async () => {
+  // image2image ships the provider output verbatim — nano-banana returns a
+  // multi-MB data URI. The tool must hand back a file path, never the base64.
+  const out = await materializeImageUrl(`data:image/png;base64,${PNG_BYTES.toString("base64")}`);
+  assert.doesNotMatch(out, /^data:/);
+  assert.match(out, /blockrun-image-.*\.png$/);
+  assert.deepEqual(readFileSync(out), PNG_BYTES);
+});
+
+test("materializeImageUrl maps image/jpeg data URIs to a .jpg file", async () => {
+  const out = await materializeImageUrl(`data:image/jpeg;base64,${PNG_BYTES.toString("base64")}`);
+  assert.match(out, /\.jpg$/);
 });
