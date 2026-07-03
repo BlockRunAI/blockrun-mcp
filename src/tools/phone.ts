@@ -11,7 +11,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
-import { hasPathTraversal } from "../utils/path-safety.js";
+import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -19,7 +19,11 @@ type RawClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-function estimatePhoneCost(path: string, hasBody: boolean): number {
+// Exported for unit tests. Normalizes the slug (drops query/trailing-slash/case)
+// before the exact-match pricing so a perturbed path can't downgrade an
+// expensive route to the $0.001 default while the gateway charges full price.
+export function estimatePhoneCost(rawPath: string, hasBody: boolean): number {
+  const path = normalizeClassifyPath(rawPath);
   if (!hasBody && path.startsWith("voice/call/")) return 0;
   if (path === "phone/numbers/release") return 0;
   if (path === "phone/lookup") return 0.01;
