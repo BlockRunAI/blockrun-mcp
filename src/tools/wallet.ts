@@ -24,9 +24,9 @@ To pay on Solana (no env vars, no file editing, no restart):
   1. action:"chain" chain:"solana"   → provisions + activates the Solana wallet
   2. action:"setup"                   → Solana address + funding QR (send USDC SPL on Solana)
 Switch back with action:"chain" chain:"base". Base-only — these ignore Solana and
-need Base: blockrun_image, blockrun_music, blockrun_speech, blockrun_video,
-blockrun_realface, paid blockrun_price, blockrun_chat routing:"smart", and native
-Anthropic (claude-*).
+need Base: blockrun_music, blockrun_speech, blockrun_video, blockrun_realface,
+paid blockrun_price, blockrun_chat routing:"smart", and native Anthropic
+(claude-*). blockrun_image pays on either chain.
 
 Actions:
 - status (default): Both wallet addresses + USDC balances, active chain, session spending
@@ -162,8 +162,8 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
   Base:   ${both.base.address}
   Solana: ${both.solana.address}
 
-All blockrun_* calls now pay on ${active}. Note: image generation, price, video,
-music and RealFace are Base-only — switch back with chain:"base" for those.`;
+All blockrun_* calls now pay on ${active}. Note: price, video, music, speech
+and RealFace are Base-only — switch back with chain:"base" for those.`;
         return {
           content: [{ type: "text", text }],
           structuredContent: {
