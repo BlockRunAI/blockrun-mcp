@@ -16,7 +16,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
-import { hasPathTraversal } from "../utils/path-safety.js";
+import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type SurfClient = {
@@ -63,8 +63,11 @@ const SURF_T2_PATHS = new Set([
 // Tier 2 — $0.005. Namespace prefixes (every endpoint under these is T2).
 const SURF_T2_PREFIXES = ["search/", "wallet/"];
 
-function estimateSurfCost(path: string): number {
-  const p = path.toLowerCase().replace(/^\/+/, "");
+// Exported for unit tests. Normalizes the slug (drops query/trailing-slash/case)
+// before the exact-set lookups so a perturbed T2/T3 path can't be under-recorded
+// as the $0.001 default while the gateway charges the real tier.
+export function estimateSurfCost(path: string): number {
+  const p = normalizeClassifyPath(path);
   if (SURF_T3_PATHS.has(p)) return 0.02;
   if (SURF_T2_PATHS.has(p)) return 0.005;
   for (const prefix of SURF_T2_PREFIXES) {

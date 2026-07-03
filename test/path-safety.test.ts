@@ -1,7 +1,7 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasPathTraversal, isValidNetworkSlug } from "../src/utils/path-safety.js";
+import { hasPathTraversal, isValidNetworkSlug, normalizeClassifyPath } from "../src/utils/path-safety.js";
 
 test("hasPathTraversal flags parent/current-dir segments that escape a namespace", () => {
   // Real traversal payloads (these normalize via the WHATWG URL parser).
@@ -36,6 +36,19 @@ test("hasPathTraversal allows legitimate passthrough paths", () => {
   assert.equal(hasPathTraversal("prices/coingecko:ethereum"), false);
   assert.equal(hasPathTraversal("prices/base:0x833589.eth"), false);
   assert.equal(hasPathTraversal("kalshi/markets/KXBTC-25MAR14"), false);
+});
+
+test("normalizeClassifyPath strips query/fragment, leading+trailing slashes, and lowercases", () => {
+  // Tier pricing keys on the bare endpoint; the gateway router ignores these
+  // perturbations, so classification must too or an expensive route (e.g. the
+  // $5 phone/numbers/buy) gets mispriced as the $0.001 default.
+  assert.equal(normalizeClassifyPath("phone/numbers/buy?x=1"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("phone/numbers/buy/"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("/onchain/sql"), "onchain/sql");
+  assert.equal(normalizeClassifyPath("Phone/Numbers/Buy"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("social/mindshare?q=eth&interval=1d"), "social/mindshare");
+  assert.equal(normalizeClassifyPath("onchain/sql#frag"), "onchain/sql");
+  assert.equal(normalizeClassifyPath("market/price"), "market/price");
 });
 
 test("isValidNetworkSlug accepts simple chain identifiers only", () => {

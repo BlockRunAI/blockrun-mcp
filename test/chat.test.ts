@@ -34,6 +34,29 @@ test("estimateChatCost keeps genuinely-free paths at $0", () => {
   assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash", undefined, undefined), 0);
 });
 
+// ── balanced/coding tiers have FRONTIER primaries (gpt-5.5 / claude-opus-4.8),
+//    so the gate must reserve the frontier worst-case — not the cheap heuristic ──
+test("estimateChatCost reserves the frontier worst-case for balanced/coding (their primary is a frontier model)", () => {
+  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
+  assert.equal(estimateChatCost(1024, "balanced", undefined, undefined, undefined), frontier);
+  assert.equal(estimateChatCost(1024, "coding", undefined, undefined, undefined), frontier);
+});
+
+test("estimateChatCost reserves the frontier worst-case for a no-mode chat (defaults to the balanced tier → gpt-5.5)", () => {
+  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
+  assert.equal(estimateChatCost(1024, undefined, undefined, undefined, undefined), frontier);
+});
+
+test("estimateChatCost keeps the explicitly-cheap tiers on the budget-model heuristic", () => {
+  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
+  for (const mode of ["cheap", "fast", "glm"]) {
+    assert.ok(
+      estimateChatCost(1024, mode, undefined, undefined, undefined) < frontier,
+      `${mode} should stay on the cheap heuristic, not the frontier reserve`,
+    );
+  }
+});
+
 // ── #10: JSON mode must reach the native Anthropic path ──
 function fakeNative() {
   return {

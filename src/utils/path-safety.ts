@@ -28,6 +28,26 @@ export function hasPathTraversal(path: string): boolean {
 }
 
 /**
+ * Normalize a caller-supplied passthrough slug for TIER CLASSIFICATION only (not
+ * for the endpoint actually sent): drop a query string / fragment, strip
+ * leading + trailing slashes, and lowercase. The per-endpoint price tables key
+ * on the bare route, but the gateway router ignores a trailing `?query`, a
+ * trailing slash, or casing when matching — so classifying the raw slug lets an
+ * expensive route (e.g. the $5 `phone/numbers/buy`, or a $0.02 surf tier) be
+ * mispriced as the cheap default while the gateway still charges full price,
+ * defeating the budget pre-check and under-recording spend. Callers still send
+ * the original slug, so a legitimate query string (e.g. surf GET params in the
+ * path) is preserved.
+ */
+export function normalizeClassifyPath(path: string): string {
+  return path
+    .replace(/[?#].*$/, "")   // drop query string / fragment
+    .replace(/^\/+/, "")       // drop leading slashes
+    .replace(/\/+$/, "")       // drop trailing slashes
+    .toLowerCase();
+}
+
+/**
  * True for a well-formed chain slug: lowercase alphanumerics and hyphens only.
  * Real chain keys ("ethereum", "base", "arbitrum-one") match; anything with a
  * slash, dot, or other separator that could re-route the call is rejected.

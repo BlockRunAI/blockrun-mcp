@@ -82,6 +82,48 @@ export function reserveBudget(
   };
 }
 
+/** Reservation handle returned by reserveBudget(). */
+type Reservation = { allowed: boolean; reason?: string; release: () => void };
+
+/**
+ * When the REAL settled price (from a 402 quote) exceeds the estimate already
+ * reserved at the gate, swap the reservation: release the estimate and
+ * re-reserve the true amount, re-checking it against the cap. Returns the new
+ * handle (its `.allowed` is false if the true amount would blow the budget — the
+ * caller must then abort BEFORE paying), or the original handle unchanged when
+ * the actual is unknown or already within the estimate.
+ *
+ * Used on paid paths whose price is only known after the quote (a Solana image
+ * call settles the gateway's marked-up amount; blockrun_video's token-priced
+ * renders can far exceed the per-second estimate) so a single call can't settle
+ * past the cap and concurrent calls hold the true amount, not the low estimate.
+ */
+export function reReserveIfHigher(
+  budget: BudgetState,
+  gate: Reservation,
+  agentId: string | undefined,
+  estimate: number,
+  actualUsd: number | null | undefined,
+): Reservation {
+  if (typeof actualUsd !== "number" || !Number.isFinite(actualUsd) || actualUsd <= estimate) {
+    return gate;
+  }
+  gate.release();
+  return reserveBudget(budget, agentId, actualUsd);
+}
+
+/**
+ * Thrown when a re-reservation against the real quoted price exceeds the budget
+ * cap. Distinct from PaymentError (which means "fund your wallet") so callers can
+ * surface the budget reason instead of a misleading funding prompt.
+ */
+export class BudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BudgetExceededError";
+  }
+}
+
 export function recordSpending(budget: BudgetState, cost: number, agentId?: string): void {
   budget.spent += cost;
   budget.calls += 1;

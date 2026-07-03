@@ -33,6 +33,13 @@ function ipv4Blocked(host: string): boolean | null {
 export function isBlockedFetchHost(hostname: string): boolean {
   let host = hostname.trim().toLowerCase();
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  // A fully-qualified name keeps its root dot through the WHATWG URL parser
+  // (new URL("http://localhost./").hostname === "localhost."), which would slip
+  // past the exact/endsWith name checks below while DNS still resolves it. Strip
+  // trailing dots so "localhost." and "metadata.google.internal." are caught
+  // (numeric IPs are already dot-normalized by the parser, so this only matters
+  // for names).
+  host = host.replace(/\.+$/, "");
   if (!host) return true;
 
   if (host === "localhost" || host.endsWith(".localhost")) return true;
