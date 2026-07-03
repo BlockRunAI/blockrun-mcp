@@ -175,7 +175,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 
 **Base-only — these fall back to Base regardless of active chain:**
 
-- Tools: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface` (enroll/portrait), paid stock `blockrun_price`. In Solana mode they return a "switch to Base" message instead of charging.
+- Tools: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface` (enroll/portrait), paid stock `blockrun_price`. In Solana mode they return a "switch to Base" message instead of charging. (`blockrun_image` pays on either chain.)
 - `blockrun_chat routing:"smart"` (ClawRouter) and native Anthropic (`claude-*`) passthrough — on Solana, pass `model:` or `mode:` explicitly.
 
 > Advanced: chain selection can also be forced before startup via files/env (`~/.blockrun/.chain`, `SOLANA_WALLET_KEY`) — see [Environment Variables](#environment-variables). The `action:"chain"` command above is the recommended path.
@@ -330,7 +330,7 @@ blockrun_wallet action:"setup"                  # funding instructions for the a
 
 *Advanced (force a chain before startup, e.g. in CI):* `echo solana > ~/.blockrun/.chain` then set `SOLANA_WALLET_KEY` or create `~/.blockrun/.solana-session`; `echo base > ~/.blockrun/.chain` reuses the existing `.session` (same Base wallet). These edit the same preference file that `action:"chain"` writes — prefer the tool unless you need pre-startup control.
 
-Some media and paid market-data tools still settle on Base only: `blockrun_image`, `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface` (enroll/portrait), and paid stock `blockrun_price` calls — plus `blockrun_chat routing:"smart"` and native Anthropic (`claude-*`) passthrough. In Solana mode these return a "switch to Base" message instead of charging.
+Some media and paid market-data tools still settle on Base only: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface` (enroll/portrait), and paid stock `blockrun_price` calls — plus `blockrun_chat routing:"smart"` and native Anthropic (`claude-*`) passthrough. In Solana mode these return a "switch to Base" message instead of charging. `blockrun_image` (generate + edit) settles on whichever chain is active.
 
 The server also runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` version exists. Upgrade by re-running the install command — no manual `npm update` needed.
 
