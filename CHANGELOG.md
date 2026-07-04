@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.26.0
+
+- **`feat(media)` — every media tool now reports the USDC cost in its result.** `blockrun_image`, `blockrun_video`, and `blockrun_music` returned the URL/model but no price, so on a bare MCP (without the plugin's `announce-cost` skill) the user never saw what a generation charged — the cost was booked to the budget ledger but never surfaced. Each now appends a `Cost: $X.XXXX` line and a `cost_usd` field to `structuredContent`, matching `blockrun_speech` / `blockrun_realface` which already did this. Video and music report the **real 402-settled amount** (both are token-priced upstream, so 1080p/4K clips and long tracks can exceed the per-unit estimate); image uses the catalog estimate on Base and the 402 amount on Solana — each falls back to the estimate only if the quote doesn't parse. No new spend path and no behavior change to what is charged — the figure shown is the same amount already recorded to the budget. Adds handler-level tests for the image/video/music footers with the HTTP layer and x402 payment helpers mocked (no network, no real spend); `npm test` now runs with `--experimental-test-module-mocks`.
+
 ## 0.25.2
 
 - **`security(deps)` — patch the `ws` memory-exhaustion DoS chain.** A pinned `viem` transitive `ws@8.20.1` (below the ≥8.21.0 patch) was reaching consumers and flagging the entire `ws → viem → @x402/evm → @blockrun/clawrouter → @blockrun/llm` chain (5 high). An `overrides` entry forces `viem`'s `ws` to 8.21.0, clearing all of them — `npm audit` drops **15 → 11**, the ws chain gone. The override ships in `package.json`, so every `npx` install gets the patched `ws`. The remaining advisories are the Solana web3.js-v1 tree (no upstream fix for `bigint-buffer`; npm's only suggested "fix" is a breaking downgrade), the intentional `rpc-websockets@9.3.0` pin (bumping re-introduces the Node <20.19 ESM break), and a dev-only `esbuild`. Also fixed at the source in **`@blockrun/llm@3.5.1`**. No source changes; 84 tests + build + live wallet smoke green.

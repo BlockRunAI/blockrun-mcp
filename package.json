@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.25.2",
+  "version": "0.26.0",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, crypto data, X/Twitter intelligence. Paid via x402 micropayments.",
   "type": "module",
@@ -19,7 +19,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --experimental-test-module-mocks --test test/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

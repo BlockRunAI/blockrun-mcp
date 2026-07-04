@@ -185,6 +185,10 @@ Returns a permanent BlockRun-hosted URL.`,
           txHash = submitResp.headers.get("X-Payment-Receipt") || submitResp.headers.get("x-payment-receipt");
         }
 
+        // Real settled price from the 402 quote; fall back to the flat estimate
+        // if it didn't parse. Surfaced in the footer so the user always sees the
+        // charge without relying on the plugin's announce-cost skill.
+        const billedUsd = amountToUsd(details.amount) ?? MUSIC_COST;
         recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
 
         const lines = [
@@ -192,6 +196,7 @@ Returns a permanent BlockRun-hosted URL.`,
           `URL: ${track.url}`,
           `Duration: ${track.duration_seconds ? `${track.duration_seconds}s` : "~3 min"}`,
           `Model: ${modelReturned || model}`,
+          `Cost: $${billedUsd.toFixed(4)}`,
           ...(track.lyrics ? [`Lyrics: ${track.lyrics.slice(0, 200)}${track.lyrics.length > 200 ? "..." : ""}`] : []),
           ...(txHash ? [`Tx: ${txHash}`] : []),
           ``,
@@ -204,6 +209,7 @@ Returns a permanent BlockRun-hosted URL.`,
             url: track.url,
             duration_seconds: track.duration_seconds,
             model: modelReturned || model,
+            cost_usd: billedUsd,
             ...(track.lyrics ? { lyrics: track.lyrics } : {}),
             ...(txHash ? { txHash } : {}),
           },
