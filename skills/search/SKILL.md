@@ -1,6 +1,6 @@
 ---
 name: search
-description: Use when the user wants real-time web, news, or X/Twitter results with AI-summarized answers and citations — Grok Live Search via BlockRun. Cheapest path for "what just happened" questions where freshness beats neural-semantic ranking.
+description: Use when the user wants real-time web or news results with AI-summarized answers and citations — Grok Live Search via BlockRun. Cheapest path for "what just happened" questions where freshness beats neural-semantic ranking.
 triggers:
   - "live search"
   - "grok live"
@@ -10,14 +10,12 @@ triggers:
   - "today's news"
   - "search with citations"
   - "cited search"
-  - "x search"
-  - "twitter search"
   - "news search"
 ---
 
 # Live Search (Grok)
 
-Real-time web + X/Twitter + news search with AI-summarized results and citations. **$0.025 × `max_results`** (default 10 → $0.25 per call). Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
+Real-time web + news search with AI-summarized results and citations. **$0.025 × `max_results`** (default 10 → $0.25 per call). Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
 
 ## How to Call from MCP
 
@@ -34,7 +32,7 @@ blockrun_search({ body: {
 | Field | Required | Type | Notes |
 |---|---|---|---|
 | `query` | yes | string | Natural-language search query |
-| `sources` | no | string[] | Subset of `["web","x","news"]`. Default: all three. Does NOT multiply price. |
+| `sources` | no | string[] | Subset of `["web","news"]`. Default: both. Does NOT multiply price. |
 | `max_results` | no | number | 1–50, default 10. **Drives the price** at $0.025 each. |
 | `from_date` | no | string | `YYYY-MM-DD` lower bound on result date |
 | `to_date` | no | string | `YYYY-MM-DD` upper bound |

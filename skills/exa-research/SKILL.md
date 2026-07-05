@@ -166,7 +166,7 @@ answer = client._request_with_payment_raw("/v1/exa/answer", {
 | Use `blockrun_exa` / `_request_with_payment_raw` | Use `client.search()` |
 |---------------------------------------------------|----------------------|
 | Finding specific URLs and fetching content | Getting a summarized answer with citations |
-| Semantic similarity search | Web + X/Twitter + news combined |
+| Semantic similarity search | Web + news combined |
 | Academic paper discovery | Cheaper per call for simple lookups |
 | Domain-filtered research | Already returns a SearchResult object |
 
