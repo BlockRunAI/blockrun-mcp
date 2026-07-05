@@ -1,6 +1,6 @@
 // src/tools/search.ts
 //
-// Grok Live Search — real-time web, X/Twitter, and news search with AI-summarized
+// Grok Live Search — real-time web and news search with AI-summarized
 // results and citations. Path-based passthrough (one endpoint today, future-proof
 // for additional surfaces). Sources, pagination, dates documented in the search
 // skill, not the tool description.
