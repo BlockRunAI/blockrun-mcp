@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.26.0
+
+- **`feat(media)` — every media tool now reports the USDC cost in its result.** `blockrun_image`, `blockrun_video`, and `blockrun_music` returned the URL/model but no price, so on a bare MCP (without the plugin's `announce-cost` skill) the user never saw what a generation charged — the cost was booked to the budget ledger but never surfaced. Each now appends a `Cost: $X.XXXX` line and a `cost_usd` field to `structuredContent`, matching `blockrun_speech` / `blockrun_realface` which already did this. Video and music report the **real 402-settled amount** (both are token-priced upstream, so 1080p/4K clips and long tracks can exceed the per-unit estimate); image uses the catalog estimate on Base and the 402 amount on Solana — each falls back to the estimate only if the quote doesn't parse. No new spend path and no behavior change to what is charged — the figure shown is the same amount already recorded to the budget. Adds handler-level tests for the image/video/music footers with the HTTP layer and x402 payment helpers mocked (no network, no real spend); `npm test` now runs with `--experimental-test-module-mocks`.
+
 ## 0.25.3
 
 A multi-agent audit pass (finder fan-out across the money path + freshly-merged Solana image code, each finding adversarially verified) surfaced six real issues — all fixed here. Two are budget-gate bypasses on the most-used tools; one is an SSRF deny-list gap. 103 tests (13 new) + typecheck + build + 18-tool stdio smoke green.

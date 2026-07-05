@@ -327,6 +327,12 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           }
 
           let imageUrl: string | undefined;
+          // Actual USDC charged, surfaced in the result footer so the user always
+          // sees the price without relying on the plugin's announce-cost skill.
+          // Base has no billed-amount in the SDK response, so the catalog estimate
+          // (which mirrors the live price table) is the best available figure;
+          // Solana returns the real 402-quoted amount.
+          let billedUsd = estimatedCost;
           if (getChain() === "solana") {
             // Solana: manual x402 against the sol.blockrun.ai gateway (the SDK's
             // ImageClient signs Base/EVM payments only). Record the ACTUAL cost
@@ -353,6 +359,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               },
             });
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+            billedUsd = paidUsd ?? estimatedCost;
             imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
           } else {
             const response = action === "edit"
@@ -377,7 +384,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           const savedLocally = delivered !== imageUrl;
           const textBlock = {
             type: "text" as const,
-            text: `Image: ${delivered}${savedLocally ? " (saved locally — the gateway returned inline image data)" : ""}\nPrompt: ${prompt}\nModel: ${selectedModel}`,
+            text: `Image: ${delivered}${savedLocally ? " (saved locally — the gateway returned inline image data)" : ""}\nPrompt: ${prompt}\nModel: ${selectedModel}\nCost: $${billedUsd.toFixed(4)}`,
           };
           // Optional inline preview (thumbnail) for rich clients. Best-effort:
           // on failure or if disabled, fall back to the URL-only text block.
@@ -385,7 +392,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
 
           return {
             content: previewBlock ? [previewBlock, textBlock] : [textBlock],
-            structuredContent: { url: delivered, prompt, model: selectedModel, inlined: Boolean(previewBlock) },
+            structuredContent: { url: delivered, prompt, model: selectedModel, cost_usd: billedUsd, inlined: Boolean(previewBlock) },
           };
         } finally {
           gate.release();

@@ -316,11 +316,16 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           throw new Error(`Video generation did not complete within ${Math.round(TOTAL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
         }
 
+        // Real settled price from the 402 (token-priced upstream); fall back to
+        // the per-second estimate only if the quote didn't parse. Surfaced in the
+        // footer so the user always sees the charge without the plugin's skill.
+        const billedUsd = settledUsd ?? estimatedCost;
         const lines = [
           `🎬 Video ready!`,
           `URL: ${completed.url}`,
           `Duration: ${completed.duration_seconds ?? billedSeconds}s`,
           `Model: ${completed.modelReturned || selectedModel}`,
+          `Cost: $${billedUsd.toFixed(4)}`,
           ...(completed.backed_up ? [`Backed up to BlockRun storage (URL is permanent)`] : completed.source_url ? [`Source URL: ${completed.source_url}`] : []),
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),
           ...(completed.txHash ? [`Tx: ${completed.txHash}`] : []),
@@ -334,6 +339,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             ...(completed.source_url ? { source_url: completed.source_url } : {}),
             duration_seconds: completed.duration_seconds,
             model: completed.modelReturned || selectedModel,
+            cost_usd: billedUsd,
             ...(completed.request_id ? { request_id: completed.request_id } : {}),
             ...(completed.backed_up !== undefined ? { backed_up: completed.backed_up } : {}),
             ...(completed.txHash ? { txHash: completed.txHash } : {}),
