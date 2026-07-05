@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
 import { reserveBudget, recordSpending, recordActualSpend, reReserveIfHigher, BudgetExceededError } from "../utils/budget.js";
 import { formatError } from "../utils/errors.js";
+import { openUrl, DEPOSIT_URL } from "../utils/qr.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
 import { solanaPaidPost } from "../utils/solana-402.js";
@@ -404,7 +405,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         }
         if (err instanceof PaymentError) {
           return {
-            content: [{ type: "text", text: `Image generation requires payment. Run blockrun_wallet with action: "setup" for funding instructions.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Image generation needs USDC — your wallet is out of funds.${await openUrl(DEPOSIT_URL) ? ` Opened ${DEPOSIT_URL} to top up.` : ` Top up at ${DEPOSIT_URL}.`}\nError: ${errMsg}` }],
             isError: true,
           };
         }

@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
+import { openUrl, DEPOSIT_URL } from "../utils/qr.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
@@ -349,7 +350,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         const errMsg = err instanceof Error ? err.message : String(err);
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `Video generation requires payment. Run blockrun_wallet with action: "setup" for funding instructions.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Video generation needs USDC — your wallet is out of funds.${await openUrl(DEPOSIT_URL) ? ` Opened ${DEPOSIT_URL} to top up.` : ` Top up at ${DEPOSIT_URL}.`}\nError: ${errMsg}` }],
             isError: true,
           };
         }
