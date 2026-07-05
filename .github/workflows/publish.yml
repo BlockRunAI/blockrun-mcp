@@ -1,0 +1,87 @@
+name: Publish (npm + MCP registry)
+
+# Why this exists: publishing was 100% manual. `npm publish` got run, the
+# `mcp-publisher` step got forgotten — so npm reached 0.26.0 while the official
+# MCP registry (which PulseMCP/Glama/etc. mirror) stayed frozen at 0.2.2 with a
+# stale "30+ AI models" blurb since January. This automates BOTH targets with
+# independent version guards, so they can never drift apart again.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"        # only run when the version could have changed
+      - "server.template.json"
+      - ".github/workflows/publish.yml"
+  workflow_dispatch:          # manual trigger (e.g. to unstick the registry)
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write          # required for `mcp-publisher login github-oidc`
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve versions
+        id: v
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          NPM=$(npm view @blockrun/mcp version 2>/dev/null || echo "none")
+          REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp" \
+                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log(j.servers?.[0]?.server?.version||'none')}catch{console.log('none')}})")
+          echo "pkg=$PKG"  >> "$GITHUB_OUTPUT"
+          echo "npm=$NPM"  >> "$GITHUB_OUTPUT"
+          echo "reg=$REG"  >> "$GITHUB_OUTPUT"
+          echo "package.json=$PKG | npm=$NPM | registry=$REG"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build, typecheck, test
+        run: |
+          npm run build
+          npm run typecheck
+          npm test
+
+      # ---- npm ----
+      - name: Publish to npm
+        if: steps.v.outputs.pkg != steps.v.outputs.npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npm (already published)
+        if: steps.v.outputs.pkg == steps.v.outputs.npm
+        run: echo "npm already at ${{ steps.v.outputs.pkg }} — skipping npm publish"
+
+      # ---- MCP registry ----
+      - name: Install mcp-publisher
+        if: steps.v.outputs.pkg != steps.v.outputs.reg
+        run: |
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Stamp + publish server.json to MCP registry
+        if: steps.v.outputs.pkg != steps.v.outputs.reg
+        run: |
+          node scripts/stamp-server-json.mjs
+          mcp-publisher validate
+          mcp-publisher login github-oidc
+          mcp-publisher publish
+          echo "Published $(node -p "require('./package.json').name")@${{ steps.v.outputs.pkg }} to the MCP registry"
+
+      - name: Skip registry (already published)
+        if: steps.v.outputs.pkg == steps.v.outputs.reg
+        run: echo "registry already at ${{ steps.v.outputs.pkg }} — skipping"
