@@ -56,6 +56,7 @@ mock.module("../src/utils/wallet.js", {
   namedExports: {
     getChain: () => "base",
     getOrCreateWalletKey: () => TEST_KEY,
+    getWalletInfo: async () => ({ address: "0xTEST" }),
   },
 });
 mock.module("@blockrun/llm", {

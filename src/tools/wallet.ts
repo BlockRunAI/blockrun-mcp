@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
 import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance } from "../utils/wallet.js";
-import { generateQrPng, openQrInViewer, openUrl, DEPOSIT_URL } from "../utils/qr.js";
+import { generateQrPng, openQrInViewer } from "../utils/qr.js";
+import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
@@ -30,7 +31,7 @@ paid blockrun_price, blockrun_chat routing:"smart", and native Anthropic
 
 Actions:
 - status (default): Both wallet addresses + USDC balances, active chain, session spending
-- deposit: Open the BlockRun top-up page (https://buy.blockrun.ai) in the browser to add funds. Paid tools auto-open this on an out-of-funds failure; call it directly to fund up front.
+- deposit: Buy USDC with a card — mints a one-time Coinbase Onramp link and opens it in the browser (Base only; funds settle into your own wallet). Paid tools auto-open this on an out-of-funds failure; call it directly to fund up front.
 - setup: Get funding instructions + QR code for the ACTIVE chain (call this when balance is 0)
 - qr: Open QR code (active chain) in system viewer
 - chain + chain:"base"|"solana": Switch the active payment chain (omit chain: to just see the current one)
@@ -180,19 +181,13 @@ and RealFace are Base-only — switch back with chain:"base" for those.`;
       const address = info.address;
       const chain = getChain();
 
-      // Handle deposit action — open the hosted BlockRun top-up page. Simple:
-      // launch the URL (best-effort) and always return it so the user can click
-      // it if the browser didn't open.
+      // Handle deposit action — mint a one-time Coinbase card-onramp link and
+      // open it (Base). On Solana, launchTopUp returns address/QR guidance.
       if (action === "deposit") {
-        const opened = await openUrl(DEPOSIT_URL);
+        const r = await launchTopUp();
         return {
-          content: [{
-            type: "text",
-            text: `${opened ? "Opened the BlockRun top-up page in your browser" : "BlockRun top-up page"}: ${DEPOSIT_URL}\n` +
-              `Add USDC there to fund your wallet. Your ${chain} address: ${address}\n` +
-              `If the page didn't open, click the link above.`,
-          }],
-          structuredContent: { deposit_url: DEPOSIT_URL, opened, chain, address },
+          content: [{ type: "text", text: r.note }],
+          structuredContent: { onramp_url: r.url, opened: r.opened, chain, address },
         };
       }
 

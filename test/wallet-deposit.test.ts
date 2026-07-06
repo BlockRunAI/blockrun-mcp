@@ -1,13 +1,16 @@
 // Run with: npm test  (tsx --experimental-test-module-mocks --test)
-// Verifies blockrun_wallet action:"deposit" opens the buy.blockrun.ai top-up
-// page and returns the link, with `open` mocked so no browser actually opens.
-// node --test isolates each file in its own process, so these mocks don't leak.
+// Verifies blockrun_wallet action:"deposit" wires through launchTopUp (the
+// Coinbase-onramp flow), with launchTopUp + wallet mocked so no network/browser.
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
 
-let openCalls: string[] = [];
-mock.module("open", { defaultExport: async (url: string) => { openCalls.push(url); return {}; } });
+const COINBASE_URL = "https://pay.coinbase.com/buy/select-asset?sessionToken=xyz";
+mock.module("../src/utils/onramp.js", {
+  namedExports: {
+    launchTopUp: async () => ({ opened: true, url: COINBASE_URL, note: `Opened a Coinbase card top-up page in your browser: ${COINBASE_URL}` }),
+  },
+});
 mock.module("../src/utils/wallet.js", {
   namedExports: {
     getWalletInfo: async () => ({ address: "0xTESTADDRESS" }),
@@ -29,14 +32,12 @@ function makeHarness() {
   return (a: Record<string, unknown>) => handler!(a);
 }
 
-test("deposit opens buy.blockrun.ai and returns the link", async () => {
-  openCalls = [];
+test("deposit returns the Coinbase onramp link from launchTopUp", async () => {
   const call = makeHarness();
   const res = await call({ action: "deposit" });
   const text = res.content.map((c: any) => c.text).join("\n");
 
-  assert.equal(openCalls[0], "https://buy.blockrun.ai");
-  assert.match(text, /https:\/\/buy\.blockrun\.ai/);
-  assert.equal(res.structuredContent.deposit_url, "https://buy.blockrun.ai");
+  assert.match(text, /pay\.coinbase\.com/);
+  assert.equal(res.structuredContent.onramp_url, COINBASE_URL);
   assert.equal(res.structuredContent.opened, true);
 });
