@@ -6,7 +6,8 @@ import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
-import { generateUrlQrPng, openQrInViewer, openUrl, DEPOSIT_URL } from "../utils/qr.js";
+import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
+import { launchTopUp } from "../utils/onramp.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -367,7 +368,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         const errMsg = err instanceof Error ? err.message : String(err);
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds.${await openUrl(DEPOSIT_URL) ? ` Opened ${DEPOSIT_URL} to top up.` : ` Top up at ${DEPOSIT_URL}.`}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
           };
         }

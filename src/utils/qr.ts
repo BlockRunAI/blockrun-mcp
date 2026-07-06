@@ -131,10 +131,6 @@ export async function openQrInViewer(qrPath: string): Promise<void> {
   }
 }
 
-// Hosted BlockRun top-up portal — opened in the browser when a wallet needs
-// funds (no local panel server required, unlike Franklin's in-panel top-up).
-export const DEPOSIT_URL = "https://buy.blockrun.ai";
-
 /**
  * Open a URL in the user's default browser. Best-effort — returns true if the
  * launch was attempted without error, false on any failure (headless / no
