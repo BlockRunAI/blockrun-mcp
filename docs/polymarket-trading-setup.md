@@ -138,9 +138,13 @@ blockrun_polymarket action:"setup"
 #    → prints your deposit wallet address, funding instructions,
 #      and: ✅ Region: order placement permitted from this egress
 
-# 2) Fund the DEPOSIT WALLET printed above with ~$5 (pUSD, or USDC via the
-#    Polymarket bridge which auto-wraps to pUSD). Only pUSD in the deposit
-#    wallet counts as buying power.
+# 2) Fund the vault. Easiest — gasless, from your own Base USDC, one call:
+blockrun_polymarket action:"fund" amount_usd:5                 # dry-run preview
+blockrun_polymarket action:"fund" amount_usd:5 confirm:true    # signs + submits
+#    BlockRun pays the Base gas and charges $0.01; you need no ETH. Non-custodial:
+#    your USDC goes to the Polymarket bridge → wraps to pUSD → your vault.
+#    (Manual alternative: send USDC to the vault's Polymarket bridge address; only
+#     pUSD in the vault counts as buying power.)
 
 # 3) Sign the one-time gasless approvals (after funding)
 blockrun_polymarket action:"setup" confirm:true

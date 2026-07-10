@@ -8,6 +8,7 @@ import { listPositions } from "../utils/polymarket/positions.js";
 import { redeemPosition } from "../utils/polymarket/redeem.js";
 import { runSetup } from "../utils/polymarket/setup.js";
 import { withdrawFunds } from "../utils/polymarket/withdraw.js";
+import { fundVault } from "../utils/polymarket/fund.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -26,6 +27,7 @@ Run action:"setup" FIRST (and again after funding). It creates a gasless deposit
 
 Actions:
 - setup — create/inspect deposit wallet, funding, approvals (confirm:true to sign the approval batch), region check. Idempotent.
+- fund — top up the deposit wallet from your OWN Base USDC, gasless (confirm:true). amount_usd required. BlockRun pays the gas + charges $0.01; you need no ETH. Non-custodial (USDC → Polymarket bridge → your vault).
 - buy / sell — token_id (or condition_id+outcome) + either price+size (limit) or amount_usd (market buy) / size (market sell). confirm:true REQUIRED to place; omitting it returns a dry-run preview. Per-order cap: POLYMARKET_MAX_BET_USD (default $25).
 - orders — list open orders (optional condition_id filter)
 - cancel — order_id:"…" or all:true
@@ -35,7 +37,7 @@ Actions:
 
 Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Order placement is geoblocked in some regions (US/UK/EU are close-only; cancel/sell/redeem still work) — setup reports your status.`,
       inputSchema: {
-        action: z.enum(["setup", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
+        action: z.enum(["setup", "fund", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
           .describe("Operation to perform"),
         token_id: z.string().optional()
           .describe("Outcome token ID (decimal ERC-1155 id from blockrun_markets clobTokenIds)"),
@@ -71,6 +73,9 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
         switch (args.action) {
           case "setup":
             result = await runSetup({ confirm: args.confirm === true });
+            break;
+          case "fund":
+            result = await fundVault({ amount_usd: args.amount_usd, confirm: args.confirm });
             break;
           case "buy":
           case "sell":
