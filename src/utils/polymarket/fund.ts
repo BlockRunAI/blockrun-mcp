@@ -12,8 +12,9 @@ import type { Hex } from "viem";
 import { BlockrunClient, createPaymentPayload } from "@blockrun/llm";
 import { getOrCreateWalletKey, getChainBalance } from "../wallet.js";
 import { getPolymarketAccount } from "./client.js";
-import { BASE_CHAIN_ID, BRIDGE_API_HOST } from "./constants.js";
+import { BASE_CHAIN_ID, BRIDGE_API_HOST, getSigType } from "./constants.js";
 import { getFundsAddress } from "./positions.js";
+import { getPublicClient } from "./setup.js";
 import type { ToolResult } from "./orders.js";
 
 const FUND_FEE_USD = 0.01;
@@ -58,6 +59,23 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
   const agent = getPolymarketAccount().address;
 
   try {
+    // The deposit wallet must be DEPLOYED before funding: the bridge delivers
+    // pUSD to the vault contract, and it can't credit a vault that doesn't
+    // exist on-chain yet (verified live — funding an undeployed vault let the
+    // bridge sweep the USDC but never deliver pUSD). Correct order is
+    // setup(deploy) → fund. EOA mode (the funds ARE the EOA) is exempt.
+    if (getSigType() === 3) {
+      const code = await getPublicClient().getCode({ address: vault }).catch(() => undefined);
+      if (!code || code === "0x") {
+        return {
+          text: `Your deposit wallet ${vault} is not deployed yet — deploy it FIRST with ` +
+            `action:"setup" confirm:true (needs relayer creds), then fund. Funding an undeployed ` +
+            `vault strands your USDC at the bridge (it can't deliver pUSD to a vault that doesn't exist).`,
+          isError: true,
+        };
+      }
+    }
+
     const baseBalance = (await getChainBalance("base", agent)) ?? 0;
     const needed = amountUsd + FUND_FEE_USD;
     if (baseBalance < needed) {

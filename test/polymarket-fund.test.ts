@@ -9,6 +9,7 @@ const VAULT = "0x5d3eaa66AE01F1a907c8e0970D1D021C6Ff8EB26";
 const AGENT = "0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8";
 const BRIDGE = "0x6a6827094a5809Df44b32adBEf26F233614F12c4";
 let baseBalance = 20; // USDC on Base
+let vaultCode = "0x60006000"; // deployed by default
 let postCalls: unknown[] = [];
 
 mock.module("axios", {
@@ -39,6 +40,9 @@ mock.module("../src/utils/polymarket/client.js", {
 mock.module("../src/utils/polymarket/positions.js", {
   namedExports: { getFundsAddress: () => VAULT },
 });
+mock.module("../src/utils/polymarket/setup.js", {
+  namedExports: { getPublicClient: () => ({ getCode: async () => vaultCode }) },
+});
 
 const { fundVault } = await import("../src/utils/polymarket/fund.js");
 
@@ -53,6 +57,20 @@ test("below the $2 bridge minimum is rejected before signing", async () => {
   assert.equal(res.isError, true);
   assert.match(res.text, /Minimum funding is \$2/);
   assert.equal(postCalls.length, 0, "must not sign/POST a below-min deposit");
+});
+
+test("funding an UNDEPLOYED vault is blocked (deploy first)", async () => {
+  vaultCode = "0x"; // not deployed
+  postCalls = [];
+  try {
+    const res = await fundVault({ amount_usd: 5, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /not deployed yet/);
+    assert.match(res.text, /action:"setup" confirm:true/);
+    assert.equal(postCalls.length, 0, "must not strand USDC at the bridge");
+  } finally {
+    vaultCode = "0x60006000";
+  }
 });
 
 test("insufficient Base USDC is rejected with the shortfall", async () => {
