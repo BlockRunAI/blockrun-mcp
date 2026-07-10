@@ -184,11 +184,10 @@ export async function mapClobError(err: unknown): Promise<string> {
 }
 
 function bindAddressForCreds(): { address: string; sigType: 0 | 3 } {
-  const sigType = getSigType();
-  const address = sigType === 3
-    ? (loadState().depositWallet ?? "")
-    : getPolymarketAccount().address;
-  return { address, sigType };
+  // CLOB API creds are ALWAYS bound to the owner EOA (sigType 0), even in
+  // POLY_1271 mode — see the note in client.ts getClobClient. The on-401 retry
+  // must invalidate that same key, not the deposit wallet's.
+  return { address: getPolymarketAccount().address, sigType: 0 };
 }
 
 /**
