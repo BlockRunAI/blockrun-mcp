@@ -1,227 +1,271 @@
-# Polymarket Trading Setup & Test Guide
+# Trading on Polymarket with `blockrun_polymarket`
 
-How to configure `blockrun_polymarket` and place a real bet on Polymarket end to
-end. Written for testers evaluating the feature on PR #36.
+A complete guide to placing real bets on [Polymarket](https://polymarket.com)
+straight from your AI agent — using the **same BlockRun wallet** that pays for
+AI via x402. One self-custody identity: it pays for models in USDC on Base *and*
+settles USDC-denominated bets on the world's largest prediction market.
 
-> **Real money.** Orders spend real **pUSD** on Polygon. Everything is
-> confirm-gated and capped (`POLYMARKET_MAX_BET_USD`, default **$25/order**), but
-> a confirmed order is a real trade. Start with ~$5 and a $1 test order.
+> **Real money.** A confirmed order spends real **pUSD** (Polymarket's USDC-backed
+> collateral) on Polygon. Every order, approval, redeem, and withdrawal is
+> **confirm-gated** (dry-run unless you pass `confirm:true`) and **capped**
+> (`POLYMARKET_MAX_BET_USD`, default **$25/order**). Start with ~$5 and a $1 test.
+
+This flow is verified end to end on the live CLOB: an agent's own wallet created
+its deposit vault, funded it gaslessly via x402, and placed a **real $1 market
+order that matched** — no Polymarket account, no manual API keys, no gas token.
 
 ---
 
-## 0. How it works (30-second version)
+## 0. How it works in 30 seconds
 
-- Your existing BlockRun wallet key (`~/.blockrun/.session`) signs every order
-  **locally** — non-custodial. Nothing (not BlockRun, not Polymarket's relayer)
-  can move your funds; they only forward requests you already signed.
-- Funds live as **pUSD** in a **deposit wallet** — a smart-contract vault on
-  Polygon derived from your key (only your key can authorize it). Deploying it,
-  approving the exchanges, and redeeming winnings are all **gasless** (a relayer
-  pays the gas).
-- Polymarket **geoblocks order placement by IP** (US / UK / EU and many regions
-  are restricted). We route order traffic through a **Tokyo egress** (an
-  API-permitted region). Reads and your AI/x402 traffic are unaffected.
+- **One key, non-custodial.** Your existing BlockRun key (`~/.blockrun/.session`)
+  signs every order **locally**. Neither BlockRun nor Polymarket's relayer can
+  move your funds — they only forward requests you already signed.
+- **Funds live in a deposit wallet.** A smart-contract vault on Polygon, derived
+  from your key (only your key can authorize it). Holds **pUSD** — the only thing
+  that counts as buying power.
+- **Everything is gasless.** Deploying the vault, approving the exchanges,
+  placing/redeeming — a relayer pays the Polygon gas. You never need POL.
+- **No Polymarket account, no API keys.** The MCP bootstraps everything it needs
+  (a builder key for the gasless relayer) from your own wallet, automatically, on
+  first `setup`.
+- **Geoblock.** Polymarket blocks *order placement* by IP (US / UK / EU and many
+  regions). Route order traffic through a permitted **egress** (§3). Reads,
+  funding, and your x402/AI traffic are unaffected.
 
 ---
 
 ## 1. Prerequisites
 
-- Node ≥ 20.19, and the `blockrun` MCP installed in your client (Claude Code,
-  etc.). To test **this PR** before it's published:
+- The `blockrun` MCP in your client (Claude Code, etc.), with the **`trading`**
+  profile enabled (the profile that includes `blockrun_polymarket`):
+  ```bash
+  claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest --profile trading
+  ```
+  To run from source instead:
   ```bash
   git clone https://github.com/BlockRunAI/blockrun-mcp
-  cd blockrun-mcp && git checkout feat/polymarket-trading
-  npm install && npm run build
-  # point your MCP client at the local build:
+  cd blockrun-mcp && npm install && npm run build
   claude mcp add blockrun-dev -s user -- node /ABSOLUTE/PATH/blockrun-mcp/dist/index.js --profile trading
   ```
-  (Once merged: `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest`.)
-- A funded BlockRun wallet for AI/x402 (only if you also use the other tools).
-- ~**$5 of USDC** you're willing to bet, reachable to move onto Polygon.
+- **~$5 of USDC on Base** in your agent wallet (check with `blockrun_wallet`).
+  This is what you'll move onto Polygon to bet with. That's the *only* funding
+  you need — no separate Polygon wallet, no POL, no Polymarket deposit.
 
 ---
 
-## 2. Egress (get past the geoblock)
+## 2. The one-wallet model (the important concept)
 
-You almost certainly need this — from the US/EU a raw order returns
-`403 Trading restricted in your region`.
+A private key is chain-agnostic, so a single BlockRun identity does double duty:
 
-### Option A — use the shared Tokyo relay (fastest for testing)
+| | Pays for | On chain | As |
+|---|---|---|---|
+| **x402 / AI** | models, images, search… | Base (8453) | native USDC |
+| **Polymarket** | bets | Polygon (137) | pUSD in your deposit vault |
 
-A public Tokyo relay is already deployed for this test round. Set two env vars on
-the MCP server (see §3):
+The vault address is **derived deterministically from your key** — same key,
+same vault, forever. Winnings you cash out land back as **native USDC on Base**,
+in the very wallet that pays your AI bills. Lose the key, lose both — **back up
+`~/.blockrun/.session`.**
+
+---
+
+## 3. Get past the geoblock (egress)
+
+From the US/EU a raw order returns `403 Trading restricted in your region`. You
+need order traffic to leave from a permitted region (e.g. Japan, where the API is
+unrestricted). Two ways:
+
+### Option A — a Tokyo relay (simplest)
+
+Point the CLOB host at a relay that egresses from Tokyo:
 
 ```
-POLYMARKET_CLOB_HOST=https://pm-egress-vbsbhh7lea-an.a.run.app/clob
-POLYMARKET_RELAYER_URL=https://pm-egress-vbsbhh7lea-an.a.run.app/relayer
+POLYMARKET_CLOB_HOST=https://<your-tokyo-relay>/clob
 ```
 
-Verify it reaches CLOB from Tokyo:
+Deploy your own in one command (Google Cloud Run, `asia-northeast1` — no VM or
+public IP needed, works even under a `vmExternalIpAccess=DENY` org policy):
+
 ```bash
-curl -s https://pm-egress-vbsbhh7lea-an.a.run.app/clob/version   # → {"version":2}
+bash deploy/tokyo-egress/deploy.sh     # deploys, prints the URL
 ```
 
-> ⚠️ This is a **temporary, shared, unauthenticated demo relay** — it only
-> forwards to Polymarket hosts, is rate-limited, and will be torn down after the
-> showcase. For anything beyond testing, run your own (Option B).
+Sanity-check it reaches CLOB V2 from Tokyo and the order endpoint is **not**
+geoblocked (`401` = needs auth = permitted; `403` = still blocked):
 
-### Option B — run your own egress
+```bash
+curl -s   <RELAY>/clob/version                                   # → {"version":2}
+curl -s -o /dev/null -w "%{http_code}\n" -X POST <RELAY>/clob/order \
+     -H "content-type: application/json" -d '{}'                 # → 401  (good)
+```
 
-- **Cloud Run relay** (no VM public IP needed — works even under a
-  `compute.vmExternalIpAccess=DENY` org policy):
-  ```bash
-  bash deploy/tokyo-egress/deploy.sh    # deploys to asia-northeast1, prints the URL
-  ```
-  First run in a fresh project may need the Cloud Build service account to have
-  `roles/artifactregistry.writer` (grant it, then re-run).
-- **Authenticated forward proxy** on any Tokyo VM/VPS, then set
-  `HTTPS_PROXY=http://user:pass@host:port` (covers both CLOB and relayer) or
-  `POLYMARKET_CLOB_PROXY=...` (Polymarket-only). x402/LLM traffic stays direct.
+### Option B — a forward proxy
+
+Any authenticated proxy in a permitted region:
+
+```
+HTTPS_PROXY=http://user:pass@host:port        # covers CLOB + relayer
+# or, Polymarket-only (leaves x402/LLM traffic direct):
+POLYMARKET_CLOB_PROXY=http://user:pass@host:port
+```
+
+> The relayer (deploy/approve/redeem) is **not** geoblocked, so only order
+> placement strictly needs the egress. Routing everything through it is harmless.
 
 ---
 
-## 3. Configure the MCP server
+## 4. Configure the MCP server
 
-Add the env to your `blockrun` MCP registration (in `~/.claude.json`, the
-server's `env` object), then restart the client so it reloads:
+Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
+`env` object), then restart the client so it reloads:
 
 ```jsonc
 "blockrun": {
   "command": "npx",
-  "args": ["-y", "@blockrun/mcp@latest"],
+  "args": ["-y", "@blockrun/mcp@latest", "--profile", "trading"],
   "env": {
-    "POLYMARKET_CLOB_HOST": "https://pm-egress-vbsbhh7lea-an.a.run.app/clob",
-    "POLYMARKET_RELAYER_URL": "https://pm-egress-vbsbhh7lea-an.a.run.app/relayer",
-
-    // Choose a wallet mode (§4):
-    // Deposit-wallet mode (gasless, recommended) — from polymarket.com → Settings → API Keys:
-    "POLYMARKET_RELAYER_API_KEY": "...",
-    "POLYMARKET_RELAYER_API_SECRET": "...",
-    "POLYMARKET_RELAYER_API_PASSPHRASE": "...",
+    // Egress for order placement (§3) — required from a restricted region:
+    "POLYMARKET_CLOB_HOST": "https://<your-tokyo-relay>/clob",
 
     // Optional safety knobs:
-    "POLYMARKET_MAX_BET_USD": "25",
-    "POLYMARKET_MAX_SESSION_USD": "100"
+    "POLYMARKET_MAX_BET_USD": "25",       // per-order cap (default 25)
+    "POLYMARKET_MAX_SESSION_USD": "100"   // cumulative per-process cap (optional)
   }
 }
 ```
 
-Restart Claude Code (or `/mcp` to reconnect) — MCP env is read at startup.
+**That's the whole config.** No `POLYMARKET_RELAYER_API_KEY`, no Polymarket
+account, no API keys — the MCP creates the builder key it needs from your wallet
+on first `setup`. (Advanced: `POLYMARKET_SIG_TYPE=0` switches to plain-EOA mode,
+where you hold pUSD and pay POL gas yourself — useful for reads, but the deposit
+wallet is the path that places orders.)
 
 ---
 
-## 4. Choose a wallet mode
+## 5. The full flow
 
-| | **Deposit wallet** (default, `POLYMARKET_SIG_TYPE=3`) | **EOA** (`POLYMARKET_SIG_TYPE=0`) |
-|---|---|---|
-| Gas | Gasless (relayer pays) | You need **POL** for gas |
-| Needs | Relayer API creds (polymarket.com → Settings → API Keys) | No relayer creds |
-| Funds live in | A deposit-wallet vault derived from your key | Your key's own address |
-| Can place orders? | ✅ Yes | ⚠️ **No** — CLOB V2 rejects a plain EOA maker (`maker address not allowed, please use the deposit wallet flow`) |
-
-**Use deposit-wallet mode to place orders.** Verified against the live CLOB: a
-plain EOA maker is rejected with *"maker address not allowed, please use the
-deposit wallet flow"*, so relayer creds are effectively required for trading. EOA
-mode is still useful for reads and credential derivation, but not for placing
-orders.
-
----
-
-## 5. Run it
-
-All commands are the `blockrun_polymarket` tool. Discover markets with
-`blockrun_markets` first.
+Everything is the `blockrun_polymarket` tool. Discover markets with
+`blockrun_markets` first. **`confirm:true` is required to place anything** —
+without it you get a dry-run preview and nothing is signed.
 
 ```
-# 1) Provision + inspect (idempotent — safe to re-run any time)
+# 1) Provision + inspect — idempotent, safe to re-run any time.
 blockrun_polymarket action:"setup"
-#    → prints your deposit wallet address, funding instructions,
-#      and: ✅ Region: order placement permitted from this egress
+#    First run bootstraps your builder key, derives + deploys your deposit
+#    wallet (gasless), and prints a checklist:
+#      ✅ Deposit wallet deployed        ✅ CLOB API credentials
+#      ✅ pUSD balance                   ✅ Region: order placement permitted
+#      ✅ Exchange approvals
 
-# 2) Fund the vault. Easiest — gasless, from your own Base USDC, one call:
+# 2) Fund the vault — gasless, from your Base USDC, one call.
 blockrun_polymarket action:"fund" amount_usd:5                 # dry-run preview
 blockrun_polymarket action:"fund" amount_usd:5 confirm:true    # signs + submits
 #    BlockRun pays the Base gas and charges $0.01; you need no ETH. Non-custodial:
-#    your USDC goes to the Polymarket bridge → wraps to pUSD → your vault.
-#    (Manual alternative: send USDC to the vault's Polymarket bridge address; only
-#     pUSD in the vault counts as buying power.)
+#    your USDC → the Polymarket bridge → wraps to pUSD → your vault.
+#    NOTE: the bridge credits pUSD ASYNCHRONOUSLY (usually minutes, occasionally
+#    30+). "Submitted" != "credited" — re-run action:"setup" and watch the pUSD
+#    balance. Minimum $2 per deposit.
 
-# 3) Sign the one-time gasless approvals (after funding)
+# 3) Sign the one-time gasless approvals (after the vault shows pUSD).
 blockrun_polymarket action:"setup" confirm:true
 
-# 4) Find a market + outcome token
+# 4) Find a market + outcome token.
 blockrun_markets path:"polymarket/markets" params:{ ... }      # → clobTokenIds, conditionId
 
-# 5) Preview, then place a $1 test order
+# 5) Preview, then place a $1 test order.
 blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:1              # dry-run preview
 blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:1 confirm:true # places (market FOK)
-#    limit order instead: price:0.45 size:10   (GTC)
-#    by market:            condition_id:"0x..." outcome:"Yes"
+#    limit order:  price:0.45 size:10           (GTC, rests on the book)
+#    by market:    condition_id:"0x..." outcome:"Yes"
 
-# 6) Manage
-blockrun_polymarket action:"positions"                 # holdings, PnL, redeemable
+# 6) Manage.
+blockrun_polymarket action:"positions"                 # holdings, avg price, PnL, redeemable
 blockrun_polymarket action:"orders"                    # open orders
 blockrun_polymarket action:"cancel" order_id:"<id>"    # or all:true
+blockrun_polymarket action:"sell" token_id:"<id>" size:10 confirm:true   # exit before resolution
 
-# 7) Claim winnings after a market resolves (gasless)
+# 7) Claim winnings after a market resolves (gasless).
 blockrun_polymarket action:"redeem" condition_id:"0x..." confirm:true
 
-# 8) Cash out — pUSD → native USDC on Base, to your agent wallet
+# 8) Cash out — pUSD -> native USDC on Base, to your agent wallet.
 blockrun_polymarket action:"withdraw"                          # dry-run (full balance)
-blockrun_polymarket action:"withdraw" confirm:true             # execute (full balance)
-#   partial:      amount_usd:5
-#   elsewhere:    to_address:"0x..."   (default: your own agent wallet on Base)
+blockrun_polymarket action:"withdraw" confirm:true             # execute
+#    partial:    amount_usd:5
+#    elsewhere:  to_address:"0x..."   (default: your own agent wallet on Base)
 ```
 
-**Cash-out loop:** `sell` (before resolution) or `redeem` (after you win) turns a
-position into pUSD in your deposit wallet; `withdraw` then bridges that pUSD to
-**native USDC on Base**, delivered to your agent wallet — the same wallet that
-pays x402 AI fees. Instant, no Polymarket fee (minor Uniswap-v3 swap slippage).
-
-**Order semantics:** prices are probabilities `0–1`, auto-rounded conservatively
-to the market's tick grid (a buy never signs above your limit). Market **buy** =
-`amount_usd` (dollars); market **sell** = `size` (shares). Limit = `price` +
-`size`. `confirm:true` is required to place anything; without it you get a
-dry-run preview.
+**The loop that closes the story:** `sell` (before resolution) or `redeem`
+(after you win) turns a position back into pUSD in your vault; `withdraw` bridges
+that pUSD to **native USDC on Base**, delivered to the same wallet that pays your
+x402 AI fees. Money in via x402, money out via withdraw — one wallet, full circle.
 
 ---
 
-## 6. Verify the egress (optional sanity checks)
+## 6. Order semantics
 
-```bash
-# Reaches CLOB V2 from Tokyo:
-curl -s <RELAY>/clob/version                          # → {"version":2}
-
-# Order endpoint is NOT geoblocked from this egress (401 = needs auth, would
-# work with a real signature; 403 = still geoblocked):
-curl -s -o /dev/null -w "%{http_code}\n" -X POST <RELAY>/clob/order \
-  -H "content-type: application/json" -d '{}'          # → 401  (good)
-```
-
-`action:"setup"` runs this same order-endpoint probe and reports
-`✅ / ❌ Region: order placement …`.
+- **Prices are probabilities, `0–1`.** `0.45` = 45¢ = a 45% implied chance.
+- Prices are **auto-rounded conservatively** to the market's tick grid — a buy
+  never signs *above* your limit, a sell never *below*.
+- **Market buy** takes `amount_usd` (dollars to spend); **market sell** takes
+  `size` (shares to sell). **Limit** takes `price` + `size`.
+- **Order types:** `GTC` (rests, default for limits), `GTD` (good-till-`expires_at`),
+  `FOK` (fill-or-kill, default for market), `FAK` (fill-and-kill the rest).
+- `min_order_size` and tick come from the live market — the dry-run shows both.
 
 ---
 
-## 7. Troubleshooting
+## 7. Safety
+
+- **`confirm:true` is required** for every order / approval / fund / redeem /
+  withdraw. Without it: a dry-run preview, nothing signed.
+- **Per-order cap** `POLYMARKET_MAX_BET_USD` (default $25) + optional cumulative
+  **`POLYMARKET_MAX_SESSION_USD`** (in-memory, per-`agent_id`).
+- **Bets never draw from your x402 API budget** — different asset (pUSD vs Base
+  USDC), different wallet ledger. They can't corrupt each other.
+- **Your private key never leaves the machine** and is never printed or logged.
+  Credential files are `0600`.
+- **Back up `~/.blockrun/.session`** — it is the only key to *both* the payment
+  wallet and the Polymarket deposit vault. Lose it, lose the funds.
+
+---
+
+## 8. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `403 Trading restricted in your region` | Egress not set / not routing. Set `POLYMARKET_CLOB_HOST` + `POLYMARKET_RELAYER_URL` (or `HTTPS_PROXY`) and restart. |
-| `❌ Region: order placement BLOCKED` in setup | Same as above — the order endpoint probe still sees a restricted egress. |
-| `relayer API credentials are not configured` | Add `POLYMARKET_RELAYER_API_KEY/_SECRET/_PASSPHRASE`, or use `POLYMARKET_SIG_TYPE=0` (EOA + POL). |
-| `Not enough balance/allowance` | Fund the deposit wallet with pUSD, then re-run `action:"setup"` (it refreshes the CLOB balance cache). |
-| `order signer address has to be the address of the API KEY` | Auto-recovered once (creds re-derived); if it persists, re-run setup or set `POLYMARKET_SIG_TYPE=0` (upstream clob-client-v2 issue #65 — this tool ships the fix). |
-| `FOK order could not fill` | Use `order_type:"FAK"` or a limit order at the shown book price. |
-| Setup says pending after deploy | The relayer tx is still confirming; re-run `action:"setup"` in a minute. |
+| `403 Trading restricted in your region` | Egress not set / not routing. Set `POLYMARKET_CLOB_HOST` (or `HTTPS_PROXY`) to a permitted region and restart (§3). |
+| `❌ Region: order placement BLOCKED` in setup | Same — the order-endpoint probe still sees a restricted egress. |
+| Vault shows `$0.00` right after funding | The bridge credits pUSD **asynchronously** (minutes, sometimes 30+). Re-run `action:"setup"` and watch the balance. |
+| `Minimum funding is $2` | The Polymarket bridge won't deliver deposits under $2. Fund ≥ $2. |
+| `not deployed yet` when funding | Run `action:"setup" confirm:true` first — funds only land in a *deployed* vault. |
+| `Not enough balance/allowance` | Fund the vault with pUSD, then re-run `action:"setup"` (it refreshes the CLOB balance cache). |
+| `order signer address has to be the address of the API KEY` | Auto-recovered once (creds re-derived). If it persists, re-run setup. (Upstream clob-client-v2 [#65](https://github.com/Polymarket/clob-client-v2/issues/65) — this tool ships the correct fix: CLOB creds bind to your EOA, orders are ERC-1271-validated by the vault.) |
+| `FOK order could not fill` | Use `order_type:"FAK"`, or a limit order at the book price the dry-run shows. |
+| Setup says "pending" after deploy | The relayer tx is still confirming; re-run `action:"setup"` in a minute. |
 
 ---
 
-## 8. Safety recap
+## 9. Under the hood (for the curious)
 
-- `confirm:true` is **required** for every order / approval / redeem (dry-run otherwise).
-- Per-order cap `POLYMARKET_MAX_BET_USD` (default $25) + optional `POLYMARKET_MAX_SESSION_USD`.
-- Bets never draw from the x402 API budget — different asset, different wallet.
-- Your private key never leaves the machine and is never printed.
-- **Back up `~/.blockrun/.session`** — it is the only key to both the payment
-  wallet and the Polymarket deposit wallet. Lose it, lose the funds.
+- **Deposit wallet = POLY_1271 vault.** A CREATE2 smart-contract wallet from
+  Polymarket's factory, owned by your key. Orders carry `signer/maker = vault`
+  and are validated on-chain by the vault's ERC-1271 `isValidSignature`.
+- **CLOB credentials bind to your EOA, not the vault.** This is the correct
+  resolution of clob-client-v2 #65: L1/L2 auth uses your key's plain signature
+  (matching Polymarket's reference Rust client); the vault authorizes orders via
+  ERC-1271. Binding creds to the vault (the fix #65 *proposed*) is rejected by the
+  CLOB — this tool does it the working way.
+- **Gasless via the builder relayer.** `deploy`, `approve`, and `redeem` are
+  EIP-712 `Batch` payloads your key signs and the relayer submits (it pays gas,
+  can't alter or replay them). The builder API key that authenticates the relayer
+  is **created programmatically from your own wallet** — no manual onboarding.
+- **x402 funding is non-custodial.** `fund` signs an EIP-3009
+  `TransferWithAuthorization` on Base USDC; the BlockRun gateway charges $0.01,
+  then settles your deposit **straight to the Polymarket bridge** via the CDP
+  facilitator (which pays the Base gas). Your USDC never touches a BlockRun
+  wallet; the gateway only forwards an authorization it cannot redirect.
+
+---
+
+*Questions or issues: [github.com/BlockRunAI/blockrun-mcp](https://github.com/BlockRunAI/blockrun-mcp).*

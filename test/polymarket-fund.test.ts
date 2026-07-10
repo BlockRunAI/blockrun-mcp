@@ -98,7 +98,11 @@ test("confirm:true signs the deposit auth and calls the gateway with the right b
   postCalls = [];
   const res = await fundVault({ amount_usd: 5, confirm: true });
   assert.equal(res.isError, undefined, res.text);
-  assert.match(res.text, /Funded \$5\.00/);
+  // The gateway confirms the deposit + fee, but the bridge credits pUSD on
+  // Polygon asynchronously — so we report SUBMITTED with the credit PENDING,
+  // never "Funded" (issue #226).
+  assert.match(res.text, /Deposit of \$5\.00 USDC submitted/);
+  assert.match(res.text, /PENDING/);
   assert.match(res.text, /0xDEPOSITTX/);
   assert.equal(postCalls.length, 1);
   const call = postCalls[0] as { path: string; body: Record<string, unknown> };
