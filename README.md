@@ -268,19 +268,6 @@ One wallet. All sources. No dashboards.
 
 ---
 
-## When NOT to use BlockRun MCP
-
-BlockRun shines when you want **unified billing + many sources + LLM-readable errors**. It is not the right fit for:
-
-- **High-volume single-API workloads (≥10k calls/day to one source).** Direct subscriptions amortize better past the break-even point — Polymarket's free public API plus your own caching beats $0.001 × 10k/day if you don't need cross-source aggregation.
-- **Compliance-sensitive flows that need a fiat invoice / audit trail.** BlockRun settles in USDC; receipts are on-chain (Basescan / Solscan) but are not tax invoices. For enterprise procurement, contract directly with the upstream provider.
-- **Latency-critical sub-100ms reads.** Each x402 call adds ~200–500ms of payment-signing + settlement overhead vs. a direct authenticated request. For HFT-style flows, run your own infra.
-- **You only need one source forever.** If you'll only ever call Polymarket, or only ever Exa, save the indirection — sign up upstream and skip the wallet.
-
-Use BlockRun when you want pay-per-call for *exploration*, *aggregation*, or *agent-driven* workloads where you can't predict which source you'll reach for next.
-
----
-
 ## Multi-agent budget delegation
 
 Delegate a spending budget to a child agent with `agent_id`. The child is auto-blocked when the budget runs out — useful for autonomous agents that shouldn't run up unbounded costs.
@@ -323,7 +310,7 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
-**Regions:** Polymarket geoblocks *opening* positions from ~35 countries (US/UK/EU are close-only — cancel/sell/redeem still work). `setup` reports your status (the check runs through the same egress your orders will).
+**Regions:** Polymarket geoblocks order placement by IP (US/UK/EU + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Tokyo egress, so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress.
 
 To route through a permitted egress you operate (e.g. a small always-on VM in an unrestricted region), two options:
 
@@ -346,7 +333,7 @@ Run your egress proxy **authenticated** (not an open relay — open proxies get 
 | `~/.blockrun/.chain` | unset | Optional explicit chain preference: `base` or `solana`. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env-var override of `.solana-session`. Set → use Solana. |
-| `POLYMARKET_CLOB_HOST` | `clob.polymarket.com` | Point at a permitted-region egress/relay to place orders from a geoblocked region. Relayer creds are auto-bootstrapped from your wallet — no Polymarket API keys needed. |
+| `POLYMARKET_CLOB_HOST` | BlockRun Tokyo relay | Geoblock egress for order placement — **defaulted for you** so trading works out of the box. Override to go direct (`https://clob.polymarket.com`) or point at your own egress. Relayer creds are auto-bootstrapped from your wallet — no Polymarket API keys needed. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap for `blockrun_polymarket`. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
 | `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |

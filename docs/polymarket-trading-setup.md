@@ -29,9 +29,9 @@ order that matched** — no Polymarket account, no manual API keys, no gas token
 - **No Polymarket account, no API keys.** The MCP bootstraps everything it needs
   (a builder key for the gasless relayer) from your own wallet, automatically, on
   first `setup`.
-- **Geoblock.** Polymarket blocks *order placement* by IP (US / UK / EU and many
-  regions). Route order traffic through a permitted **egress** (§3). Reads,
-  funding, and your x402/AI traffic are unaffected.
+- **Geoblock — handled for you.** Polymarket blocks *order placement* by IP
+  (US / UK / EU and many regions). The MCP defaults to BlockRun's Tokyo egress, so
+  it works out of the box (§3). Reads, funding, and x402/AI traffic stay direct.
 
 ---
 
@@ -70,48 +70,44 @@ in the very wallet that pays your AI bills. Lose the key, lose both — **back u
 
 ---
 
-## 3. Get past the geoblock (egress)
+## 3. Geoblock — handled by default
 
-From the US/EU a raw order returns `403 Trading restricted in your region`. You
-need order traffic to leave from a permitted region (e.g. Japan, where the API is
-unrestricted). Two ways:
+Polymarket blocks order placement by IP (US / UK / EU and many regions). **You
+don't need to do anything** — the MCP defaults to BlockRun's hosted Tokyo egress,
+so orders route through a permitted region out of the box, and `action:"setup"`
+confirms `✅ Region: order placement permitted`. The relay only forwards to
+Polymarket's CLOB (it can't see or move your funds — every order is signed
+locally by your key); reads, funding, and x402/AI traffic stay direct.
 
-### Option A — a Tokyo relay (simplest)
+**Run your own instead** (production, scale, or your own compliance posture) —
+override `POLYMARKET_CLOB_HOST`:
 
-Point the CLOB host at a relay that egresses from Tokyo:
+- Direct to Polymarket (only works from a permitted region):
+  ```
+  POLYMARKET_CLOB_HOST=https://clob.polymarket.com
+  ```
+- Your own Cloud Run relay — one command, `asia-northeast1`, no VM or public IP
+  (works even under a `vmExternalIpAccess=DENY` org policy):
+  ```bash
+  bash deploy/tokyo-egress/deploy.sh     # deploys, prints the URL → use as POLYMARKET_CLOB_HOST
+  ```
+- A forward proxy in a permitted region:
+  ```
+  HTTPS_PROXY=http://user:pass@host:port            # covers CLOB + relayer
+  POLYMARKET_CLOB_PROXY=http://user:pass@host:port  # Polymarket-only
+  ```
 
-```
-POLYMARKET_CLOB_HOST=https://<your-tokyo-relay>/clob
-```
-
-Deploy your own in one command (Google Cloud Run, `asia-northeast1` — no VM or
-public IP needed, works even under a `vmExternalIpAccess=DENY` org policy):
+Check any egress reaches CLOB V2 and isn't geoblocked (`401` = permitted; `403` =
+blocked):
 
 ```bash
-bash deploy/tokyo-egress/deploy.sh     # deploys, prints the URL
-```
-
-Sanity-check it reaches CLOB V2 from Tokyo and the order endpoint is **not**
-geoblocked (`401` = needs auth = permitted; `403` = still blocked):
-
-```bash
-curl -s   <RELAY>/clob/version                                   # → {"version":2}
-curl -s -o /dev/null -w "%{http_code}\n" -X POST <RELAY>/clob/order \
+curl -s   <CLOB_HOST>/version                                    # → {"version":2}
+curl -s -o /dev/null -w "%{http_code}\n" -X POST <CLOB_HOST>/order \
      -H "content-type: application/json" -d '{}'                 # → 401  (good)
 ```
 
-### Option B — a forward proxy
-
-Any authenticated proxy in a permitted region:
-
-```
-HTTPS_PROXY=http://user:pass@host:port        # covers CLOB + relayer
-# or, Polymarket-only (leaves x402/LLM traffic direct):
-POLYMARKET_CLOB_PROXY=http://user:pass@host:port
-```
-
 > The relayer (deploy/approve/redeem) is **not** geoblocked, so only order
-> placement strictly needs the egress. Routing everything through it is harmless.
+> placement needs the egress.
 
 ---
 
@@ -125,8 +121,9 @@ Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
   "command": "npx",
   "args": ["-y", "@blockrun/mcp@latest", "--profile", "trading"],
   "env": {
-    // Egress for order placement (§3) — required from a restricted region:
-    "POLYMARKET_CLOB_HOST": "https://<your-tokyo-relay>/clob",
+    // Geoblock egress is handled by default (BlockRun's Tokyo relay) — you only
+    // need POLYMARKET_CLOB_HOST to run your own egress or go direct (§3).
+    // "POLYMARKET_CLOB_HOST": "https://clob.polymarket.com",
 
     // Optional safety knobs:
     "POLYMARKET_MAX_BET_USD": "25",       // per-order cap (default 25)
@@ -135,11 +132,12 @@ Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
 }
 ```
 
-**That's the whole config.** No `POLYMARKET_RELAYER_API_KEY`, no Polymarket
-account, no API keys — the MCP creates the builder key it needs from your wallet
-on first `setup`. (Advanced: `POLYMARKET_SIG_TYPE=0` switches to plain-EOA mode,
-where you hold pUSD and pay POL gas yourself — useful for reads, but the deposit
-wallet is the path that places orders.)
+**Nothing here is required.** No Polymarket account, no API keys, no egress
+config — the MCP bootstraps its builder key from your wallet on first `setup` and
+defaults the geoblock egress for you; the knobs above are optional. (Advanced:
+`POLYMARKET_SIG_TYPE=0` switches to plain-EOA mode, where you hold pUSD and pay
+POL gas yourself — useful for reads, but the deposit wallet is the path that
+places orders.)
 
 ---
 

@@ -17,6 +17,10 @@ this tool only trades.
   signer's EIP-712 signatures. Deploy/approve/redeem are **gasless** (relayer).
 - **Money separation**: bets spend pUSD on Polygon; x402 API fees spend USDC on
   Base. The budget ledger does NOT cover bets — `confirm:true` + caps do.
+- **Zero setup**: no Polymarket account, no API keys, no gas token. On first
+  `setup` the MCP bootstraps a builder key from the user's OWN wallet, then
+  derives + deploys the vault (all gasless). Geoblock is handled by default —
+  CLOB traffic routes through BlockRun's Tokyo egress out of the box.
 
 ## Golden rules for agents
 
@@ -39,7 +43,10 @@ this tool only trades.
 blockrun_polymarket action:"setup"
 # → deposit wallet address + funding instructions + region status
 
-# 2. User funds the DEPOSIT WALLET with pUSD (or USDC via Polymarket bridge)
+# 2. Fund the vault from the user's Base USDC — gasless x402, one call ($0.01 fee,
+#    non-custodial). pUSD credit is ASYNC (minutes) — re-run setup to watch it. Min $2.
+blockrun_polymarket action:"fund" amount_usd:5             # dry-run preview
+blockrun_polymarket action:"fund" amount_usd:5 confirm:true
 
 # 3. Sign the one-time gasless approval batch (after user consent)
 blockrun_polymarket action:"setup" confirm:true
@@ -61,6 +68,10 @@ blockrun_polymarket action:"positions"                  # holdings + PnL + redee
 # 7. Claim winnings after resolution (gasless)
 blockrun_polymarket action:"redeem" condition_id:"0x..."             # preview
 blockrun_polymarket action:"redeem" condition_id:"0x..." confirm:true
+
+# 8. Cash out — pUSD → native USDC on Base, back to the user's agent wallet
+blockrun_polymarket action:"withdraw"                                # dry-run (full balance)
+blockrun_polymarket action:"withdraw" confirm:true                   # (partial: amount_usd:5)
 ```
 
 ## Order semantics
@@ -73,17 +84,19 @@ blockrun_polymarket action:"redeem" condition_id:"0x..." confirm:true
 
 ## Regions / geoblock
 
-Opening positions is IP-geoblocked in ~35 countries (US/UK/EU = close-only;
-cancel/sell/redeem still work there). `setup` reports status. A user-operated
-egress can be set via `POLYMARKET_CLOB_PROXY` (Polymarket traffic only) or
-`HTTPS_PROXY`. Respecting Polymarket's ToS for the user's jurisdiction is the
-user's responsibility — never suggest evading restrictions.
+Order placement is IP-geoblocked (US/UK/EU + many regions). **Handled by
+default** — CLOB traffic routes through BlockRun's Tokyo egress, so `setup`
+reports `✅ Region: order placement permitted` out of the box; you don't need to
+do anything. A user can override with `POLYMARKET_CLOB_HOST` (their own relay),
+or `POLYMARKET_CLOB_PROXY` / `HTTPS_PROXY`. Respecting Polymarket's ToS for the
+user's jurisdiction is the user's responsibility — never suggest evading it.
 
 ## Troubleshooting
 
 - "No deposit wallet configured" → run `action:"setup"`.
-- "relayer API credentials are not configured" → the env vars above; or
-  `POLYMARKET_SIG_TYPE=0` for EOA mode (needs POL gas + pUSD in the EOA).
+- No manual creds are ever needed — the MCP bootstraps its builder key from the
+  user's own wallet on first `setup`. (Advanced: `POLYMARKET_SIG_TYPE=0` = plain
+  EOA mode; needs POL gas + pUSD in the EOA, and is read-only for orders.)
 - Balance/allowance errors right after funding → `setup` again (refreshes the
   CLOB's balance cache).
 - 403 → region issue; see setup's region line.
