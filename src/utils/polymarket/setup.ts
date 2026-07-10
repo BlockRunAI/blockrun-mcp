@@ -41,6 +41,7 @@ import { loadDepositWalletForSigner, loadState, saveState } from "./creds.js";
 import {
   deployDepositWallet,
   deriveDepositWallet,
+  deriveDepositWalletNoCreds,
   isDepositWalletDeployed,
   relayerCredsMissing,
   relayerCredsMissingMessage,
@@ -176,9 +177,33 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   const account = getPolymarketAccount();
 
   if (relayerCredsMissing()) {
+    // Even without relayer creds we can DERIVE (not deploy) the deposit wallet
+    // address, so the user can pre-fund it while they get creds.
+    let depositWallet: Hex | undefined;
+    try {
+      depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined)
+        ?? (await deriveDepositWalletNoCreds());
+      saveState({ depositWallet, signer: account.address });
+    } catch { /* derivation is best-effort here */ }
+    const geo = await geoblockLine();
+    const balance = depositWallet ? await getPusdBalance(depositWallet).catch(() => 0) : 0;
     return {
-      text: `Polymarket setup — deposit-wallet mode (signer ${account.address})\n\n${relayerCredsMissingMessage()}`,
-      structured: { mode: "POLY_1271", signer: account.address, ready: false, missing: "relayer_credentials" },
+      text: [
+        `Polymarket setup — deposit-wallet mode (signer ${account.address})`,
+        ...(depositWallet
+          ? [
+              ``,
+              `Your deposit wallet (holds betting funds): ${depositWallet}`,
+              `  https://polygonscan.com/address/${depositWallet}`,
+              `  ${balance > 0 ? `✅ pUSD balance: $${balance.toFixed(2)}` : "❌ Not funded yet"} — you can fund it NOW`,
+              `  (send ~$5 pUSD, or USDC via the Polymarket bridge which auto-wraps) while you get relayer creds.`,
+            ]
+          : []),
+        geo,
+        ``,
+        relayerCredsMissingMessage(),
+      ].join("\n"),
+      structured: { mode: "POLY_1271", signer: account.address, depositWallet, ready: false, missing: "relayer_credentials" },
     };
   }
 

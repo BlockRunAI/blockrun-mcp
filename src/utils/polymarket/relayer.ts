@@ -94,6 +94,23 @@ export async function deriveDepositWallet(): Promise<Hex> {
   return addr as Hex;
 }
 
+/**
+ * Derive the deposit wallet address WITHOUT relayer API creds. Derivation is
+ * pure CREATE2 math over the signer address plus a public-RPC factory read — no
+ * authenticated relayer call — so it works before the user has creds, letting
+ * them pre-fund the address. (Deploy/approve/trade still need creds.)
+ */
+export async function deriveDepositWalletNoCreds(): Promise<Hex> {
+  const walletClient = createWalletClient({
+    account: getPolymarketAccount(),
+    chain: polygon,
+    transport: http(POLYGON_RPC_URLS[0]),
+  });
+  const client = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient);
+  const addr = await client.deriveDepositWalletAddress();
+  return addr as Hex;
+}
+
 export async function isDepositWalletDeployed(address: string): Promise<boolean> {
   return getRelayClient().getDeployed(address, "WALLET");
 }
