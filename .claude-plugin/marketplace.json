@@ -14,6 +14,11 @@
       "name": "prediction-markets",
       "source": "./skills/prediction-markets",
       "description": "Use when user asks about event probabilities, prediction market odds, what people are betting on, Polymarket or Kalshi prices, or wants to find markets on a specific topic."
+    },
+    {
+      "name": "polymarket-trading",
+      "source": "./skills/polymarket-trading",
+      "description": "Use when the user wants to actually place, manage, or redeem real bets on Polymarket via blockrun_polymarket — setup, funding, confirm-gated orders, positions, redemption."
     }
   ]
 }

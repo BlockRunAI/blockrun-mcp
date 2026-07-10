@@ -26,7 +26,8 @@ export type ToolName =
   | "phone"
   | "surf"
   | "rpc"
-  | "defi";
+  | "defi"
+  | "polymarket";
 
 // `as const satisfies` keeps the literal tuple type (so the exhaustiveness
 // guard below can see the actual entries) AND rejects any entry that isn't a
@@ -34,6 +35,7 @@ export type ToolName =
 export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
   "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
+  "polymarket",
 ] as const satisfies readonly ToolName[];
 
 // Compile-time guard: if a new ToolName is added to the union but not to
@@ -51,9 +53,10 @@ export const PROFILES: Record<string, ToolName[] | "all"> = {
   // tools (music, speech), with wallet (funding/balance — media calls cost
   // USDC) and models (discover what's available).
   media: ["wallet", "models", "image", "video", "realface", "music", "speech"],
-  // Markets & on-chain data: prediction markets, realtime prices, DEX/CEX
-  // data, DeFi metrics, and raw RPC, plus the wallet for balance/funding.
-  trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc"],
+  // Markets & on-chain data: prediction markets (data + Polymarket trading),
+  // realtime prices, DEX/CEX data, DeFi metrics, and raw RPC, plus the wallet
+  // for balance/funding.
+  trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc", "polymarket"],
   // Web research & analysis: live search, neural search, Surf's news/SQL,
   // and chat for synthesis, plus wallet and the model catalogue.
   research: ["wallet", "models", "chat", "search", "exa", "surf"],

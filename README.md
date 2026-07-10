@@ -194,6 +194,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 | `blockrun_speech` | ElevenLabs text-to-speech (Flash/Turbo/Multilingual/v3, 8 voice aliases) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars; $0.0525/effect |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform match + search | $0.001–0.005/query |
+| `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally by your wallet key, settled in pUSD from a gasless Polymarket deposit wallet. Confirm-gated, $25/order default cap. See [Polymarket trading](#polymarket-trading). | free tool; bets are your own funds |
 | `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX market data, on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, Polymarket + Kalshi side-by-side, social mindshare, news, search, Surf-1.5 chat with citations | $0.001–0.02/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results (default 10) |
@@ -216,6 +217,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 - **CRITICAL: `blockrun_chat routing:"smart"` (ClawRouter) only works on Base wallets.** On Solana, pass `mode:` or `model:` to pick a model directly.
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures or client-side timeouts do NOT charge. Don't retry-loop them — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`. Pass `agent_id:"X"` to every downstream `blockrun_*` call — the child is auto-blocked when the budget hits zero.
+- **CRITICAL: `blockrun_polymarket` moves REAL user funds (pUSD on Polygon), separate from the x402 API budget.** Never call `buy`/`sell`/`redeem` with `confirm:true` unless the user explicitly approved that exact trade; without `confirm` you get a safe dry-run preview. Discover markets/token IDs with `blockrun_markets` first.
 - **Free tier first for drafts**: `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto / FX / commodity), and `blockrun_models` are all $0. Use them to scaffold before paying for premium models.
 
 ---
@@ -303,14 +305,53 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 ---
 
+## Polymarket trading
+
+`blockrun_polymarket` lets an agent place real bets on [Polymarket](https://polymarket.com) (CLOB V2, Polygon). It is **non-custodial**: every order and approval is EIP-712-signed locally by your BlockRun wallet key (`~/.blockrun/.session`) — the same self-custody key that pays x402 API fees on Base also authorizes bets on Polygon. Neither BlockRun nor Polymarket's relayer can move funds; they only forward payloads you signed.
+
+**Architecture** — the official "deposit wallet" path (signature type POLY_1271): a small smart-contract vault on Polygon, CREATE2-derived from your key (only your key can authorize it), holds the betting funds in **pUSD** (Polymarket's 1:1 collateral wrapper; backing is migrating to native Circle USDC). Deployment, exchange approvals, and redemptions all run **gasless** through Polymarket's relayer — you never need POL.
+
+**Getting started:**
+
+1. Get relayer API creds (one-time): polymarket.com → Settings → API Keys, then set `POLYMARKET_RELAYER_API_KEY` / `_SECRET` / `_PASSPHRASE` for the MCP server.
+2. `blockrun_polymarket action:"setup"` — derives + deploys your deposit wallet and prints its address.
+3. Fund it: send pUSD (or USDC via the Polymarket bridge, auto-wrapped) to the deposit wallet address. ~$5 is plenty to try it.
+4. `action:"setup" confirm:true` — signs the one-time gasless approval batch.
+5. Find a market with `blockrun_markets`, then `action:"buy"` — without `confirm:true` you get a dry-run preview; with it, the order is signed and placed.
+
+**Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
+
+**Regions:** Polymarket geoblocks *opening* positions from ~35 countries (US/UK/EU are close-only — cancel/sell/redeem still work). `setup` reports your status (the check runs through the same egress your orders will).
+
+To route through a permitted egress you operate (e.g. a small always-on VM in an unrestricted region), two options:
+
+- **`HTTPS_PROXY=http://user:pass@host:port` (simplest).** Both Polymarket SDK HTTP clients (CLOB **and** the relayer) honor it natively, while `@blockrun/llm`'s x402/LLM traffic uses `fetch` and stays direct — so in practice only Polymarket traffic is routed, without touching your API-payment egress. Best when someone runs the demo from a restricted region on their own machine.
+- **`POLYMARKET_CLOB_PROXY=http://user:pass@host:port` (surgical).** Routes only Polymarket traffic — CLOB order placement, the L1-auth/derive calls, the geoblock check, **and** the relayer's deploy/approve/redeem POSTs (injected into the relayer's own axios instance). Use this if you want to leave every other env var untouched.
+
+Run your egress proxy **authenticated** (not an open relay — open proxies get abused within hours). Complying with Polymarket's terms for your jurisdiction is your responsibility.
+
+**EOA fallback:** `POLYMARKET_SIG_TYPE=0` trades directly from the key's own address (no deposit wallet, no relayer creds) — but then the EOA must hold pUSD and POL for gas and send its own approvals.
+
+⚠️ Back up `~/.blockrun/.session`. It is the only key to both the payment wallet and the Polymarket deposit wallet.
+
+---
+
 ## Environment Variables
 
 | Variable / File | Default | Effect |
 |---|---|---|
-| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x...). File exists → use Base. |
+| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x...). File exists → use Base. Also the Polymarket signer. |
 | `~/.blockrun/.chain` | unset | Optional explicit chain preference: `base` or `solana`. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env-var override of `.solana-session`. Set → use Solana. |
+| `POLYMARKET_RELAYER_API_KEY` / `_SECRET` / `_PASSPHRASE` | unset | Polymarket relayer creds (Settings → API Keys) — required for the gasless deposit-wallet path. |
+| `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap for `blockrun_polymarket`. |
+| `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
+| `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |
+| `POLYMARKET_CLOB_PROXY` | unset | HTTPS proxy for Polymarket CLOB traffic only (geoblocked-egress workaround you operate). |
+| `POLYMARKET_BOUNDED_APPROVALS` | unset (unlimited) | Bound pUSD exchange allowances to this many dollars instead of unlimited. |
+| `BLOCKRUN_BUILDER_CODE` | unset | Optional Polymarket builder attribution code carried on orders. |
+| `~/.blockrun/.polymarket-creds`, `~/.blockrun/.polymarket.json` | auto-created | CLOB L2 API creds + deposit-wallet state (0600). |
 
 Chain selection priority (see `src/utils/wallet.ts`):
 
