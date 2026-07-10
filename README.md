@@ -311,6 +311,8 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 **Architecture** — the official "deposit wallet" path (signature type POLY_1271): a small smart-contract vault on Polygon, CREATE2-derived from your key (only your key can authorize it), holds the betting funds in **pUSD** (Polymarket's 1:1 collateral wrapper; backing is migrating to native Circle USDC). Deployment, exchange approvals, and redemptions all run **gasless** through Polymarket's relayer — you never need POL.
 
+**Full step-by-step setup + test guide:** [`docs/polymarket-trading-setup.md`](docs/polymarket-trading-setup.md).
+
 **Getting started:**
 
 1. Get relayer API creds (one-time): polymarket.com → Settings → API Keys, then set `POLYMARKET_RELAYER_API_KEY` / `_SECRET` / `_PASSPHRASE` for the MCP server.

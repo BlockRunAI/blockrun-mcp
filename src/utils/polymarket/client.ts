@@ -152,35 +152,47 @@ export function resetClobClient(): void {
 }
 
 export interface GeoblockStatus {
-  blocked: boolean | null;
-  closedOnly: boolean | null;
+  orderPlacement: "permitted" | "blocked" | "unknown";
+  country: string | null;
+  ip: string | null;
   raw: unknown;
 }
 
 let _geoCache: { at: number; value: GeoblockStatus } | null = null;
 
 /**
- * Best-effort region check against polymarket.com/api/geoblock, cached 10
- * minutes, fail-open (nulls) — a CDN hiccup must never block trading calls
- * that might succeed. Routes through the proxy (when set) so it reports the
- * status of the SAME egress orders will use, not the local IP. Used by setup
- * reporting and 403 error mapping.
+ * Region check for ORDER PLACEMENT. The authoritative signal is the CLOB order
+ * endpoint itself: an unauthenticated POST returns 403 ("Trading restricted in
+ * your region") when geoblocked, or 401/400 (auth/validation) when NOT — and it
+ * routes through POLYMARKET_CLOB_HOST, i.e. the exact egress real orders use.
+ *
+ * We deliberately do NOT trust polymarket.com/api/geoblock's boolean: it
+ * reflects FRONTEND blocking (it returns blocked=true for Japan even though the
+ * Japanese API accepts orders — verified: POST /order from a Tokyo egress
+ * returns 401, not 403). The /api/geoblock call is kept only for country/ip
+ * context. Cached 10 min; fail-open (unknown) on network error so a hiccup never
+ * blocks a call that might succeed.
  */
 export async function checkGeoblock(): Promise<GeoblockStatus> {
   applyClobProxyOnce();
   if (_geoCache && Date.now() - _geoCache.at < 10 * 60_000) return _geoCache.value;
+
+  let orderPlacement: GeoblockStatus["orderPlacement"] = "unknown";
   try {
-    const res = await axios.get(GEOBLOCK_URL, { timeout: 3_000 });
-    const raw = res.data as Record<string, unknown>;
-    const flag = (k: string): boolean | null => (typeof raw?.[k] === "boolean" ? (raw[k] as boolean) : null);
-    const value: GeoblockStatus = {
-      blocked: flag("blocked") ?? flag("isBlocked"),
-      closedOnly: flag("closedOnly") ?? flag("closed_only") ?? flag("isClosedOnly"),
-      raw,
-    };
-    _geoCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    return { blocked: null, closedOnly: null, raw: null };
-  }
+    const res = await axios.post(`${CLOB_HOST}/order`, {}, { timeout: 6_000, validateStatus: () => true });
+    orderPlacement = res.status === 403 ? "blocked" : "permitted";
+  } catch { /* network error → unknown */ }
+
+  let country: string | null = null;
+  let ip: string | null = null;
+  try {
+    const g = await axios.get(GEOBLOCK_URL, { timeout: 3_000 });
+    const d = g.data as Record<string, unknown>;
+    country = typeof d?.country === "string" ? d.country : null;
+    ip = typeof d?.ip === "string" ? d.ip : null;
+  } catch { /* context is optional */ }
+
+  const value: GeoblockStatus = { orderPlacement, country, ip, raw: { orderPlacement, country, ip } };
+  if (orderPlacement !== "unknown") _geoCache = { at: Date.now(), value };
+  return value;
 }

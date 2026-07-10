@@ -149,13 +149,14 @@ function approvalChecklist(items: ApprovalItem[]): string {
 
 async function geoblockLine(): Promise<string> {
   const geo = await checkGeoblock();
-  if (geo.blocked === true) return "❌ Region: order placement BLOCKED from this network";
-  if (geo.closedOnly === true) {
-    return "⚠️ Region: CLOSE-ONLY from this network (can cancel/sell/redeem, cannot open new positions). " +
-      "Options: run from an unrestricted egress, or set POLYMARKET_CLOB_PROXY / HTTPS_PROXY.";
+  const where = geo.country ? ` (egress country: ${geo.country})` : "";
+  if (geo.orderPlacement === "permitted") return `✅ Region: order placement permitted from this egress${where}`;
+  if (geo.orderPlacement === "blocked") {
+    return `❌ Region: order placement BLOCKED from this egress${where}. ` +
+      "Route through an unrestricted egress: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point " +
+      "POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a Tokyo relay (see deploy/tokyo-egress).";
   }
-  if (geo.blocked === false) return "✅ Region: order placement permitted from this network";
-  return "ℹ️ Region: could not determine geoblock status (check will re-run on demand)";
+  return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
 }
 
 const KEY_BACKUP_NOTE =

@@ -147,11 +147,11 @@ export async function mapClobError(err: unknown): Promise<string> {
 
   if (e?.status === 403 || (/(^|[^0-9.])403($|[^0-9.])/).test(m)) {
     const geo = await checkGeoblock();
-    const region = geo.closedOnly ? "close-only (can cancel/sell/redeem; cannot open new positions)" :
-      geo.blocked ? "blocked" : "possibly restricted";
-    return `Order rejected with 403 — this network location appears ${region} for Polymarket order placement ` +
-      `(US/UK/EU are close-only). Options: run the MCP from an unrestricted egress, set ` +
-      `POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or wait for the BlockRun gateway relay. Raw: ${message}`;
+    const where = geo.country ? ` (egress country: ${geo.country})` : "";
+    return `Order rejected with 403 — Polymarket geoblocks order placement from this egress${where} ` +
+      `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
+      `Fix: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL ` +
+      `at a Tokyo relay (deploy/tokyo-egress). Raw: ${message}`;
   }
   if (isCredsMismatchError(e)) {
     return `CLOB rejected the API credentials (${message}). Credentials were re-derived automatically; ` +
