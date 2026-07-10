@@ -5,17 +5,16 @@
 // a private key is chain-agnostic, so one identity pays API fees on Base and
 // authorizes bets on Polygon. The key never leaves this machine.
 //
-// POLY_1271 note (issue #65 companion — see l1-auth-1271.ts): the SDK's L2
-// header builder reports getSignerAddress(signer) as POLY_ADDRESS, but creds
-// derived for a deposit wallet are bound to the DEPOSIT WALLET address. We
-// therefore hand the ClobClient a wallet client whose account REPORTS the
-// deposit wallet address while still signing with the real EOA key. That is
-// safe everywhere the client reads the address:
-//   - L2 headers: POLY_ADDRESS = deposit wallet (must match the API key) ✓
-//   - order building: for POLY_1271 maker/signer come from funderAddress, and
-//     the signer==address assertion is skipped (createOrder.js) ✓
-//   - order signing: signTypedData uses the account's key-bound closure,
-//     ignoring the address field ✓
+// POLY_1271 note (issue #65): the CLOB authenticates L1/L2 by the OWNER EOA, not
+// the deposit wallet — the reference Rust client (rs-clob-client-v2 src/auth.rs)
+// derives API creds from the owner's plain ECDSA ClobAuth signature and binds the
+// key to the EOA. Orders then carry signer/maker = deposit wallet (POLY_1271) and
+// are validated on-chain by the wallet's ERC-1271 isValidSignature. So the signer
+// handed to ClobClient is the real EOA (L2 POLY_ADDRESS = EOA = API key address),
+// and funderAddress carries the deposit wallet for order building. (An earlier
+// attempt to bind creds to the deposit wallet via an ERC-7739-wrapped L1 ClobAuth
+// — the fix issue #65 proposed — is rejected by the CLOB with "Invalid L1 Request
+// headers"; see the note in getClobClient.)
 import axios from "axios";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { createWalletClient, http, type Hex, type WalletClient } from "viem";
@@ -170,18 +169,22 @@ export async function getClobClient(): Promise<ClobClient> {
     );
   }
 
-  const bindAddress = sigType === 3 ? (depositWallet as Hex) : account.address;
-  const cacheKey = `${sigType}:${bindAddress.toLowerCase()}`;
+  // L2 API credentials are ALWAYS bound to the owner EOA (POLY_ADDRESS = EOA),
+  // even in POLY_1271 mode. This mirrors the reference Rust client (rs-clob-
+  // client-v2 src/auth.rs): L1/L2 auth uses the owner's plain ECDSA signature,
+  // while POLY_1271 orders carry signer/maker = deposit wallet and are validated
+  // on-chain by the wallet's ERC-1271 isValidSignature. The earlier attempt to
+  // bind creds to the deposit wallet via an ERC-7739-wrapped L1 ClobAuth is what
+  // the CLOB rejects with "Invalid L1 Request headers" — issue #65 misdiagnosed
+  // the fix as wrapping L1 auth; the real path keeps L1 auth as the EOA.
+  const cacheKey = `${sigType}:${account.address.toLowerCase()}`;
   if (_clobClient && _clobClientKey === cacheKey) return _clobClient;
 
-  let creds = loadL2Creds(bindAddress, sigType);
+  let creds = loadL2Creds(account.address, 0);
   if (!creds) {
-    const derived = await deriveApiCreds(account, {
-      sigType,
-      depositWallet: sigType === 3 ? (depositWallet as Hex) : undefined,
-    });
-    saveL2Creds(bindAddress, sigType, derived);
-    creds = loadL2Creds(bindAddress, sigType);
+    const derived = await deriveApiCreds(account, { sigType: 0 });
+    saveL2Creds(account.address, 0, derived);
+    creds = loadL2Creds(account.address, 0);
     if (!creds) throw new Error("failed to persist derived Polymarket API credentials");
   }
 
@@ -189,7 +192,9 @@ export async function getClobClient(): Promise<ClobClient> {
   _clobClient = new ClobClient({
     host: CLOB_HOST,
     chain: POLYGON_CHAIN_ID,
-    signer: buildWalletClient(sigType === 3 ? (depositWallet as Hex) : undefined),
+    // Real EOA signer: the L2 header POLY_ADDRESS must equal the API key's
+    // address (the EOA). funderAddress carries the deposit wallet for orders.
+    signer: buildWalletClient(),
     creds: { key: creds.key, secret: creds.secret, passphrase: creds.passphrase },
     signatureType: sigType === 3 ? SignatureTypeV2.POLY_1271 : SignatureTypeV2.EOA,
     ...(sigType === 3 ? { funderAddress: depositWallet } : {}),
