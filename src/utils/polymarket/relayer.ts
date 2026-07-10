@@ -11,10 +11,9 @@
 // purely to authenticate use of its gas-sponsoring service. Phase 2 moves
 // these behind the BlockRun gateway so end users need no Polymarket account.
 import { RelayClient, type DepositWalletCall } from "@polymarket/builder-relayer-client";
-import { BuilderConfig } from "@polymarket/builder-signing-sdk";
 import { createWalletClient, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
-import { getClobProxyAgent, getPolymarketAccount, installUnderscoreHeaderBridge } from "./client.js";
+import { getPolymarketAccount } from "./client.js";
 import { getRelayerCreds, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
 
 export type { DepositWalletCall };
@@ -33,11 +32,10 @@ export function relayerCredsMissingMessage(): string {
     ``,
     `One-time setup:`,
     `  1. Create/log into an account at https://polymarket.com`,
-    `  2. Settings → API Keys → create a key (key / secret / passphrase)`,
+    `  2. Settings → API Keys → create a Relayer API key`,
     `  3. Set env vars for the MCP server and restart it:`,
-    `       POLYMARKET_RELAYER_API_KEY=...`,
-    `       POLYMARKET_RELAYER_API_SECRET=...`,
-    `       POLYMARKET_RELAYER_API_PASSPHRASE=...`,
+    `       POLYMARKET_RELAYER_API_KEY=<the api key / uuid>`,
+    `       POLYMARKET_RELAYER_API_KEY_ADDRESS=<the 0x address that owns the key>`,
     ``,
     `Alternative: set POLYMARKET_SIG_TYPE=0 for plain EOA mode (no deposit`,
     `wallet, no relayer — but the EOA must hold POL for gas and pUSD directly).`,
@@ -59,32 +57,26 @@ export function getRelayClient(): RelayClient {
     chain: polygon,
     transport: http(POLYGON_RPC_URLS[0]),
   });
-  const builderConfig = new BuilderConfig({
-    localBuilderCreds: {
-      key: creds.key,
-      secret: creds.secret,
-      passphrase: creds.passphrase,
-    },
-  });
-  _relayClient = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient, builderConfig);
+  // No BuilderConfig — the SDK's BuilderConfig path does HMAC auth (Option 1,
+  // key/secret/passphrase). We use Option 2: plain RELAYER_API_KEY +
+  // RELAYER_API_KEY_ADDRESS headers (what Settings → API Keys issues today).
+  _relayClient = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient);
 
-  // The relayer client creates its OWN axios instance (its bundled 0.27 copy),
-  // so the global default we set for the CLOB axios doesn't reach it. Inject
-  // the same proxy agent here so a US-egress demo routes the relayer's
-  // deploy/approve/redeem POSTs (relayer-v2.polymarket.com) through the
-  // permitted egress too — otherwise setup would work but its relayer calls
-  // could still originate from a blocked IP.
+  // The relayer client has its OWN axios instance. Inject the Relayer API Key
+  // auth headers on every request. The relayer is NOT geoblocked, so these go
+  // DIRECT to relayer-v2.polymarket.com (underscores in the header names survive
+  // a direct request — only header-stripping proxies would drop them, which is
+  // why the relayer must not be routed through the Tokyo CLOB relay).
   const instance = _relayClient.httpClient?.instance as
-    | ({ defaults: { httpsAgent?: unknown; proxy?: unknown } } & Parameters<typeof installUnderscoreHeaderBridge>[0])
+    | { interceptors?: { request: { use: (fn: (c: unknown) => unknown) => void } } }
     | undefined;
-  const agent = getClobProxyAgent();
-  if (instance?.defaults && agent) {
-    instance.defaults.httpsAgent = agent;
-    instance.defaults.proxy = false;
-  }
-  // Same underscore-header survival fix as the CLOB path — the relayer's builder
-  // auth (POLY_BUILDER_*) headers must survive a relay too.
-  if (instance) installUnderscoreHeaderBridge(instance);
+  instance?.interceptors?.request.use((config: unknown) => {
+    const c = config as { headers?: Record<string, unknown> };
+    c.headers = c.headers || {};
+    c.headers["RELAYER_API_KEY"] = creds.key;
+    c.headers["RELAYER_API_KEY_ADDRESS"] = creds.keyAddress;
+    return config;
+  });
   return _relayClient;
 }
 

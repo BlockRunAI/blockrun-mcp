@@ -153,17 +153,20 @@ export function getClobProxy(): string | undefined {
  * payloads; these creds authenticate use of its gas-sponsoring service and
  * grant no control over funds.
  */
+// Polymarket's Settings → API Keys issues a Relayer API key as key + owning
+// address (Option 2 auth: two plain headers RELAYER_API_KEY +
+// RELAYER_API_KEY_ADDRESS, no HMAC). The older builder-HMAC form
+// (key/secret/passphrase) is also accepted by the relayer but is not what the
+// UI hands out today; we implement the key+address form.
 export interface RelayerCreds {
   key: string;
-  secret: string;
-  passphrase: string;
+  keyAddress: string;
 }
 
 export function getRelayerCreds(): RelayerCreds | null {
   const key = process.env.POLYMARKET_RELAYER_API_KEY?.trim();
-  const secret = process.env.POLYMARKET_RELAYER_API_SECRET?.trim();
-  const passphrase = process.env.POLYMARKET_RELAYER_API_PASSPHRASE?.trim();
-  if (key && secret && passphrase) return { key, secret, passphrase };
+  const keyAddress = process.env.POLYMARKET_RELAYER_API_KEY_ADDRESS?.trim();
+  if (key && keyAddress) return { key, keyAddress };
   return null;
 }
 
