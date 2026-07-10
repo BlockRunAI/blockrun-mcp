@@ -9,20 +9,44 @@
 # Each upstream is HTTPS behind Cloudflare, which routes by Host — so we MUST
 # rewrite Host (and SNI, which Caddy derives from the upstream hostname) or the
 # CDN 403s. Only Polymarket hosts are reachable; this is not an open proxy.
+#
+# UNDERSCORE HEADER FIX: Polymarket's auth headers (POLY_ADDRESS, POLY_SIGNATURE,
+# POLY_API_KEY, POLY_BUILDER_*, …) contain underscores, which get stripped in
+# transit to/through Cloud Run — so authed requests would fail with "missing
+# address header". The MCP client also sends each as a hyphenated copy
+# (POLY_ADDRESS → poly-address) that survives; we map those back to the
+# underscore names on the upstream request here.
 {
 	# Cloud Run terminates TLS and speaks plain HTTP to the container on $PORT.
 	auto_https off
+}
+
+# Reusable snippet: reconstruct the underscore auth headers from their
+# hyphenated copies before proxying to a Polymarket upstream.
+(polyheaders) {
+	header_up POLY_ADDRESS {http.request.header.Poly-Address}
+	header_up POLY_SIGNATURE {http.request.header.Poly-Signature}
+	header_up POLY_TIMESTAMP {http.request.header.Poly-Timestamp}
+	header_up POLY_NONCE {http.request.header.Poly-Nonce}
+	header_up POLY_API_KEY {http.request.header.Poly-Api-Key}
+	header_up POLY_PASSPHRASE {http.request.header.Poly-Passphrase}
+	header_up POLY_BUILDER_API_KEY {http.request.header.Poly-Builder-Api-Key}
+	header_up POLY_BUILDER_PASSPHRASE {http.request.header.Poly-Builder-Passphrase}
+	header_up POLY_BUILDER_SIGNATURE {http.request.header.Poly-Builder-Signature}
+	header_up POLY_BUILDER_TIMESTAMP {http.request.header.Poly-Builder-Timestamp}
 }
 
 :{$PORT:8080} {
 	handle_path /clob/* {
 		reverse_proxy https://clob.polymarket.com {
 			header_up Host clob.polymarket.com
+			import polyheaders
 		}
 	}
 	handle_path /relayer/* {
 		reverse_proxy https://relayer-v2.polymarket.com {
 			header_up Host relayer-v2.polymarket.com
+			import polyheaders
 		}
 	}
 	# Optional: route the geoblock self-check through the same egress so setup
@@ -32,7 +56,6 @@
 			header_up Host polymarket.com
 		}
 	}
-	# Liveness / manual sanity check.
 	handle /healthz {
 		respond "ok" 200
 	}

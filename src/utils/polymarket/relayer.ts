@@ -14,7 +14,7 @@ import { RelayClient, type DepositWalletCall } from "@polymarket/builder-relayer
 import { BuilderConfig } from "@polymarket/builder-signing-sdk";
 import { createWalletClient, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
-import { getClobProxyAgent, getPolymarketAccount } from "./client.js";
+import { getClobProxyAgent, getPolymarketAccount, installUnderscoreHeaderBridge } from "./client.js";
 import { getRelayerCreds, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
 
 export type { DepositWalletCall };
@@ -74,16 +74,17 @@ export function getRelayClient(): RelayClient {
   // deploy/approve/redeem POSTs (relayer-v2.polymarket.com) through the
   // permitted egress too — otherwise setup would work but its relayer calls
   // could still originate from a blocked IP.
+  const instance = _relayClient.httpClient?.instance as
+    | ({ defaults: { httpsAgent?: unknown; proxy?: unknown } } & Parameters<typeof installUnderscoreHeaderBridge>[0])
+    | undefined;
   const agent = getClobProxyAgent();
-  if (agent) {
-    const instance = _relayClient.httpClient?.instance as
-      | { defaults: { httpsAgent?: unknown; proxy?: unknown } }
-      | undefined;
-    if (instance?.defaults) {
-      instance.defaults.httpsAgent = agent;
-      instance.defaults.proxy = false;
-    }
+  if (instance?.defaults && agent) {
+    instance.defaults.httpsAgent = agent;
+    instance.defaults.proxy = false;
   }
+  // Same underscore-header survival fix as the CLOB path — the relayer's builder
+  // auth (POLY_BUILDER_*) headers must survive a relay too.
+  if (instance) installUnderscoreHeaderBridge(instance);
   return _relayClient;
 }
 

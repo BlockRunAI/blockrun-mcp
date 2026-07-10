@@ -41,6 +41,47 @@ let _clobClient: ClobClient | null = null;
 let _clobClientKey = "";
 let _proxyApplied = false;
 let _proxyAgent: HttpsProxyAgent<string> | null | undefined;
+let _bridgeApplied = false;
+
+// Polymarket's auth headers all contain UNDERSCORES, which HTTP proxies
+// (Caddy/Cloud Run and others) frequently drop or refuse to forward. When the
+// MCP routes through a relay (POLYMARKET_CLOB_HOST / POLYMARKET_RELAYER_URL),
+// that silently strips POLY_ADDRESS et al. and every authed call fails with
+// "missing address header" / "Invalid L1 Request headers". Fix: also send each
+// as a hyphenated copy (POLY_ADDRESS → poly-address) which survives proxies; the
+// relay maps them back to underscores (see deploy/tokyo-egress/Caddyfile).
+// Sending both is harmless direct — Polymarket reads the underscore header and
+// ignores the extra hyphenated one.
+const UNDERSCORE_AUTH_HEADERS = [
+  "POLY_ADDRESS", "POLY_SIGNATURE", "POLY_TIMESTAMP", "POLY_NONCE",
+  "POLY_API_KEY", "POLY_PASSPHRASE",
+  "POLY_BUILDER_API_KEY", "POLY_BUILDER_PASSPHRASE",
+  "POLY_BUILDER_SIGNATURE", "POLY_BUILDER_TIMESTAMP",
+];
+
+/**
+ * Install a request interceptor on an axios instance that duplicates each
+ * underscore auth header as its hyphenated form so it survives header-stripping
+ * proxies. Idempotent per instance (guarded by the caller).
+ */
+export function installUnderscoreHeaderBridge(instance: {
+  interceptors: { request: { use: (fn: (config: unknown) => unknown) => void } };
+}): void {
+  instance.interceptors.request.use((config: unknown) => {
+    const headers = (config as { headers?: unknown }).headers as
+      | { get?: (n: string) => unknown; set?: (n: string, v: unknown) => void; [k: string]: unknown }
+      | undefined;
+    if (!headers) return config;
+    for (const name of UNDERSCORE_AUTH_HEADERS) {
+      const value = typeof headers.get === "function" ? headers.get(name) : headers[name];
+      if (value == null) continue;
+      const hyphen = name.replace(/_/g, "-").toLowerCase();
+      if (typeof headers.set === "function") headers.set(hyphen, value);
+      else headers[hyphen] = value as never;
+    }
+    return config;
+  });
+}
 
 /** The local EOA account (BlockRun session key) used as the Polymarket signer. */
 export function getPolymarketAccount(): PrivateKeyAccount {
@@ -74,6 +115,13 @@ export function getClobProxyAgent(): HttpsProxyAgent<string> | null {
  * any of this — the simplest option for a US-egress demo.
  */
 export function applyClobProxyOnce(): void {
+  // The header bridge is harmless everywhere and needed whenever a relay is in
+  // play, so install it unconditionally (once) on the shared axios the CLOB
+  // client + l1-auth use.
+  if (!_bridgeApplied) {
+    _bridgeApplied = true;
+    installUnderscoreHeaderBridge(axios as never);
+  }
   if (_proxyApplied) return;
   _proxyApplied = true;
   const agent = getClobProxyAgent();
@@ -183,10 +231,18 @@ export async function checkGeoblock(): Promise<GeoblockStatus> {
     orderPlacement = res.status === 403 ? "blocked" : "permitted";
   } catch { /* network error → unknown */ }
 
+  // Country/ip context — route it through the SAME egress as orders so the
+  // reported country is the relay's, not the local IP. If POLYMARKET_GEOBLOCK_URL
+  // is explicitly set, GEOBLOCK_URL already honors it; otherwise, when CLOB_HOST
+  // is a relay (not the direct Polymarket host), derive the relay's geoblock path.
+  let geoUrl = GEOBLOCK_URL;
+  if (!process.env.POLYMARKET_GEOBLOCK_URL && !CLOB_HOST.includes("clob.polymarket.com")) {
+    geoUrl = `${CLOB_HOST.replace(/\/clob\/?$/, "")}/geoblock/api/geoblock`;
+  }
   let country: string | null = null;
   let ip: string | null = null;
   try {
-    const g = await axios.get(GEOBLOCK_URL, { timeout: 3_000 });
+    const g = await axios.get(geoUrl, { timeout: 3_000 });
     const d = g.data as Record<string, unknown>;
     country = typeof d?.country === "string" ? d.country : null;
     ip = typeof d?.ip === "string" ? d.ip : null;
