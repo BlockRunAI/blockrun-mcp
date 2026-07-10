@@ -161,7 +161,18 @@ blockrun_polymarket action:"cancel" order_id:"<id>"    # or all:true
 
 # 7) Claim winnings after a market resolves (gasless)
 blockrun_polymarket action:"redeem" condition_id:"0x..." confirm:true
+
+# 8) Cash out — pUSD → native USDC on Base, to your agent wallet
+blockrun_polymarket action:"withdraw"                          # dry-run (full balance)
+blockrun_polymarket action:"withdraw" confirm:true             # execute (full balance)
+#   partial:      amount_usd:5
+#   elsewhere:    to_address:"0x..."   (default: your own agent wallet on Base)
 ```
+
+**Cash-out loop:** `sell` (before resolution) or `redeem` (after you win) turns a
+position into pUSD in your deposit wallet; `withdraw` then bridges that pUSD to
+**native USDC on Base**, delivered to your agent wallet — the same wallet that
+pays x402 AI fees. Instant, no Polymarket fee (minor Uniswap-v3 swap slippage).
 
 **Order semantics:** prices are probabilities `0–1`, auto-rounded conservatively
 to the market's tick grid (a buy never signs above your limit). Market **buy** =

@@ -7,6 +7,7 @@ import { executeTrade, listOpenOrders, cancelOrdersAction, getSessionLedger, typ
 import { listPositions } from "../utils/polymarket/positions.js";
 import { redeemPosition } from "../utils/polymarket/redeem.js";
 import { runSetup } from "../utils/polymarket/setup.js";
+import { withdrawFunds } from "../utils/polymarket/withdraw.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -30,10 +31,11 @@ Actions:
 - cancel — order_id:"…" or all:true
 - positions — holdings incl. redeemable winnings (free Data-API)
 - redeem — claim resolved winnings for condition_id (confirm:true; gasless)
+- withdraw — cash out pUSD → native USDC on Base to your agent wallet (confirm:true). amount_usd optional (default: full balance); to_address optional (default: your wallet).
 
 Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Order placement is geoblocked in some regions (US/UK/EU are close-only; cancel/sell/redeem still work) — setup reports your status.`,
       inputSchema: {
-        action: z.enum(["setup", "buy", "sell", "cancel", "orders", "positions", "redeem"])
+        action: z.enum(["setup", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
           .describe("Operation to perform"),
         token_id: z.string().optional()
           .describe("Outcome token ID (decimal ERC-1155 id from blockrun_markets clobTokenIds)"),
@@ -46,7 +48,7 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
         size: z.number().positive().optional()
           .describe("Shares — required for limit orders and market sells"),
         amount_usd: z.number().positive().optional()
-          .describe("pUSD dollars to spend — required for market buys"),
+          .describe("pUSD dollars — to spend (market buy) or to cash out (withdraw; default full balance)"),
         order_type: z.enum(["GTC", "GTD", "FOK", "FAK"]).optional()
           .describe("Default: GTC for limit orders, FOK for market orders"),
         expires_at: z.number().int().positive().optional()
@@ -55,6 +57,8 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
           .describe("Maker-only limit order (rejected if it would cross the book)"),
         order_id: z.string().optional().describe("Order ID to cancel"),
         all: z.boolean().optional().describe("cancel: cancel ALL open orders"),
+        to_address: z.string().optional()
+          .describe("withdraw: destination address on Base (default: your agent wallet)"),
         confirm: z.boolean().optional()
           .describe("Must be true to place orders / sign approvals / redeem. Omit for a dry-run preview."),
         agent_id: z.string().optional()
@@ -83,6 +87,9 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
             break;
           case "redeem":
             result = await redeemPosition({ condition_id: args.condition_id, confirm: args.confirm });
+            break;
+          case "withdraw":
+            result = await withdrawFunds({ amount_usd: args.amount_usd, to_address: args.to_address, confirm: args.confirm });
             break;
         }
         if (result.isError) {

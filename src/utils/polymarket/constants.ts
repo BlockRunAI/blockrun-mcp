@@ -57,6 +57,15 @@ export const RELAYER_URL =
   process.env.POLYMARKET_RELAYER_URL || "https://relayer-v2.polymarket.com";
 export const DATA_API_HOST =
   process.env.POLYMARKET_DATA_API_HOST || "https://data-api.polymarket.com";
+export const BRIDGE_API_HOST =
+  process.env.POLYMARKET_BRIDGE_HOST || "https://bridge.polymarket.com";
+
+// Default withdrawal destination: native USDC on Base (chainId 8453) — the same
+// token/chain the BlockRun agent wallet already uses for x402 payments, so
+// winnings cash out to the very wallet that pays for AI. (Same address as
+// USDC_ADDRESS in ../constants.ts.)
+export const BASE_CHAIN_ID = 8453;
+export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // Overridable so a demo routing orders through a Tokyo relay can report the
 // SAME egress's region (a permitted ✅) instead of the local IP's status.
 export const GEOBLOCK_URL =
@@ -168,6 +177,11 @@ export const ERC20_ABI = [
   {
     name: "approve", type: "function", stateMutability: "nonpayable",
     inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    name: "transfer", type: "function", stateMutability: "nonpayable",
+    inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }],
     outputs: [{ name: "", type: "bool" }],
   },
   {
