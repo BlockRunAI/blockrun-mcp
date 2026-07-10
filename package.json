@@ -39,11 +39,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/blockrunai/blockrun-mcp"
+    "url": "https://github.com/BlockRunAI/blockrun-mcp"
   },
   "homepage": "https://blockrun.ai",
   "bugs": {
-    "url": "https://github.com/blockrunai/blockrun-mcp/issues"
+    "url": "https://github.com/BlockRunAI/blockrun-mcp/issues"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
