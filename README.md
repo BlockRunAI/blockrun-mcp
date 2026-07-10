@@ -4,13 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
 
-**Real-time data for Claude — markets, research, web search, crypto. No API keys. Pay per call.**
+**Real-time data — and real trades — for Claude. Markets, research, web search, crypto; read the odds *and* place the bet on Polymarket. No API keys. Pay per call.**
 
 ```bash
 claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 ```
 
 Wallet auto-created. Fund with $5 USDC. Ask Claude anything.
+
+> 🏆 **First of its kind — the signal → trade loop in Claude Code.** Read live Polymarket odds *and* place USDC-settled bets, from one self-custody wallet, pay-per-call. [Jump to Polymarket trading →](#polymarket-trading)
 
 ---
 
@@ -31,6 +33,7 @@ Before BlockRun, Claude can't answer:
 - *"Find me the top 5 papers on RAG published in the last 30 days"*
 - *"What are people saying about @sama on X right now?"*
 - *"What's the 24h volume on the PEPE/ETH pair on Uniswap?"*
+- *"Polymarket has the Fed holding at 73% — put $2 on it."* ← and now it can **place the trade**, not just read the odds.
 
 After BlockRun, it can. Each query costs fractions of a cent, billed from a local USDC wallet. No subscriptions. No API dashboards. No key rotation.
 
@@ -51,6 +54,14 @@ After BlockRun, it can. Each query costs fractions of a cent, billed from a loca
 > **Claude:** I found 8 papers from the last 60 days via neural search. The dominant approaches are: (1) draft model selection — smaller models predicting N tokens ahead for the larger model to verify in parallel...
 >
 > *(via `blockrun_exa` · cost: $0.01)*
+
+---
+
+> **User:** Polymarket has Hawley at ~13% to announce a 2026 presidential run — put $1 on Yes.
+
+> **Claude:** Done — bought **7.63 shares of Yes at $0.131** ($1.00, market FOK). Real on-chain order, settled in pUSD from your gasless Polymarket deposit wallet; I'm tracking the position now.
+>
+> *(signal via `blockrun_markets`, trade via `blockrun_polymarket` — one self-custody wallet, gasless · on-chain tx `0x7ca8…`)*
 
 ---
 
@@ -253,6 +264,9 @@ What kinds of questions can Claude (or any LLM agent) answer once BlockRun MCP i
 9. **Cross-chain SQL forensics**
    > *"Top 10 tokens by DEX volume on Base in the last 24h."* → `blockrun_surf` path:`onchain/sql`, body: `{ sql: "SELECT..." }`
 
+10. **Prediction-market signal → trade** *(the full loop, self-custody)*
+    > *"What are Polymarket's odds the Fed holds in May? If it's under 30%, put $2 on Yes."* → `blockrun_markets` reads the signal → `blockrun_polymarket action:"buy"` places the trade. One wallet, gasless, confirm-gated — the first signal-to-trade loop in Claude Code.
+
 ---
 
 ## Why not just use the APIs directly?
@@ -302,11 +316,12 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 **Getting started:**
 
-1. No Polymarket account or API keys needed — the MCP bootstraps the builder credentials it uses for the gasless relayer from your own wallet on first setup. (In a geoblocked region, set `POLYMARKET_CLOB_HOST` to a permitted-region egress — see Regions below.)
+1. No Polymarket account, API keys, or gas token needed — the MCP bootstraps the builder credentials for the gasless relayer from your own wallet on first setup, and the geoblock egress is handled by default (see Regions below).
 2. `blockrun_polymarket action:"setup"` — derives + deploys your deposit wallet and prints its address.
-3. Fund it: send pUSD (or USDC via the Polymarket bridge, auto-wrapped) to the deposit wallet address. ~$5 is plenty to try it.
+3. Fund it gaslessly from your Base USDC in one call: `action:"fund" amount_usd:5 confirm:true`. BlockRun pays the Base gas and charges $0.01; non-custodial — your USDC goes straight to the Polymarket bridge and wraps to pUSD in your vault. The credit is async (minutes) — re-run setup to watch the balance.
 4. `action:"setup" confirm:true` — signs the one-time gasless approval batch.
 5. Find a market with `blockrun_markets`, then `action:"buy"` — without `confirm:true` you get a dry-run preview; with it, the order is signed and placed.
+6. Cash out any time: `action:"sell"` (before resolution) or `action:"redeem"` (after you win) turns the position into pUSD, then `action:"withdraw"` bridges it back to native USDC on Base — the same wallet that pays your AI fees.
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
