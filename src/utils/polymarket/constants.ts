@@ -51,8 +51,14 @@ export function assertContractConfig(): void {
 }
 
 // --- Hosts (env-overridable so Phase 2 can point them at the BlockRun gateway) ---
+// CLOB order placement is geoblocked by IP (US/UK/EU and many regions). We
+// DEFAULT to BlockRun's hosted Tokyo egress so trading works out of the box with
+// zero config — it only forwards to Polymarket's CLOB (it can't see or move
+// funds; every order is still signed locally by the user's key). Override with
+// POLYMARKET_CLOB_HOST to hit Polymarket directly (from a permitted region) or to
+// run your own egress. Direct Polymarket host: https://clob.polymarket.com
 export const CLOB_HOST =
-  process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
+  process.env.POLYMARKET_CLOB_HOST || "https://pm-egress-vbsbhh7lea-an.a.run.app/clob";
 export const RELAYER_URL =
   process.env.POLYMARKET_RELAYER_URL || "https://relayer-v2.polymarket.com";
 export const DATA_API_HOST =
