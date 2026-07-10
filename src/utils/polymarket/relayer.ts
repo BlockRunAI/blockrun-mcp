@@ -11,78 +11,90 @@
 // purely to authenticate use of its gas-sponsoring service. Phase 2 moves
 // these behind the BlockRun gateway so end users need no Polymarket account.
 import { RelayClient, type DepositWalletCall } from "@polymarket/builder-relayer-client";
+import { BuilderConfig } from "@polymarket/builder-signing-sdk";
+import { ClobClient } from "@polymarket/clob-client-v2";
 import { createWalletClient, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
 import { getPolymarketAccount } from "./client.js";
-import { getRelayerCreds, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
+import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
+import { loadBuilderCreds, loadL2Creds, saveBuilderCreds, saveL2Creds } from "./creds.js";
+import { deriveApiCreds } from "./l1-auth-1271.js";
 
 export type { DepositWalletCall };
 
 let _relayClient: RelayClient | null = null;
 
+// The deposit-wallet flow no longer needs manually-obtained relayer credentials:
+// the MCP bootstraps a Builder API key from the wallet key itself (see
+// getOrCreateBuilderCreds). These functions are retained as always-available.
 export function relayerCredsMissing(): boolean {
-  return getRelayerCreds() === null;
+  return false;
 }
 
 export function relayerCredsMissingMessage(): string {
-  return [
-    `Polymarket relayer API credentials are not configured — the deposit-wallet`,
-    `path needs them (they authenticate Polymarket's FREE gas-sponsoring relayer;`,
-    `they do NOT control funds — every operation still requires this machine's key).`,
-    ``,
-    `One-time setup:`,
-    `  1. Create/log into an account at https://polymarket.com`,
-    `  2. Settings → API Keys → create a Relayer API key`,
-    `  3. Set env vars for the MCP server and restart it:`,
-    `       POLYMARKET_RELAYER_API_KEY=<the api key / uuid>`,
-    `       POLYMARKET_RELAYER_API_KEY_ADDRESS=<the 0x address that owns the key>`,
-    ``,
-    `Alternative: set POLYMARKET_SIG_TYPE=0 for plain EOA mode (no deposit`,
-    `wallet, no relayer — but the EOA must hold POL for gas and pUSD directly).`,
-  ].join("\n");
+  return "";
 }
 
 /**
- * RelayClient bound to the REAL account address. Unlike the CLOB client's
- * spoofed signer (see client.ts), relayer Batch signatures are validated
- * against the deposit wallet's OWNER — the EOA — so the reported address must
- * be the real one (nonce lookup and recovery both key on it).
+ * Programmatically obtain Builder API credentials (key/secret/passphrase) for
+ * the local wallet — created via the CLOB createBuilderApiKey() (L2-authed),
+ * cached on disk (the secret is only returned once). This replaces the manual
+ * "get a relayer API key from polymarket.com" step: the relayer authenticates
+ * via the builder-HMAC path, and because the builder == the deposit-wallet
+ * owner (this wallet), the relayer's from==owner check is satisfied.
  */
-export function getRelayClient(): RelayClient {
+async function getOrCreateBuilderCreds(): Promise<{ key: string; secret: string; passphrase: string }> {
+  const account = getPolymarketAccount();
+  const cached = loadBuilderCreds(account.address);
+  if (cached) return { key: cached.key, secret: cached.secret, passphrase: cached.passphrase };
+
+  // Plain EOA CLOB L2 creds (sig type 0) — needed to authenticate the builder-key
+  // creation. Cached like any L2 creds.
+  let l2 = loadL2Creds(account.address, 0);
+  if (!l2) {
+    const derived = await deriveApiCreds(account, { sigType: 0 });
+    saveL2Creds(account.address, 0, derived);
+    l2 = loadL2Creds(account.address, 0);
+    if (!l2) throw new Error("failed to derive CLOB credentials for builder-key creation");
+  }
+
+  const wc = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+  const clob = new ClobClient({
+    host: CLOB_HOST,
+    chain: POLYGON_CHAIN_ID,
+    signer: wc,
+    creds: { key: l2.key, secret: l2.secret, passphrase: l2.passphrase },
+    throwOnError: true,
+  });
+  const builder = (await clob.createBuilderApiKey()) as { key: string; secret: string; passphrase: string };
+  if (!builder?.key || !builder?.secret || !builder?.passphrase) {
+    throw new Error(`createBuilderApiKey did not return complete credentials (${JSON.stringify(Object.keys(builder ?? {}))})`);
+  }
+  saveBuilderCreds(account.address, builder);
+  return builder;
+}
+
+/**
+ * RelayClient bound to the REAL account address (the deposit-wallet owner), with
+ * builder-HMAC auth from bootstrapped Builder API creds. Async because the first
+ * call may create the builder key. The relayer is not geoblocked → direct.
+ */
+export async function getRelayClient(): Promise<RelayClient> {
   if (_relayClient) return _relayClient;
-  const creds = getRelayerCreds();
-  if (!creds) throw new Error(relayerCredsMissingMessage());
   const walletClient = createWalletClient({
     account: getPolymarketAccount(),
     chain: polygon,
     transport: http(POLYGON_RPC_URLS[0]),
   });
-  // No BuilderConfig — the SDK's BuilderConfig path does HMAC auth (Option 1,
-  // key/secret/passphrase). We use Option 2: plain RELAYER_API_KEY +
-  // RELAYER_API_KEY_ADDRESS headers (what Settings → API Keys issues today).
-  _relayClient = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient);
-
-  // The relayer client has its OWN axios instance. Inject the Relayer API Key
-  // auth headers on every request. The relayer is NOT geoblocked, so these go
-  // DIRECT to relayer-v2.polymarket.com (underscores in the header names survive
-  // a direct request — only header-stripping proxies would drop them, which is
-  // why the relayer must not be routed through the Tokyo CLOB relay).
-  const instance = _relayClient.httpClient?.instance as
-    | { interceptors?: { request: { use: (fn: (c: unknown) => unknown) => void } } }
-    | undefined;
-  instance?.interceptors?.request.use((config: unknown) => {
-    const c = config as { headers?: Record<string, unknown> };
-    c.headers = c.headers || {};
-    c.headers["RELAYER_API_KEY"] = creds.key;
-    c.headers["RELAYER_API_KEY_ADDRESS"] = creds.keyAddress;
-    return config;
-  });
+  const builderCreds = await getOrCreateBuilderCreds();
+  const builderConfig = new BuilderConfig({ localBuilderCreds: builderCreds });
+  _relayClient = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient, builderConfig);
   return _relayClient;
 }
 
 /** CREATE2-derived deposit wallet address for the local key (pre-deploy safe). */
 export async function deriveDepositWallet(): Promise<Hex> {
-  const addr = await getRelayClient().deriveDepositWalletAddress();
+  const addr = await (await getRelayClient()).deriveDepositWalletAddress();
   return addr as Hex;
 }
 
@@ -104,7 +116,7 @@ export async function deriveDepositWalletNoCreds(): Promise<Hex> {
 }
 
 export async function isDepositWalletDeployed(address: string): Promise<boolean> {
-  return getRelayClient().getDeployed(address, "WALLET");
+  return (await getRelayClient()).getDeployed(address, "WALLET");
 }
 
 /**
@@ -113,7 +125,7 @@ export async function isDepositWalletDeployed(address: string): Promise<boolean>
  * relayer transaction id on failure/timeout so the user can re-run setup.
  */
 export async function deployDepositWallet(): Promise<{ transactionHash?: string }> {
-  const response = await getRelayClient().deployDepositWallet();
+  const response = await (await getRelayClient()).deployDepositWallet();
   const confirmed = await response.wait();
   if (!confirmed) {
     throw new Error(
@@ -135,7 +147,7 @@ export async function sendWalletBatch(
   description: string,
 ): Promise<{ transactionHash?: string }> {
   const deadline = String(Math.floor(Date.now() / 1000) + 300);
-  const response = await getRelayClient().executeDepositWalletBatch(calls, depositWallet, deadline);
+  const response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, deadline);
   const confirmed = await response.wait();
   if (!confirmed) {
     throw new Error(

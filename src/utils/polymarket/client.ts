@@ -83,6 +83,13 @@ export function installUnderscoreHeaderBridge(instance: {
   });
 }
 
+// Install the underscore-header bridge on the shared axios at module load, so
+// EVERY Polymarket axios call has it regardless of call order — including
+// credential derivation and builder-key creation, which can run before the CLOB
+// client (and thus before applyClobProxyOnce) is first built.
+installUnderscoreHeaderBridge(axios as never);
+_bridgeApplied = true;
+
 /** The local EOA account (BlockRun session key) used as the Polymarket signer. */
 export function getPolymarketAccount(): PrivateKeyAccount {
   if (!_account) {

@@ -22,6 +22,7 @@ import os from "node:os";
 
 const BLOCKRUN_DIR = path.join(os.homedir(), ".blockrun");
 const CREDS_FILE = path.join(BLOCKRUN_DIR, ".polymarket-creds");
+const BUILDER_CREDS_FILE = path.join(BLOCKRUN_DIR, ".polymarket-builder-creds");
 const STATE_FILE = path.join(BLOCKRUN_DIR, ".polymarket.json");
 
 export interface L2Creds {
@@ -29,6 +30,17 @@ export interface L2Creds {
   secret: string;
   passphrase: string;
   derivedAt: string;
+}
+
+// Builder API creds (key/secret/passphrase) created programmatically via the
+// CLOB createBuilderApiKey(). Used for the relayer's builder-HMAC auth so the
+// deposit-wallet flow needs NO manually-obtained relayer credentials. The
+// secret is only returned once at creation, so it must be cached here.
+export interface BuilderCreds {
+  key: string;
+  secret: string;
+  passphrase: string;
+  createdAt: string;
 }
 
 export interface PolymarketState {
@@ -76,6 +88,19 @@ export function invalidateL2Creds(address: string, sigType: number): void {
   if (!all) return;
   delete all[credsKey(address, sigType)];
   writeJsonFile(CREDS_FILE, all);
+}
+
+export function loadBuilderCreds(owner: string): BuilderCreds | null {
+  const all = readJsonFile<Record<string, BuilderCreds>>(BUILDER_CREDS_FILE);
+  const entry = all?.[owner.toLowerCase()];
+  if (!entry?.key || !entry?.secret || !entry?.passphrase) return null;
+  return entry;
+}
+
+export function saveBuilderCreds(owner: string, creds: Omit<BuilderCreds, "createdAt">): void {
+  const all = readJsonFile<Record<string, BuilderCreds>>(BUILDER_CREDS_FILE) ?? {};
+  all[owner.toLowerCase()] = { ...creds, createdAt: new Date().toISOString() };
+  writeJsonFile(BUILDER_CREDS_FILE, all);
 }
 
 export function loadState(): PolymarketState {

@@ -74,10 +74,12 @@ export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via th
 
 // Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
 // Used only for read-only approval/balance checks (viem public client).
+// 1rpc first — polygon-rpc.com was observed lagging several blocks behind, which
+// made freshly-confirmed deploys/approvals read as still-pending.
 export const POLYGON_RPC_URLS = [
-  "https://polygon-rpc.com",
-  "https://polygon.llamarpc.com",
   "https://1rpc.io/matic",
+  "https://polygon.llamarpc.com",
+  "https://polygon-rpc.com",
 ];
 
 // --- Safety knobs ---
