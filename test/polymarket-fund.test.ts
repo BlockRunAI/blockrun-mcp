@@ -48,6 +48,13 @@ test("missing amount_usd is rejected", async () => {
   assert.match(res.text, /amount_usd/);
 });
 
+test("below the $2 bridge minimum is rejected before signing", async () => {
+  const res = await fundVault({ amount_usd: 0.1, confirm: true });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Minimum funding is \$2/);
+  assert.equal(postCalls.length, 0, "must not sign/POST a below-min deposit");
+});
+
 test("insufficient Base USDC is rejected with the shortfall", async () => {
   baseBalance = 2;
   const res = await fundVault({ amount_usd: 5 });

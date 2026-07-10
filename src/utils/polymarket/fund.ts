@@ -18,6 +18,11 @@ import type { ToolResult } from "./orders.js";
 
 const FUND_FEE_USD = 0.01;
 const USDC_DECIMALS = 6;
+// The Polymarket bridge does NOT process Base-USDC deposits below this — a
+// smaller amount lands at the bridge address but is never wrapped/delivered to
+// the vault (verified live: a $0.10 deposit confirmed on Base but never reached
+// the vault). Override with POLYMARKET_FUND_MIN_USD if the bridge minimum moves.
+const FUND_MIN_USD = Number(process.env.POLYMARKET_FUND_MIN_USD || "2");
 
 /** Bridge deposit address for a Polymarket vault (delivers pUSD to the vault). */
 async function bridgeAddressFor(vault: string): Promise<string> {
@@ -34,6 +39,13 @@ async function bridgeAddressFor(vault: string): Promise<string> {
 export async function fundVault(input: { amount_usd?: number; confirm?: boolean }): Promise<ToolResult> {
   if (input.amount_usd === undefined || input.amount_usd <= 0) {
     return { text: `Pass amount_usd — the USDC amount to move from your Base wallet into your Polymarket vault (e.g. amount_usd:5).`, isError: true };
+  }
+  if (input.amount_usd < FUND_MIN_USD) {
+    return {
+      text: `Minimum funding is $${FUND_MIN_USD} — the Polymarket bridge does not process smaller Base-USDC deposits ` +
+        `(a smaller amount would confirm on Base but never wrap to pUSD in your vault). Use amount_usd ≥ ${FUND_MIN_USD}.`,
+      isError: true,
+    };
   }
   const amountUsd = input.amount_usd;
 
