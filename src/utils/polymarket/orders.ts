@@ -153,6 +153,12 @@ export async function mapClobError(err: unknown): Promise<string> {
       `Fix: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL ` +
       `at a Tokyo relay (deploy/tokyo-egress). Raw: ${message}`;
   }
+  if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
+    return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +
+      `orders (a plain EOA maker is not accepted). Use the default deposit-wallet mode: unset ` +
+      `POLYMARKET_SIG_TYPE (=3) and set relayer creds (POLYMARKET_RELAYER_API_KEY/_SECRET/_PASSPHRASE) so ` +
+      `action:"setup" can create your deposit wallet. Raw: ${message}`;
+  }
   if (isCredsMismatchError(e)) {
     return `CLOB rejected the API credentials (${message}). Credentials were re-derived automatically; ` +
       `if this persists, run action:"setup", or set POLYMARKET_SIG_TYPE=0 to fall back to plain EOA mode ` +

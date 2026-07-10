@@ -117,10 +117,13 @@ Restart Claude Code (or `/mcp` to reconnect) — MCP env is read at startup.
 | Gas | Gasless (relayer pays) | You need **POL** for gas |
 | Needs | Relayer API creds (polymarket.com → Settings → API Keys) | No relayer creds |
 | Funds live in | A deposit-wallet vault derived from your key | Your key's own address |
-| Best for | The clean "one wallet" demo | No polymarket.com account |
+| Can place orders? | ✅ Yes | ⚠️ **No** — CLOB V2 rejects a plain EOA maker (`maker address not allowed, please use the deposit wallet flow`) |
 
-Deposit-wallet mode is recommended. If you can't get relayer creds, set
-`POLYMARKET_SIG_TYPE=0` and fund the EOA with pUSD + a little POL instead.
+**Use deposit-wallet mode to place orders.** Verified against the live CLOB: a
+plain EOA maker is rejected with *"maker address not allowed, please use the
+deposit wallet flow"*, so relayer creds are effectively required for trading. EOA
+mode is still useful for reads and credential derivation, but not for placing
+orders.
 
 ---
 

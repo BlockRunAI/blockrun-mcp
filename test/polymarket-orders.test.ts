@@ -76,6 +76,15 @@ test("mapClobError: balance/allowance points at setup, NOT the Base wallet", asy
   assert.doesNotMatch(text, /blockrun_wallet|Base network/);
 });
 
+test("mapClobError: EOA maker rejection points at the deposit-wallet flow", async () => {
+  const text = await mapClobError({
+    message: "maker address not allowed, please use the deposit wallet flow",
+    status: 400,
+  });
+  assert.match(text, /deposit-wallet|deposit wallet flow/i);
+  assert.match(text, /POLYMARKET_RELAYER_API_KEY/);
+});
+
 test("mapClobError: resolved market suggests positions/redeem; FOK suggests FAK", async () => {
   assert.match(await mapClobError({ message: "market is closed" }), /positions.*redeem/s);
   assert.match(await mapClobError({ message: "FOK order not filled" }), /FAK|limit order/);

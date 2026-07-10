@@ -332,7 +332,7 @@ To route through a permitted egress you operate (e.g. a small always-on VM in an
 
 Run your egress proxy **authenticated** (not an open relay — open proxies get abused within hours). Complying with Polymarket's terms for your jurisdiction is your responsibility.
 
-**EOA fallback:** `POLYMARKET_SIG_TYPE=0` trades directly from the key's own address (no deposit wallet, no relayer creds) — but then the EOA must hold pUSD and POL for gas and send its own approvals.
+**EOA mode:** `POLYMARKET_SIG_TYPE=0` uses the key's own address (no deposit wallet, no relayer creds) for reads and credential derivation. Note: CLOB V2 **rejects a plain EOA maker for order placement** (`maker address not allowed, please use the deposit wallet flow`), so use the default deposit-wallet mode to actually place orders.
 
 ⚠️ Back up `~/.blockrun/.session`. It is the only key to both the payment wallet and the Polymarket deposit wallet.
 
