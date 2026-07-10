@@ -315,7 +315,7 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 
 **Getting started:**
 
-1. Get relayer API creds (one-time): polymarket.com → Settings → API Keys, then set `POLYMARKET_RELAYER_API_KEY` / `_SECRET` / `_PASSPHRASE` for the MCP server.
+1. No Polymarket account or API keys needed — the MCP bootstraps the builder credentials it uses for the gasless relayer from your own wallet on first setup. (In a geoblocked region, set `POLYMARKET_CLOB_HOST` to a permitted-region egress — see Regions below.)
 2. `blockrun_polymarket action:"setup"` — derives + deploys your deposit wallet and prints its address.
 3. Fund it: send pUSD (or USDC via the Polymarket bridge, auto-wrapped) to the deposit wallet address. ~$5 is plenty to try it.
 4. `action:"setup" confirm:true` — signs the one-time gasless approval batch.
@@ -346,7 +346,7 @@ Run your egress proxy **authenticated** (not an open relay — open proxies get 
 | `~/.blockrun/.chain` | unset | Optional explicit chain preference: `base` or `solana`. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → switch to Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env-var override of `.solana-session`. Set → use Solana. |
-| `POLYMARKET_RELAYER_API_KEY` / `_SECRET` / `_PASSPHRASE` | unset | Polymarket relayer creds (Settings → API Keys) — required for the gasless deposit-wallet path. |
+| `POLYMARKET_CLOB_HOST` | `clob.polymarket.com` | Point at a permitted-region egress/relay to place orders from a geoblocked region. Relayer creds are auto-bootstrapped from your wallet — no Polymarket API keys needed. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap for `blockrun_polymarket`. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
 | `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |

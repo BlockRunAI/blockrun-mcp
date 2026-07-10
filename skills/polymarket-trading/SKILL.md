@@ -31,8 +31,9 @@ this tool only trades.
 ## End-to-end flow
 
 ```
-# 0. One-time env (user does this): polymarket.com → Settings → API Keys
-#    POLYMARKET_RELAYER_API_KEY / _SECRET / _PASSPHRASE
+# 0. No Polymarket account or API keys needed — the MCP bootstraps everything
+#    from the user's own wallet on first setup. (Set POLYMARKET_CLOB_HOST to a
+#    permitted-region egress only if the user is in a geoblocked region.)
 
 # 1. Provision + inspect (idempotent, safe to re-run any time)
 blockrun_polymarket action:"setup"
