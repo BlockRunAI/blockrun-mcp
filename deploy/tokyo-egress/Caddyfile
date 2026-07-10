@@ -1,0 +1,42 @@
+# Tokyo egress relay for Polymarket trading (Cloud Run, asia-northeast1).
+#
+# Polymarket geoblocks ORDER PLACEMENT by originating IP. Running this relay in
+# Tokyo (an API-unrestricted region — the same egress polymarket-agent proved
+# out) lets a blockrun-mcp client in a close-only region place orders by pointing
+# its Polymarket host env vars here. Signing stays 100% client-side; this relay
+# only forwards already-signed requests, so it is not a custodial component.
+#
+# Each upstream is HTTPS behind Cloudflare, which routes by Host — so we MUST
+# rewrite Host (and SNI, which Caddy derives from the upstream hostname) or the
+# CDN 403s. Only Polymarket hosts are reachable; this is not an open proxy.
+{
+	# Cloud Run terminates TLS and speaks plain HTTP to the container on $PORT.
+	auto_https off
+}
+
+:{$PORT:8080} {
+	handle_path /clob/* {
+		reverse_proxy https://clob.polymarket.com {
+			header_up Host clob.polymarket.com
+		}
+	}
+	handle_path /relayer/* {
+		reverse_proxy https://relayer-v2.polymarket.com {
+			header_up Host relayer-v2.polymarket.com
+		}
+	}
+	# Optional: route the geoblock self-check through the same egress so setup
+	# reports THIS relay's region (permitted) rather than the client's IP.
+	handle_path /geoblock/* {
+		reverse_proxy https://polymarket.com {
+			header_up Host polymarket.com
+		}
+	}
+	# Liveness / manual sanity check.
+	handle /healthz {
+		respond "ok" 200
+	}
+	handle {
+		respond "blockrun tokyo egress relay — use /clob/*, /relayer/*, /geoblock/*" 404
+	}
+}

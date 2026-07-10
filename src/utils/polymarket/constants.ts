@@ -57,7 +57,10 @@ export const RELAYER_URL =
   process.env.POLYMARKET_RELAYER_URL || "https://relayer-v2.polymarket.com";
 export const DATA_API_HOST =
   process.env.POLYMARKET_DATA_API_HOST || "https://data-api.polymarket.com";
-export const GEOBLOCK_URL = "https://polymarket.com/api/geoblock";
+// Overridable so a demo routing orders through a Tokyo relay can report the
+// SAME egress's region (a permitted ✅) instead of the local IP's status.
+export const GEOBLOCK_URL =
+  process.env.POLYMARKET_GEOBLOCK_URL || "https://polymarket.com/api/geoblock";
 export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via the Polymarket bridge UI/API
 
 // Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
