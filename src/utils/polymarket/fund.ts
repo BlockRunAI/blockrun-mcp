@@ -130,15 +130,30 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
       return { text: `Funding failed: ${result?.error ?? JSON.stringify(result)}`, isError: true };
     }
 
+    // The deposit + fee are confirmed on Base, but the pUSD credit on Polygon
+    // is asynchronous (Polymarket's bridge, off-chain, usually minutes and
+    // occasionally 30+) — do NOT claim the vault is funded yet (issue #226).
     return {
       text: [
-        `✅ Funded $${amountUsd.toFixed(2)} USDC → your Polymarket vault (gasless).`,
+        `✅ Deposit of $${amountUsd.toFixed(2)} USDC submitted to the Polymarket bridge (gasless).`,
         `  from Base wallet: ${agent}`,
         ...(result.deposit?.txHash ? [`  deposit tx: https://basescan.org/tx/${result.deposit.txHash}`] : []),
-        `  It bridges + wraps to pUSD in ${vault} shortly — re-run action:"setup" to see the balance.`,
+        `  ⏳ pUSD credit to your vault ${vault} is PENDING — the bridge settles on`,
+        `     Polygon asynchronously (usually minutes, occasionally 30+). Re-run`,
+        `     action:"setup" and watch for the pUSD balance; it is not instant.`,
         `  Fee charged: $${FUND_FEE_USD}.`,
       ].join("\n"),
-      structured: { success: true, amountUsd, agent, bridge, vault, deposit: result.deposit, fee: result.fee },
+      structured: {
+        success: true,
+        funded: false,
+        creditPending: true,
+        amountUsd,
+        agent,
+        bridge,
+        vault,
+        deposit: result.deposit,
+        fee: result.fee,
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
