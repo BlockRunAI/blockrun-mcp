@@ -55,10 +55,34 @@ export function getPublicClient(): PublicClient {
   if (!_publicClient) {
     _publicClient = createPublicClient({
       chain: polygon,
-      transport: fallback(POLYGON_RPC_URLS.map((u) => http(u))),
+      transport: fallback(
+        POLYGON_RPC_URLS.map((u) => http(u, { retryCount: 2, timeout: 8_000 })),
+        { retryCount: 2 },
+      ),
     });
   }
   return _publicClient;
+}
+
+/**
+ * Retry a Polygon read across transient RPC failures. viem's fallback rotates
+ * transports on transport-level errors, but a flaky public RPC can still return
+ * a bad/stale body that surfaces as a decode error (which fallback does NOT
+ * retry) — enough to fail an entire setup on the approvals/balance reads. Re-
+ * running the whole read gives the fallback a fresh shot; a few attempts make
+ * setup robust to a single RPC hiccup instead of erroring the whole flow.
+ */
+async function withRpcRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 350 * (i + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 interface ApprovalItem {
@@ -102,21 +126,21 @@ async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
   const target = pusdApprovalTarget();
   const items: ApprovalItem[] = [];
   for (const [label, spender] of erc20Spenders) {
-    const allowance = await pc.readContract({
+    const allowance = await withRpcRetry(() => pc.readContract({
       address: PUSD_COLLATERAL as Hex,
       abi: ERC20_ABI,
       functionName: "allowance",
       args: [owner, spender],
-    });
+    }));
     items.push({ label, token: PUSD_COLLATERAL as Hex, spender, kind: "erc20", granted: allowance >= target });
   }
   for (const [label, operator] of erc1155Operators) {
-    const approved = await pc.readContract({
+    const approved = await withRpcRetry(() => pc.readContract({
       address: CONDITIONAL_TOKENS as Hex,
       abi: ERC1155_ABI,
       functionName: "isApprovedForAll",
       args: [owner, operator],
-    });
+    }));
     items.push({ label, token: CONDITIONAL_TOKENS as Hex, spender: operator, kind: "erc1155", granted: approved });
   }
   return items;
@@ -135,12 +159,12 @@ function buildApprovalCalls(missing: ApprovalItem[]): DepositWalletCall[] {
 }
 
 export async function getPusdBalance(owner: Hex): Promise<number> {
-  const raw = await getPublicClient().readContract({
+  const raw = await withRpcRetry(() => getPublicClient().readContract({
     address: PUSD_COLLATERAL as Hex,
     abi: ERC20_ABI,
     functionName: "balanceOf",
     args: [owner],
-  });
+  }));
   return Number(formatUnits(raw, PUSD_DECIMALS));
 }
 
