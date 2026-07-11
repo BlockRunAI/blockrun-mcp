@@ -39,7 +39,7 @@ jobs:
           PKG=$(node -p "require('./package.json').version")
           NPM=$(npm view @blockrun/mcp version 2>/dev/null || echo "none")
           REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp" \
-                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log(j.servers?.[0]?.server?.version||'none')}catch{console.log('none')}})")
+                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const a=j.servers||[];const cur=a.find(x=>x['_meta']?.['io.modelcontextprotocol.registry/official']?.isLatest)||a[a.length-1];console.log(cur?.server?.version||'none')}catch{console.log('none')}})")
           echo "pkg=$PKG"  >> "$GITHUB_OUTPUT"
           echo "npm=$NPM"  >> "$GITHUB_OUTPUT"
           echo "reg=$REG"  >> "$GITHUB_OUTPUT"
