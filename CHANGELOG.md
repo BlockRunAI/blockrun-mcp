@@ -2,6 +2,10 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.30.1
+
+- **`fix(polymarket)` — make `setup` resilient to transient Polygon RPC failures.** The five approvals reads (pUSD `allowance` ×2, CTF `isApprovedForAll` ×3) and the pUSD `balanceOf` read went straight through viem's `fallback` transport — which rotates RPCs on a *transport-level* error but does **not** retry a decode error from a flaky public RPC that returns a bad/stale 200 body, so a single hiccup on any read erred the **entire** `setup` (observed ~1-in-3 on a cold first run). Adds a read-level retry (4 attempts, backoff — re-running the read gives the fallback a fresh transport) around those reads, and hardens the transports (`retryCount` on each `http` and on the `fallback`). Verified 10/10 back-to-back setups green. Surfaced by an end-to-end test of the *published* package over the MCP stdio protocol (tools registered in the trading profile; setup / positions / orders / dry-run buy / dry-run fund / empty-vault withdraw all correct). No behavior change on the happy path.
+
 ## 0.30.0
 
 - **`feat(polymarket)` — zero-config trading, gasless x402 funding, and the corrected POLY_1271 auth. First *published* release of `blockrun_polymarket`.** Supersedes the never-published 0.29.0 (its publish was blocked by a red test until this cut) and makes the full lifecycle work out of the box — verified end-to-end with real money on the live CLOB: fund → deploy → buy → sell → withdraw, from a US machine, zero configuration. Changes since 0.29.0:
