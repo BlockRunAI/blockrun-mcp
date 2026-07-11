@@ -259,7 +259,7 @@ blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:2 confirm:true
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
-**Regions:** Polymarket geoblocks order placement by IP (US/UK/EU + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Tokyo egress, so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress (`HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY`). Complying with Polymarket's terms for your jurisdiction is your responsibility.
+**Regions:** Polymarket geoblocks order placement by IP (US/UK + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Finland egress (a fully unrestricted region under Polymarket's policy), so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress (`HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY`). Complying with Polymarket's terms for your jurisdiction is your responsibility.
 
 > ⚠️ **Back up `~/.blockrun/.session`.** It is the only key to both the payment wallet and the Polymarket deposit wallet.
 
@@ -347,7 +347,7 @@ One wallet. All sources. No dashboards.
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
-| `POLYMARKET_CLOB_HOST` | BlockRun Tokyo relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
+| `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
 | `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |

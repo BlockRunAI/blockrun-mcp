@@ -30,8 +30,9 @@ order that matched** — no Polymarket account, no manual API keys, no gas token
   (a builder key for the gasless relayer) from your own wallet, automatically, on
   first `setup`.
 - **Geoblock — handled for you.** Polymarket blocks *order placement* by IP
-  (US / UK / EU and many regions). The MCP defaults to BlockRun's Tokyo egress, so
-  it works out of the box (§3). Reads, funding, and x402/AI traffic stay direct.
+  (US / UK and many regions). The MCP defaults to BlockRun's Finland egress (a
+  fully unrestricted region under Polymarket's policy), so it works out of the box
+  (§3). Reads, funding, and x402/AI traffic stay direct.
 
 ---
 
@@ -72,12 +73,13 @@ in the very wallet that pays your AI bills. Lose the key, lose both — **back u
 
 ## 3. Geoblock — handled by default
 
-Polymarket blocks order placement by IP (US / UK / EU and many regions). **You
-don't need to do anything** — the MCP defaults to BlockRun's hosted Tokyo egress,
-so orders route through a permitted region out of the box, and `action:"setup"`
-confirms `✅ Region: order placement permitted`. The relay only forwards to
-Polymarket's CLOB (it can't see or move your funds — every order is signed
-locally by your key); reads, funding, and x402/AI traffic stay direct.
+Polymarket blocks order placement by IP (US / UK and many regions). **You
+don't need to do anything** — the MCP defaults to BlockRun's hosted Finland egress
+(a fully unrestricted region under Polymarket's policy), so orders route through a
+permitted region out of the box, and `action:"setup"` confirms `✅ Region: order
+placement permitted`. The relay only forwards to Polymarket's CLOB (it can't see
+or move your funds — every order is signed locally by your key); reads, funding,
+and x402/AI traffic stay direct.
 
 **Run your own instead** (production, scale, or your own compliance posture) —
 override `POLYMARKET_CLOB_HOST`:
@@ -86,10 +88,10 @@ override `POLYMARKET_CLOB_HOST`:
   ```
   POLYMARKET_CLOB_HOST=https://clob.polymarket.com
   ```
-- Your own Cloud Run relay — one command, `asia-northeast1`, no VM or public IP
-  (works even under a `vmExternalIpAccess=DENY` org policy):
+- Your own Cloud Run relay — one command, `europe-north1` (Finland), no VM or
+  public IP (works even under a `vmExternalIpAccess=DENY` org policy):
   ```bash
-  bash deploy/tokyo-egress/deploy.sh     # deploys, prints the URL → use as POLYMARKET_CLOB_HOST
+  bash deploy/finland-egress/deploy.sh   # deploys, prints the URL → use as POLYMARKET_CLOB_HOST
   ```
 - A forward proxy in a permitted region:
   ```
@@ -121,7 +123,7 @@ Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
   "command": "npx",
   "args": ["-y", "@blockrun/mcp@latest", "--profile", "trading"],
   "env": {
-    // Geoblock egress is handled by default (BlockRun's Tokyo relay) — you only
+    // Geoblock egress is handled by default (BlockRun's Finland relay) — you only
     // need POLYMARKET_CLOB_HOST to run your own egress or go direct (§3).
     // "POLYMARKET_CLOB_HOST": "https://clob.polymarket.com",
 

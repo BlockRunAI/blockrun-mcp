@@ -20,7 +20,7 @@ this tool only trades.
 - **Zero setup**: no Polymarket account, no API keys, no gas token. On first
   `setup` the MCP bootstraps a builder key from the user's OWN wallet, then
   derives + deploys the vault (all gasless). Geoblock is handled by default —
-  CLOB traffic routes through BlockRun's Tokyo egress out of the box.
+  CLOB traffic routes through BlockRun's Finland egress out of the box.
 
 ## Golden rules for agents
 
@@ -85,7 +85,7 @@ blockrun_polymarket action:"withdraw" confirm:true                   # (partial:
 ## Regions / geoblock
 
 Order placement is IP-geoblocked (US/UK/EU + many regions). **Handled by
-default** — CLOB traffic routes through BlockRun's Tokyo egress, so `setup`
+default** — CLOB traffic routes through BlockRun's Finland egress, so `setup`
 reports `✅ Region: order placement permitted` out of the box; you don't need to
 do anything. A user can override with `POLYMARKET_CLOB_HOST` (their own relay),
 or `POLYMARKET_CLOB_PROXY` / `HTTPS_PROXY`. Respecting Polymarket's ToS for the
