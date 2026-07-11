@@ -227,11 +227,11 @@ let _geoCache: { at: number; value: GeoblockStatus } | null = null;
  * routes through POLYMARKET_CLOB_HOST, i.e. the exact egress real orders use.
  *
  * We deliberately do NOT trust polymarket.com/api/geoblock's boolean: it
- * reflects FRONTEND blocking (it returns blocked=true for Japan even though the
- * Japanese API accepts orders — verified: POST /order from a Tokyo egress
- * returns 401, not 403). The /api/geoblock call is kept only for country/ip
- * context. Cached 10 min; fail-open (unknown) on network error so a hiccup never
- * blocks a call that might succeed.
+ * reflects FRONTEND blocking, which can diverge from what the order API accepts
+ * (e.g. Japan returns blocked=true on the frontend while its API still accepts
+ * orders — POST /order there returns 401, not 403). The /api/geoblock call is
+ * kept only for country/ip context. Cached 10 min; fail-open (unknown) on
+ * network error so a hiccup never blocks a call that might succeed.
  */
 export async function checkGeoblock(): Promise<GeoblockStatus> {
   applyClobProxyOnce();
