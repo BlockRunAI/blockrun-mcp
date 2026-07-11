@@ -238,12 +238,15 @@ Set a $5/week budget cap and never hit it with typical usage.
 
 ## Error Handling Patterns
 
-### 402 Payment Required (Expected — Not an Error)
+### 402 Payment Required
 
 ```python
-# BlockRun auto-handles this internally.
-# If a paid call returns 402, the SDK signs the challenge
-# and retries. No action needed.
+# When the wallet is FUNDED, x402 handles this automatically: the SDK
+# signs the payment challenge and retries — no action needed.
+#
+# When the wallet is EMPTY, the 402 / insufficient-balance surfaces to you.
+# Check status and fund FIRST — don't blindly retry the failing tool:
+blockrun_wallet(action="status")   # then action="setup" / "deposit"
 ```
 
 ### Insufficient Balance
@@ -297,8 +300,9 @@ blockrun_wallet(action="chain")
 
 ## Reference
 
-- BlockRun MCP: https://github.com/blockrunai/blockrun-mcp
+- BlockRun MCP: https://github.com/BlockRunAI/blockrun-mcp
 - BlockRun Docs: https://blockrun.ai/docs
 - Models & Pricing: https://blockrun.ai/models
 - Community: https://t.me/blockrunAI
-- GenTech Labs: https://github.com/ProtoJay4789/genTech-agent-kit
+
+_Contributed by GenTech Labs, from real production usage of BlockRun MCP._
