@@ -237,7 +237,8 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
 | Vault shows `$0.00` right after funding | The bridge credits pUSD **asynchronously** (minutes, sometimes 30+). Re-run `action:"setup"` and watch the balance. |
 | `Minimum funding is $2` | The Polymarket bridge won't deliver deposits under $2. Fund ≥ $2. |
 | `not deployed yet` when funding | Run `action:"setup" confirm:true` first — funds only land in a *deployed* vault. |
-| `Not enough balance/allowance` | Fund the vault with pUSD, then re-run `action:"setup"` (it refreshes the CLOB balance cache). |
+| `Not enough balance/allowance` | The buy path auto-refreshes the CLOB balance cache and retries once. If it persists, the vault genuinely lacks pUSD or an approval — fund it, then re-run `action:"setup" confirm:true`. |
+| Neg-risk ("winner" / multi-outcome) market buy fails though setup shows ✅ ready | The **pUSD → NegRisk Adapter** approval settles neg-risk orders. A deposit wallet set up before it was added lacks it — run `action:"setup" confirm:true` once to grant it (setup reads approvals on-chain every run and signs the missing one). |
 | `order signer address has to be the address of the API KEY` | Auto-recovered once (creds re-derived). If it persists, re-run setup. (Upstream clob-client-v2 [#65](https://github.com/Polymarket/clob-client-v2/issues/65) — this tool ships the correct fix: CLOB creds bind to your EOA, orders are ERC-1271-validated by the vault.) |
 | `FOK order could not fill` | Use `order_type:"FAK"`, or a limit order at the book price the dry-run shows. |
 | Setup says "pending" after deploy | The relayer tx is still confirming; re-run `action:"setup"` in a minute. |
@@ -258,6 +259,13 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
   EIP-712 `Batch` payloads your key signs and the relayer submits (it pays gas,
   can't alter or replay them). The builder API key that authenticates the relayer
   is **created programmatically from your own wallet** — no manual onboarding.
+- **Approval set = Polymarket's canonical `approveTokensForTrading`.** The one-time
+  batch grants pUSD (ERC-20) spend to all four collateral spenders — CTF Exchange,
+  NegRisk Exchange, **NegRisk Adapter**, and the Conditional Tokens contract — plus
+  the CTF outcome-token (ERC-1155) operator to the two exchanges and the adapter.
+  The NegRisk Adapter approvals are what let neg-risk ("winner"/multi-outcome)
+  markets settle; omitting the pUSD→adapter one lets the CLOB accept an order that
+  then reverts in settlement.
 - **x402 funding is non-custodial.** `fund` signs an EIP-3009
   `TransferWithAuthorization` on Base USDC; the BlockRun gateway charges $0.01,
   then settles your deposit **straight to the Polymarket bridge** via the CDP

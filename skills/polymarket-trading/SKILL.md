@@ -97,8 +97,13 @@ user's jurisdiction is the user's responsibility — never suggest evading it.
 - No manual creds are ever needed — the MCP bootstraps its builder key from the
   user's own wallet on first `setup`. (Advanced: `POLYMARKET_SIG_TYPE=0` = plain
   EOA mode; needs POL gas + pUSD in the EOA, and is read-only for orders.)
-- Balance/allowance errors right after funding → `setup` again (refreshes the
-  CLOB's balance cache).
+- Balance/allowance errors on a buy → the buy path auto-refreshes the CLOB's
+  balance cache and retries once; if it still fails, the vault genuinely lacks
+  pUSD or approvals — fund it, then `action:"setup" confirm:true`.
+- A **neg-risk market** buy (multi-outcome "winner" markets) fails though setup
+  shows ready → a deposit wallet created before the pUSD→NegRisk Adapter approval
+  was added needs ONE more `action:"setup" confirm:true` to grant it (setup reads
+  approvals on-chain every run, so it detects and signs the missing one).
 - 403 → region issue; see setup's region line.
 - "order signer address has to be the address of the API KEY" → auto-recovered
   once (creds re-derived); if persistent, `setup`, then consider

@@ -319,7 +319,7 @@ Delegate a spending budget to a child agent with `agent_id`. The child is auto-b
 1. No Polymarket account, API keys, or gas token needed — the MCP bootstraps the builder credentials for the gasless relayer from your own wallet on first setup, and the geoblock egress is handled by default (see Regions below).
 2. `blockrun_polymarket action:"setup"` — derives + deploys your deposit wallet and prints its address.
 3. Fund it gaslessly from your Base USDC in one call: `action:"fund" amount_usd:5 confirm:true`. BlockRun pays the Base gas and charges $0.01; non-custodial — your USDC goes straight to the Polymarket bridge and wraps to pUSD in your vault. The credit is async (minutes) — re-run setup to watch the balance.
-4. `action:"setup" confirm:true` — signs the one-time gasless approval batch.
+4. `action:"setup" confirm:true` — signs the one-time gasless approval batch (Polymarket's canonical set: pUSD spend for both exchanges, the NegRisk Adapter, and the Conditional Tokens contract, plus the CTF operator approvals — the NegRisk Adapter grant is what lets multi-outcome "winner" markets settle). Setup reads approvals on-chain every run, so re-running it after an upgrade grants any newly-required approval.
 5. Find a market with `blockrun_markets`, then `action:"buy"` — without `confirm:true` you get a dry-run preview; with it, the order is signed and placed.
 6. Cash out any time: `action:"sell"` (before resolution) or `action:"redeem"` (after you win) turns the position into pUSD, then `action:"withdraw"` bridges it back to native USDC on Base — the same wallet that pays your AI fees.
 
