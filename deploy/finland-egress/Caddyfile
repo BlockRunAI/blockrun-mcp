@@ -1,9 +1,9 @@
-# Tokyo egress relay for Polymarket trading (Cloud Run, asia-northeast1).
+# Finland egress relay for Polymarket trading (Cloud Run, europe-north1).
 #
 # Polymarket geoblocks ORDER PLACEMENT by originating IP. Running this relay in
-# Tokyo (an API-unrestricted region — the same egress polymarket-agent proved
-# out) lets a blockrun-mcp client in a close-only region place orders by pointing
-# its Polymarket host env vars here. Signing stays 100% client-side; this relay
+# Finland (fully API-unrestricted under Polymarket's geographic policy) lets a
+# blockrun-mcp client in a close-only region place orders by pointing its
+# Polymarket host env vars here. Signing stays 100% client-side; this relay
 # only forwards already-signed requests, so it is not a custodial component.
 #
 # Each upstream is HTTPS behind Cloudflare, which routes by Host — so we MUST
@@ -60,6 +60,6 @@
 		respond "ok" 200
 	}
 	handle {
-		respond "blockrun tokyo egress relay — use /clob/*, /relayer/*, /geoblock/*" 404
+		respond "blockrun finland egress relay — use /clob/*, /relayer/*, /geoblock/*" 404
 	}
 }

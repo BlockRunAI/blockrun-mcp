@@ -48,7 +48,7 @@ let _bridgeApplied = false;
 // that silently strips POLY_ADDRESS et al. and every authed call fails with
 // "missing address header" / "Invalid L1 Request headers". Fix: also send each
 // as a hyphenated copy (POLY_ADDRESS → poly-address) which survives proxies; the
-// relay maps them back to underscores (see deploy/tokyo-egress/Caddyfile).
+// relay maps them back to underscores (see deploy/finland-egress/Caddyfile).
 // Sending both is harmless direct — Polymarket reads the underscore header and
 // ignores the extra hyphenated one.
 const UNDERSCORE_AUTH_HEADERS = [

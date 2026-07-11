@@ -168,7 +168,7 @@ export async function mapClobError(err: unknown): Promise<string> {
     return `Order rejected with 403 — Polymarket geoblocks order placement from this egress${where} ` +
       `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
       `Fix: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL ` +
-      `at a Tokyo relay (deploy/tokyo-egress). Raw: ${message}`;
+      `at a permitted-region relay (deploy/finland-egress). Raw: ${message}`;
   }
   if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
     return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +

@@ -190,7 +190,7 @@ async function geoblockLine(): Promise<string> {
   if (geo.orderPlacement === "blocked") {
     return `❌ Region: order placement BLOCKED from this egress${where}. ` +
       "Route through an unrestricted egress: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point " +
-      "POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a Tokyo relay (see deploy/tokyo-egress).";
+      "POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay (see deploy/finland-egress).";
   }
   return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
 }
