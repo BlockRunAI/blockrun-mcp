@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.30.3
+
+- **`fix(polymarket)` — default the CLOB geoblock egress to Finland (`europe-north1`), retiring the Tokyo relay.** Order placement routes through a hosted egress in a permitted region; the default now points at BlockRun's **Finland** relay instead of Tokyo. Per Polymarket's own geographic policy, Finland is **fully unrestricted** (frontend *and* API), whereas Japan is "close-only on the frontend" — a gray zone at risk of tightening. Verified from the new egress: `GET /clob/version` → `{"version":2}`, `POST /clob/order` → **401 (permitted, not 403)**, geoblock → `{"blocked":false,"country":"FI"}`. Deploy recipe moved to [`deploy/finland-egress/`](deploy/finland-egress). Override with `POLYMARKET_CLOB_HOST` as before (go direct with `https://clob.polymarket.com`, or run your own egress). No API/behavior change beyond the default host.
+- **`docs`** — Tokyo → Finland across the README, the setup guide, and the `polymarket-trading` skill; corrected the region note (US/UK + specific countries are close-only; Ireland/Finland/Japan-API are open).
+
 ## 0.30.2
 
 - **`fix(polymarket)` — grant the missing `pUSD → NegRisk Adapter` approval so neg-risk ("winner"/multi-outcome) markets can actually be traded.** `setup`'s approval batch granted pUSD (ERC-20) spend to only the two exchanges, while giving the NegRisk Adapter a CTF *operator* (ERC-1155) approval but **not** the pUSD one — an asymmetry that let `setup` report ✅ ready yet neg-risk buys fail: the CLOB accepts the order, then settlement through the adapter reverts. The pUSD spender set now matches Polymarket's own canonical `approveTokensForTrading` (both exchanges, the **NegRisk Adapter**, and the Conditional Tokens contract). Since `readApprovals` reads on-chain every run, existing deposit wallets self-correct — re-run `action:"setup" confirm:true` once to sign the newly-required approval. Root-caused from a real user's funded-but-failing bet on a World Cup winner market (deposit wallet fully funded + exchange-approved on-chain; the field diagnosis of an "approval never landed / gasless relayer" bug was a flaky-public-RPC artifact — `polygon-rpc.com` returns `401 tenant disabled` that reads as allowance 0).
