@@ -26,12 +26,14 @@ import { checkGeoblock, getClobClient, getPolymarketAccount } from "./client.js"
 import {
   assertContractConfig,
   CONDITIONAL_TOKENS,
+  CTF_COLLATERAL_ADAPTER,
   CTF_EXCHANGE_V2,
   ERC1155_ABI,
   ERC20_ABI,
   getBoundedApprovalsUsd,
   getSigType,
   NEG_RISK_ADAPTER,
+  NEG_RISK_CTF_COLLATERAL_ADAPTER,
   NEG_RISK_CTF_EXCHANGE_V2,
   POLYGON_RPC_URLS,
   PUSD_COLLATERAL,
@@ -102,12 +104,16 @@ function pusdApprovalTarget(): bigint {
 }
 
 /**
- * The approval set Polymarket V2 trading needs from the funds-holding wallet,
- * mirroring Polymarket's own canonical approveTokensForTrading.ts (proxy/safe
- * wallet): pUSD spend for ALL FOUR collateral spenders — both exchanges, the
- * Conditional Tokens contract (direct split/merge), AND the NegRisk Adapter
- * (negRisk order settlement / convert / redeem pulls collateral through it) —
- * plus the CTF operator for both exchanges and the adapter.
+ * The approval set Polymarket V2 trading needs from the funds-holding wallet:
+ * Polymarket's own canonical approveTokensForTrading.ts (proxy/safe wallet) —
+ * pUSD spend for ALL FOUR collateral spenders (both exchanges, the Conditional
+ * Tokens contract for direct split/merge, AND the NegRisk Adapter, whose
+ * negRisk order settlement / convert pulls collateral through it) plus the CTF
+ * operator for both exchanges and the NegRisk Adapter — PLUS, beyond the
+ * canonical script, CTF operator for the two pUSD collateral adapters, which
+ * pull the outcome tokens during action:"redeem" (five ERC-1155 operators in
+ * total). Removing the adapter operators silently reintroduces the
+ * redeem-pays-$0 bug.
  *
  * The NegRisk Adapter pUSD approval is REQUIRED to trade neg-risk markets (e.g.
  * multi-outcome "winner" markets): without it the CLOB accepts the order but
@@ -123,10 +129,16 @@ async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
     ["pUSD → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
     ["pUSD → Conditional Tokens", CONDITIONAL_TOKENS as Hex],
   ];
+  // The two collateral adapters are the redeem path (they pull the caller's
+  // outcome tokens via safeBatchTransferFrom, so they need operator approval).
+  // Wallets set up before 2026-07 lack these; readApprovals runs on-chain
+  // every setup, so they self-heal with one action:"setup" confirm:true.
   const erc1155Operators: Array<[string, Hex]> = [
     ["CTF → CTF Exchange V2", CTF_EXCHANGE_V2 as Hex],
     ["CTF → NegRisk Exchange V2", NEG_RISK_CTF_EXCHANGE_V2 as Hex],
     ["CTF → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
+    ["CTF → CtfCollateral Adapter (redeem)", CTF_COLLATERAL_ADAPTER as Hex],
+    ["CTF → NegRisk CtfCollateral Adapter (redeem)", NEG_RISK_CTF_COLLATERAL_ADAPTER as Hex],
   ];
 
   // "granted" = allowance meets the amount we'd approve (bounded or unlimited),
@@ -362,7 +374,10 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
                 chain: polygon,
                 account,
               });
-        await pc.waitForTransactionReceipt({ hash });
+        const receipt = await pc.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error(`execution reverted: approval transaction ${hash} (${item.label}) reverted on-chain`);
+        }
         approvalTxHashes.push(hash);
       }
       approvalsPending = false;

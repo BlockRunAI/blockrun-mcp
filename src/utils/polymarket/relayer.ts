@@ -122,8 +122,11 @@ export async function sendWalletBatch(
   const response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, deadline);
   const confirmed = await response.wait();
   if (!confirmed) {
+    // wait() returns undefined for BOTH an on-chain failure and a timeout —
+    // "failed" must appear in this message so callers' revert-hint regexes
+    // (e.g. redeem's missing-approval hint) fire on it.
     throw new Error(
-      `${description}: relayer batch did not confirm (tx ${response.transactionID}). ` +
+      `${description}: relayer batch failed on-chain or did not confirm (tx ${response.transactionID}). ` +
       `Re-run action:"setup" to check state and retry.`,
     );
   }

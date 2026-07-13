@@ -21,6 +21,18 @@ export const NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296";
 export const CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 // pUSD — Polymarket's 1:1 collateral wrapper (labelled CollateralToken proxy).
 export const PUSD_COLLATERAL = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+// pUSD collateral adapters — the ONLY correct redeem targets in the pUSD era.
+// CTF positions (the CLOB token_ids) are still keyed to USDC.e (standard) or
+// the legacy NegRiskAdapter's wrapped collateral (neg-risk); calling the CTF /
+// legacy adapter with pUSD burns a positionId nobody holds, which SUCCEEDS
+// redeeming 0 (CTF redeemPositions never reverts on zero balance). These
+// adapters pull the caller's outcome tokens (need a one-time CTF operator
+// approval), redeem through the right underlying path, wrap the USDC.e payout
+// into pUSD, and return it to the caller. Verified on-chain 2026-07-13:
+// Sourcify exact_match; COLLATERAL_TOKEN/CONDITIONAL_TOKENS/USDCE (and
+// NEG_RISK_ADAPTER/WRAPPED_COLLATERAL) all point at the addresses above.
+export const CTF_COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f";
+export const NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab";
 export const COLLATERAL_ONRAMP = "0x93070a847efEf7F70739046A929D47a521F5B8ee";
 export const DEPOSIT_WALLET_FACTORY = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
 
@@ -204,18 +216,6 @@ export const ERC1155_ABI = [
       { name: "parentCollectionId", type: "bytes32" },
       { name: "conditionId", type: "bytes32" },
       { name: "indexSets", type: "uint256[]" },
-    ],
-    outputs: [],
-  },
-] as const;
-
-// NegRisk adapter redeem takes explicit YES/NO amounts instead of index sets.
-export const NEG_RISK_ADAPTER_ABI = [
-  {
-    name: "redeemPositions", type: "function", stateMutability: "nonpayable",
-    inputs: [
-      { name: "conditionId", type: "bytes32" },
-      { name: "amounts", type: "uint256[]" },
     ],
     outputs: [],
   },
