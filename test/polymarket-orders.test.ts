@@ -82,7 +82,8 @@ test("mapClobError: EOA maker rejection points at the deposit-wallet flow", asyn
     status: 400,
   });
   assert.match(text, /deposit-wallet|deposit wallet flow/i);
-  assert.match(text, /POLYMARKET_RELAYER_API_KEY/);
+  assert.match(text, /action:"setup"/);
+  assert.doesNotMatch(text, /POLYMARKET_RELAYER_API_KEY/);
 });
 
 test("mapClobError: resolved market suggests positions/redeem; FOK suggests FAK", async () => {

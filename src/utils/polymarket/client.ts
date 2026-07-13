@@ -165,7 +165,8 @@ export async function getClobClient(): Promise<ClobClient> {
   if (sigType === 3 && !depositWallet) {
     throw new Error(
       `No Polymarket deposit wallet configured for this signer yet. Run blockrun_polymarket ` +
-      `action:"setup" first (or set POLYMARKET_SIG_TYPE=0 for plain EOA mode).`,
+      `action:"setup" first. (POLYMARKET_SIG_TYPE=0 plain EOA mode exists as a diagnostic ` +
+      `fallback; the CLOB may reject plain-EOA makers.)`,
     );
   }
 

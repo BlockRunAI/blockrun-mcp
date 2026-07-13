@@ -7,9 +7,9 @@
 // EIP-712 payloads signed by the local key, which it can neither alter (the
 // signature covers every byte) nor replay (nonce + deadline).
 //
-// The relayer requires API credentials (polymarket.com → Settings → API Keys)
-// purely to authenticate use of its gas-sponsoring service. Phase 2 moves
-// these behind the BlockRun gateway so end users need no Polymarket account.
+// The relayer authenticates via a Builder API key the MCP bootstraps from the
+// wallet key itself (getOrCreateBuilderCreds below) — no Polymarket account or
+// manually-obtained credentials needed.
 import { RelayClient, type DepositWalletCall } from "@polymarket/builder-relayer-client";
 import { BuilderConfig } from "@polymarket/builder-signing-sdk";
 import { ClobClient } from "@polymarket/clob-client-v2";
@@ -23,17 +23,6 @@ import { deriveApiCreds } from "./l1-auth-1271.js";
 export type { DepositWalletCall };
 
 let _relayClient: RelayClient | null = null;
-
-// The deposit-wallet flow no longer needs manually-obtained relayer credentials:
-// the MCP bootstraps a Builder API key from the wallet key itself (see
-// getOrCreateBuilderCreds). These functions are retained as always-available.
-export function relayerCredsMissing(): boolean {
-  return false;
-}
-
-export function relayerCredsMissingMessage(): string {
-  return "";
-}
 
 /**
  * Programmatically obtain Builder API credentials (key/secret/passphrase) for
@@ -95,23 +84,6 @@ export async function getRelayClient(): Promise<RelayClient> {
 /** CREATE2-derived deposit wallet address for the local key (pre-deploy safe). */
 export async function deriveDepositWallet(): Promise<Hex> {
   const addr = await (await getRelayClient()).deriveDepositWalletAddress();
-  return addr as Hex;
-}
-
-/**
- * Derive the deposit wallet address WITHOUT relayer API creds. Derivation is
- * pure CREATE2 math over the signer address plus a public-RPC factory read — no
- * authenticated relayer call — so it works before the user has creds, letting
- * them pre-fund the address. (Deploy/approve/trade still need creds.)
- */
-export async function deriveDepositWalletNoCreds(): Promise<Hex> {
-  const walletClient = createWalletClient({
-    account: getPolymarketAccount(),
-    chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
-  });
-  const client = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient);
-  const addr = await client.deriveDepositWalletAddress();
   return addr as Hex;
 }
 

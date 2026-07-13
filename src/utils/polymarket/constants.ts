@@ -157,30 +157,6 @@ export function getClobProxy(): string | undefined {
   return v ? v : undefined;
 }
 
-/**
- * Relayer API credentials — required for the deposit-wallet path (Phase 1:
- * user-provided from polymarket.com → Settings → API Keys; Phase 2 moves these
- * behind the BlockRun gateway). The relayer only ever receives pre-signed
- * payloads; these creds authenticate use of its gas-sponsoring service and
- * grant no control over funds.
- */
-// Polymarket's Settings → API Keys issues a Relayer API key as key + owning
-// address (Option 2 auth: two plain headers RELAYER_API_KEY +
-// RELAYER_API_KEY_ADDRESS, no HMAC). The older builder-HMAC form
-// (key/secret/passphrase) is also accepted by the relayer but is not what the
-// UI hands out today; we implement the key+address form.
-export interface RelayerCreds {
-  key: string;
-  keyAddress: string;
-}
-
-export function getRelayerCreds(): RelayerCreds | null {
-  const key = process.env.POLYMARKET_RELAYER_API_KEY?.trim();
-  const keyAddress = process.env.POLYMARKET_RELAYER_API_KEY_ADDRESS?.trim();
-  if (key && keyAddress) return { key, keyAddress };
-  return null;
-}
-
 // ERC-20/1155 minimal ABIs for approval + balance reads and approval calldata.
 export const ERC20_ABI = [
   {

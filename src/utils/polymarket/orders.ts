@@ -167,19 +167,20 @@ export async function mapClobError(err: unknown): Promise<string> {
     const where = geo.country ? ` (egress country: ${geo.country})` : "";
     return `Order rejected with 403 — Polymarket geoblocks order placement from this egress${where} ` +
       `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
-      `Fix: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL ` +
-      `at a permitted-region relay (deploy/finland-egress). Raw: ${message}`;
+      `Fix: point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay ` +
+      `(deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / HTTPS_PROXY) ` +
+      `does not change the Polymarket-facing egress. Raw: ${message}`;
   }
   if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
     return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +
       `orders (a plain EOA maker is not accepted). Use the default deposit-wallet mode: unset ` +
-      `POLYMARKET_SIG_TYPE (=3) and set relayer creds (POLYMARKET_RELAYER_API_KEY/_SECRET/_PASSPHRASE) so ` +
-      `action:"setup" can create your deposit wallet. Raw: ${message}`;
+      `POLYMARKET_SIG_TYPE (=3) and run action:"setup" to create your deposit wallet ` +
+      `(credentials are bootstrapped automatically — no API keys needed). Raw: ${message}`;
   }
   if (isCredsMismatchError(e)) {
     return `CLOB rejected the API credentials (${message}). Credentials were re-derived automatically; ` +
-      `if this persists, run action:"setup", or set POLYMARKET_SIG_TYPE=0 to fall back to plain EOA mode ` +
-      `(see clob-client-v2 issue #65).`;
+      `if this persists, run action:"setup", or as a last resort set POLYMARKET_SIG_TYPE=0 for plain ` +
+      `EOA mode (see clob-client-v2 issue #65; note the CLOB may reject plain-EOA makers).`;
   }
   if (m.includes("not enough balance") || m.includes("insufficient") || m.includes("allowance")) {
     return `Not enough balance/allowance (${message}). The funds wallet needs pUSD and exchange approvals — ` +

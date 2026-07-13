@@ -23,7 +23,7 @@ export function registerPolymarketTool(server: McpServer): void {
     {
       description: `Trade on Polymarket prediction markets (CLOB V2, Polygon). REAL MONEY — orders spend pUSD held in your Polymarket deposit wallet, signed locally by your BlockRun key. Free tool (no BlockRun API charge); discover markets/prices/token IDs with blockrun_markets first.
 
-Run action:"setup" FIRST (and again after funding). It creates a gasless deposit wallet owned by your key, checks pUSD balance + exchange approvals, and prints funding instructions. Needs Polymarket relayer API creds via env (POLYMARKET_RELAYER_API_KEY/_SECRET/_PASSPHRASE — setup explains how to get them).
+Run action:"setup" FIRST (and again after funding). It creates a gasless deposit wallet owned by your key, checks pUSD balance + exchange approvals, and prints funding instructions. Zero config — no Polymarket account or API keys; setup bootstraps its credentials from your wallet key.
 
 Actions:
 - setup — create/inspect deposit wallet, funding, approvals (confirm:true to sign the approval batch), region check. Idempotent.
@@ -35,7 +35,7 @@ Actions:
 - redeem — claim resolved winnings for condition_id (confirm:true; gasless)
 - withdraw — cash out pUSD → native USDC on Base to your agent wallet (confirm:true). amount_usd optional (default: full balance); to_address optional (default: your wallet).
 
-Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Order placement is geoblocked in some regions (US/UK/EU are close-only; cancel/sell/redeem still work) — setup reports your status.`,
+Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Geoblock is handled by default (CLOB traffic routes through BlockRun's Finland egress) — setup reports your region status.`,
       inputSchema: {
         action: z.enum(["setup", "fund", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
           .describe("Operation to perform"),

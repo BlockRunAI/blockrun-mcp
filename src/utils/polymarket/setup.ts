@@ -41,10 +41,7 @@ import { loadDepositWalletForSigner, loadState, saveState } from "./creds.js";
 import {
   deployDepositWallet,
   deriveDepositWallet,
-  deriveDepositWalletNoCreds,
   isDepositWalletDeployed,
-  relayerCredsMissing,
-  relayerCredsMissingMessage,
   sendWalletBatch,
   type DepositWalletCall,
 } from "./relayer.js";
@@ -189,15 +186,18 @@ async function geoblockLine(): Promise<string> {
   if (geo.orderPlacement === "permitted") return `✅ Region: order placement permitted from this egress${where}`;
   if (geo.orderPlacement === "blocked") {
     return `❌ Region: order placement BLOCKED from this egress${where}. ` +
-      "Route through an unrestricted egress: set POLYMARKET_CLOB_PROXY / HTTPS_PROXY, or point " +
-      "POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay (see deploy/finland-egress).";
+      "Point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay " +
+      "(see deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / " +
+      "HTTPS_PROXY) only changes how the current egress is reached, not the Polymarket-facing IP.";
   }
   return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
 }
 
 const KEY_BACKUP_NOTE =
-  "🔑 The Polymarket signer is your BlockRun wallet key (~/.blockrun/.session). " +
-  "It is the ONLY key to these funds — back it up; never share or print it.";
+  "🔑 The Polymarket signer is your BlockRun wallet key (~/.blockrun/.session by default; " +
+  "a BLOCKRUN_WALLET_KEY env var or an existing agent wallet.json takes precedence). It is " +
+  "the ONLY key to these funds — back up the key behind the signer address shown above, " +
+  "wherever it lives (key file, or the env-var value itself); never share or print it.";
 
 export async function runSetup(opts: { confirm: boolean }): Promise<{ text: string; structured: Record<string, unknown> }> {
   // Verify our exchange/collateral addresses still match the SDK's BEFORE any
@@ -210,37 +210,6 @@ export async function runSetup(opts: { confirm: boolean }): Promise<{ text: stri
 
 async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text: string; structured: Record<string, unknown> }> {
   const account = getPolymarketAccount();
-
-  if (relayerCredsMissing()) {
-    // Even without relayer creds we can DERIVE (not deploy) the deposit wallet
-    // address, so the user can pre-fund it while they get creds.
-    let depositWallet: Hex | undefined;
-    try {
-      depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined)
-        ?? (await deriveDepositWalletNoCreds());
-      saveState({ depositWallet, signer: account.address });
-    } catch { /* derivation is best-effort here */ }
-    const geo = await geoblockLine();
-    const balance = depositWallet ? await getPusdBalance(depositWallet).catch(() => 0) : 0;
-    return {
-      text: [
-        `Polymarket setup — deposit-wallet mode (signer ${account.address})`,
-        ...(depositWallet
-          ? [
-              ``,
-              `Your deposit wallet (holds betting funds): ${depositWallet}`,
-              `  https://polygonscan.com/address/${depositWallet}`,
-              `  ${balance > 0 ? `✅ pUSD balance: $${balance.toFixed(2)}` : "❌ Not funded yet"} — you can fund it NOW`,
-              `  (send ~$5 pUSD, or USDC via the Polymarket bridge which auto-wraps) while you get relayer creds.`,
-            ]
-          : []),
-        geo,
-        ``,
-        relayerCredsMissingMessage(),
-      ].join("\n"),
-      structured: { mode: "POLY_1271", signer: account.address, depositWallet, ready: false, missing: "relayer_credentials" },
-    };
-  }
 
   // 1. Derive (pure CREATE2 math) + persist, keyed to the current signer.
   const depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined) ?? (await deriveDepositWallet());
@@ -431,7 +400,10 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
     geo,
     ``,
-    ready ? `🎯 Ready to trade.` : `Re-run action:"setup" after completing the ❌ items.`,
+    ready
+      ? `🎯 Ready to trade. Note: the CLOB may reject plain-EOA makers on order placement — ` +
+        `the deposit wallet (unset POLYMARKET_SIG_TYPE) is the supported trading path.`
+      : `Re-run action:"setup" after completing the ❌ items.`,
     ``,
     KEY_BACKUP_NOTE,
   ];

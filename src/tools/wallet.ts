@@ -285,7 +285,7 @@ PRICING (pay per use):
   - GPT-4o: ~$0.005/request | Claude Sonnet: ~$0.003/request
   - Gemini Flash: ~$0.0001/request | Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.session (never leaves your machine)
+SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
 ================================================================================`;
 
         return { content: [{ type: "text", text }] };

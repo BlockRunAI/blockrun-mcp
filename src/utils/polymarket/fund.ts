@@ -69,8 +69,8 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
       if (!code || code === "0x") {
         return {
           text: `Your deposit wallet ${vault} is not deployed yet — deploy it FIRST with ` +
-            `action:"setup" confirm:true (needs relayer creds), then fund. Funding an undeployed ` +
-            `vault strands your USDC at the bridge (it can't deliver pUSD to a vault that doesn't exist).`,
+            `action:"setup" confirm:true (gasless, credentials bootstrapped automatically), then fund. ` +
+            `Funding an undeployed vault strands your USDC at the bridge (it can't deliver pUSD to a vault that doesn't exist).`,
           isError: true,
         };
       }
