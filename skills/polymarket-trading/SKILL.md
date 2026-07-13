@@ -116,6 +116,9 @@ user's jurisdiction is the user's responsibility — never suggest evading it.
   shows ready → a deposit wallet created before the pUSD→NegRisk Adapter approval
   was added needs ONE more `action:"setup" confirm:true` to grant it (setup reads
   approvals on-chain every run, so it detects and signs the missing one).
+- A **redeem reverts** → same self-heal: wallets set up before 2026-07 lack the
+  collateral-adapter approvals redeem now pulls tokens through — one
+  `action:"setup" confirm:true` grants them.
 - 403 → region issue; see setup's region line.
 - "order signer address has to be the address of the API KEY" → auto-recovered
   once (creds re-derived); if persistent, `setup`, then as a last resort

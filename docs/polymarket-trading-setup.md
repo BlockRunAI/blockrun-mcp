@@ -244,6 +244,7 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
 |---|---|
 | `403 Trading restricted in your region` | The default Finland egress was overridden or isn't routing. Restore the default `POLYMARKET_CLOB_HOST` or point it at a working permitted-region egress and restart (§3) — a proxy alone doesn't change the Polymarket-facing egress. |
 | `❌ Region: order placement BLOCKED` in setup | Same — the order-endpoint probe still sees a restricted egress. |
+| `redeem` reverts / relayer batch failed | The two pUSD collateral-adapter approvals (added 2026-07) pull your outcome tokens during `redeem`. A wallet set up earlier lacks them — run `action:"setup" confirm:true` once (setup reads approvals on-chain every run and signs what's missing), then retry. |
 | Vault shows `$0.00` right after funding | The bridge credits pUSD **asynchronously** (minutes, sometimes 30+). Re-run `action:"setup"` and watch the balance. |
 | `Minimum funding is $2` | The Polymarket bridge won't deliver deposits under $2. Fund ≥ $2. |
 | `not deployed yet` when funding | Run `action:"setup" confirm:true` first — funds only land in a *deployed* vault. |
@@ -269,13 +270,16 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
   EIP-712 `Batch` payloads your key signs and the relayer submits (it pays gas,
   can't alter or replay them). The builder API key that authenticates the relayer
   is **created programmatically from your own wallet** — no manual onboarding.
-- **Approval set = Polymarket's canonical `approveTokensForTrading`.** The one-time
-  batch grants pUSD (ERC-20) spend to all four collateral spenders — CTF Exchange,
-  NegRisk Exchange, **NegRisk Adapter**, and the Conditional Tokens contract — plus
-  the CTF outcome-token (ERC-1155) operator to the two exchanges and the adapter.
-  The NegRisk Adapter approvals are what let neg-risk ("winner"/multi-outcome)
-  markets settle; omitting the pUSD→adapter one lets the CLOB accept an order that
-  then reverts in settlement.
+- **Approval set = Polymarket's canonical `approveTokensForTrading`, plus the two
+  pUSD collateral adapters.** The one-time batch grants pUSD (ERC-20) spend to all
+  four collateral spenders — CTF Exchange, NegRisk Exchange, **NegRisk Adapter**,
+  and the Conditional Tokens contract — plus the CTF outcome-token (ERC-1155)
+  operator to five contracts: the two exchanges, the NegRisk Adapter, and the two
+  **pUSD collateral adapters** (`CtfCollateralAdapter` /
+  `NegRiskCtfCollateralAdapter`), which pull your outcome tokens during `redeem`
+  and pay the winnings back as pUSD. The NegRisk Adapter approvals are what let
+  neg-risk ("winner"/multi-outcome) markets settle; omitting the pUSD→adapter one
+  lets the CLOB accept an order that then reverts in settlement.
 - **x402 funding is non-custodial.** `fund` signs an EIP-3009
   `TransferWithAuthorization` on Base USDC; the BlockRun gateway charges $0.01,
   then settles your deposit **straight to the Polymarket bridge** via the CDP

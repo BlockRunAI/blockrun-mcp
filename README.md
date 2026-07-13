@@ -377,7 +377,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 - **`Smart routing (ClawRouter) not available on Solana`** → Pass `model:` or `mode:` to `blockrun_chat`, or `echo base > ~/.blockrun/.chain`.
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
 - **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
-- **Polymarket: neg-risk ("winner") market buy fails though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approval a pre-upgrade deposit wallet may lack). See the [setup guide](docs/polymarket-trading-setup.md).
+- **Polymarket: neg-risk ("winner") market buy fails, or `redeem` reverts, though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approvals a pre-upgrade deposit wallet may lack — including the collateral-adapter approvals `redeem` needs). See the [setup guide](docs/polymarket-trading-setup.md).
 
 ---
 
