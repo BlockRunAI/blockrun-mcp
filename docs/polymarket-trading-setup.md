@@ -18,8 +18,8 @@ order that matched** — no Polymarket account, no manual API keys, no gas token
 
 ## 0. How it works in 30 seconds
 
-- **One key, non-custodial.** Your existing BlockRun key (`~/.blockrun/.session`)
-  signs every order **locally**. Neither BlockRun nor Polymarket's relayer can
+- **One key, non-custodial.** Your existing BlockRun key (`~/.blockrun/.session`
+  by default) signs every order **locally**. Neither BlockRun nor Polymarket's relayer can
   move your funds — they only forward requests you already signed.
 - **Funds live in a deposit wallet.** A smart-contract vault on Polygon, derived
   from your key (only your key can authorize it). Holds **pUSD** — the only thing
@@ -67,7 +67,8 @@ A private key is chain-agnostic, so a single BlockRun identity does double duty:
 The vault address is **derived deterministically from your key** — same key,
 same vault, forever. Winnings you cash out land back as **native USDC on Base**,
 in the very wallet that pays your AI bills. Lose the key, lose both — **back up
-`~/.blockrun/.session`.**
+your signer key** (`~/.blockrun/.session` by default; `setup` prints the
+actual signer address).
 
 ---
 
@@ -93,7 +94,11 @@ override `POLYMARKET_CLOB_HOST`:
   ```bash
   bash deploy/finland-egress/deploy.sh   # deploys, prints the URL → use as POLYMARKET_CLOB_HOST
   ```
-- A forward proxy in a permitted region:
+- A forward proxy in a permitted region — only effective when
+  `POLYMARKET_CLOB_HOST` is also pointed at Polymarket directly
+  (`https://clob.polymarket.com`) or at your own relay; a proxy alone only
+  changes how the default Finland relay is reached, not the Polymarket-facing
+  egress:
   ```
   HTTPS_PROXY=http://user:pass@host:port            # covers CLOB + relayer
   POLYMARKET_CLOB_PROXY=http://user:pass@host:port  # Polymarket-only
@@ -225,8 +230,11 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
   USDC), different wallet ledger. They can't corrupt each other.
 - **Your private key never leaves the machine** and is never printed or logged.
   Credential files are `0600`.
-- **Back up `~/.blockrun/.session`** — it is the only key to *both* the payment
-  wallet and the Polymarket deposit vault. Lose it, lose the funds.
+- **Back up your signer key** (`~/.blockrun/.session` by default; a
+  `BLOCKRUN_WALLET_KEY` env var or an existing agent `wallet.json` takes
+  precedence — `setup` prints the actual signer address) — it is the only key to
+  *both* the payment wallet and the Polymarket deposit vault. Lose it, lose the
+  funds.
 
 ---
 
@@ -234,7 +242,7 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
 
 | Symptom | Fix |
 |---|---|
-| `403 Trading restricted in your region` | Egress not set / not routing. Set `POLYMARKET_CLOB_HOST` (or `HTTPS_PROXY`) to a permitted region and restart (§3). |
+| `403 Trading restricted in your region` | The default Finland egress was overridden or isn't routing. Restore the default `POLYMARKET_CLOB_HOST` or point it at a working permitted-region egress and restart (§3) — a proxy alone doesn't change the Polymarket-facing egress. |
 | `❌ Region: order placement BLOCKED` in setup | Same — the order-endpoint probe still sees a restricted egress. |
 | Vault shows `$0.00` right after funding | The bridge credits pUSD **asynchronously** (minutes, sometimes 30+). Re-run `action:"setup"` and watch the balance. |
 | `Minimum funding is $2` | The Polymarket bridge won't deliver deposits under $2. Fund ≥ $2. |

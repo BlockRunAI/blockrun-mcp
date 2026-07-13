@@ -11,7 +11,11 @@ this tool only trades.
 
 ## Mental model
 
-- **Signer** = the BlockRun key (`~/.blockrun/.session`). Never leaves the machine.
+- **Signer** = the BlockRun wallet key (`~/.blockrun/.session` by default; a
+  `BLOCKRUN_WALLET_KEY` env var or an existing agent `wallet.json` takes
+  precedence). Never leaves the machine. `setup` prints the actual signer
+  address — back up the key behind it, wherever it lives (key file or env-var
+  value).
 - **Deposit wallet** = a Polygon vault contract derived from that key
   (POLY_1271). It holds the betting funds in **pUSD** and only honors the
   signer's EIP-712 signatures. Deploy/approve/redeem are **gasless** (relayer).
@@ -36,8 +40,10 @@ this tool only trades.
 
 ```
 # 0. No Polymarket account or API keys needed — the MCP bootstraps everything
-#    from the user's own wallet on first setup. (Set POLYMARKET_CLOB_HOST to a
-#    permitted-region egress only if the user is in a geoblocked region.)
+#    from the user's own wallet on first setup. (Geoblock is already handled:
+#    CLOB traffic routes through BlockRun's Finland egress by default. Set
+#    POLYMARKET_CLOB_HOST only to use your own egress, or to hit Polymarket
+#    directly from a permitted region.)
 
 # 1. Provision + inspect (idempotent, safe to re-run any time)
 blockrun_polymarket action:"setup"
@@ -87,8 +93,12 @@ blockrun_polymarket action:"withdraw" confirm:true                   # (partial:
 Order placement is IP-geoblocked (US/UK/EU + many regions). **Handled by
 default** — CLOB traffic routes through BlockRun's Finland egress, so `setup`
 reports `✅ Region: order placement permitted` out of the box; you don't need to
-do anything. A user can override with `POLYMARKET_CLOB_HOST` (their own relay),
-or `POLYMARKET_CLOB_PROXY` / `HTTPS_PROXY`. Respecting Polymarket's ToS for the
+do anything. A user can override by pointing `POLYMARKET_CLOB_HOST` at their
+own relay (or at Polymarket directly, from a permitted region), optionally
+reached through their own proxy via `POLYMARKET_CLOB_PROXY` / `HTTPS_PROXY`
+(`POLYMARKET_CLOB_PROXY` wins if both are set). A proxy alone does NOT change
+the Polymarket-facing egress — CLOB traffic still exits from BlockRun's Finland
+relay unless `POLYMARKET_CLOB_HOST` is also repointed. Respecting Polymarket's ToS for the
 user's jurisdiction is the user's responsibility — never suggest evading it.
 
 ## Troubleshooting
@@ -96,7 +106,9 @@ user's jurisdiction is the user's responsibility — never suggest evading it.
 - "No deposit wallet configured" → run `action:"setup"`.
 - No manual creds are ever needed — the MCP bootstraps its builder key from the
   user's own wallet on first `setup`. (Advanced: `POLYMARKET_SIG_TYPE=0` = plain
-  EOA mode; needs POL gas + pUSD in the EOA, and is read-only for orders.)
+  EOA mode; needs POL gas + pUSD in the EOA. The CLOB may reject plain-EOA
+  makers on order placement — treat it as a diagnostic fallback, not a
+  guaranteed trading mode.)
 - Balance/allowance errors on a buy → the buy path auto-refreshes the CLOB's
   balance cache and retries once; if it still fails, the vault genuinely lacks
   pUSD or approvals — fund it, then `action:"setup" confirm:true`.
@@ -106,5 +118,6 @@ user's jurisdiction is the user's responsibility — never suggest evading it.
   approvals on-chain every run, so it detects and signs the missing one).
 - 403 → region issue; see setup's region line.
 - "order signer address has to be the address of the API KEY" → auto-recovered
-  once (creds re-derived); if persistent, `setup`, then consider
-  `POLYMARKET_SIG_TYPE=0` (upstream clob-client-v2 issue #65).
+  once (creds re-derived); if persistent, `setup`, then as a last resort
+  `POLYMARKET_SIG_TYPE=0` (upstream clob-client-v2 issue #65; see the EOA-mode
+  caveat above).

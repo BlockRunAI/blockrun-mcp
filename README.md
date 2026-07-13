@@ -61,7 +61,7 @@ Every other data integration was built for **human developers** — create an ac
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.
-- **Self-custody** — your key never leaves your machine (`~/.blockrun/.session`, `0600`). BlockRun can't move your funds.
+- **Self-custody** — your key never leaves your machine (`~/.blockrun/.session` by default, `0600`). BlockRun can't move your funds.
 
 ---
 
@@ -259,9 +259,9 @@ blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:2 confirm:true
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
-**Regions:** Polymarket geoblocks order placement by IP (US/UK + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Finland egress (a fully unrestricted region under Polymarket's policy), so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress (`HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY`). Complying with Polymarket's terms for your jurisdiction is your responsibility.
+**Regions:** Polymarket geoblocks order placement by IP (US/UK + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Finland egress (a fully unrestricted region under Polymarket's policy), so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress, optionally reached via `HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY` (a proxy alone doesn't change the Polymarket-facing egress). Complying with Polymarket's terms for your jurisdiction is your responsibility.
 
-> ⚠️ **Back up `~/.blockrun/.session`.** It is the only key to both the payment wallet and the Polymarket deposit wallet.
+> ⚠️ **Back up your signer key** (`~/.blockrun/.session` by default; a `BLOCKRUN_WALLET_KEY` env var or an existing agent `wallet.json` takes precedence — `setup` prints the actual signer address). It is the only key to both the payment wallet and the Polymarket deposit wallet.
 
 ---
 
@@ -342,7 +342,8 @@ One wallet. All sources. No dashboards.
 
 | Variable / File | Default | Effect |
 |---|---|---|
-| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer. |
+| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
+| `BLOCKRUN_WALLET_KEY` | unset | Env override of the EVM key — takes precedence over `.session` / `wallet.json` as the Base + Polymarket signer. |
 | `~/.blockrun/.chain` | unset | Explicit chain preference: `base` or `solana`. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
@@ -392,7 +393,7 @@ No. A wallet is auto-created locally on first run; you fund it with USDC. No sig
 Pay-per-call — fractions of a cent to a few cents. The free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) is $0. $5 of USDC covers thousands of queries.
 
 **Is it safe / non-custodial?**
-Yes. Your private key never leaves your machine (`~/.blockrun/.session`, `0600`). x402 payments and Polymarket orders are signed locally — BlockRun forwards signed payloads and cannot move your funds.
+Yes. Your private key never leaves your machine (`~/.blockrun/.session` by default, `0600`). x402 payments and Polymarket orders are signed locally — BlockRun forwards signed payloads and cannot move your funds.
 
 **Which clients work?**
 Claude Code, Claude Desktop, Cursor, Windsurf, and any MCP-compatible client.
