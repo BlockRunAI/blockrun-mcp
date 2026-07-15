@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@blockrun/llm": "^3.5.2",
+    "@blockrun/llm": "^3.6.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
     "@polymarket/builder-signing-sdk": "0.0.8",
