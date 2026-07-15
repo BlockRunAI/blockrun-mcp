@@ -2,6 +2,11 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.30.7
+
+- **`docs` — the README documented a feature 0.30.6 deleted.** `routing:"smart"` was removed from `blockrun_chat` along with the ClawRouter dependency, but three README claims survived the release and shipped inside the package (`files` includes `README.md`, so it is also what npmjs.com renders): the Base-only fallback list, a **CRITICAL** note telling agents smart routing is Base-only, and a troubleshooting entry for a `Smart routing (ClawRouter) not available on Solana` error that can no longer occur. Anyone following them would pass `routing:"smart"`, get nothing back, and reasonably conclude the server was broken — the exact failure mode 0.30.6 set out to end. Removed all three. The ClawRouter links under Related Projects stay: it is still a real product, just no longer anything this server depends on.
+- No code change; `dist/` is byte-identical to 0.30.6.
+
 ## 0.30.6
 
 - **`fix(deps)` — decouple from ClawRouter, and bust the npx caches poisoned by its outage.** From 2026-07-11 to 07-14, `npx -y @blockrun/mcp@latest` could not start at all: `SyntaxError: Identifier '__cjs_createRequire' has already been declared`. Nothing was wrong with this package. `@blockrun/clawrouter@0.12.220` published a bundle that had inlined a stale copy of *itself* (it and `@blockrun/llm` depend on each other, so its own `noExternal` build resolved the back-import to the last published dist in `node_modules`), and the duplicated banner made every entrypoint a load-time `SyntaxError`. Fixed upstream in `@blockrun/clawrouter@0.12.222`.
