@@ -2,6 +2,16 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.31.3
+
+- **`docs(modal)` — the tool and skill advertised `$0.01` for a call that can cost `$192`.** 0.31.2 fixed the *reserve* so the gate catches it; this fixes what we **tell the agent**, which is what walks it into the charge in the first place. Three separate lies, all live-verified:
+  - **The price table said a flat `$0.01`.** `sandbox/create` is bimodal: `timeout ≤ 300s` is flat ($0.0120 CPU → $0.4020 H100); `timeout > 300s` bills **per-hour × the full requested lifetime, upfront, with no refund on early terminate** ($0.10/h CPU → $8.00/h H100). A 24h H100 sandbox is **$192.0020**.
+  - **The skill's own worked example cost 67× its table.** `{ gpu: "A100", timeout: 600 }` quotes **$0.6687** live, not `$0.01`. Anyone copying the documented snippet was already on hourly billing and had no way to know.
+  - **`timeout` was documented as "idle eviction".** It is the **billed lifetime** — you pay for the time you *ask for*, not the time you use. An agent told "idle eviction" would reasonably set a generous `86400` ceiling expecting to pay for what it consumes. That single misreading *is* the $192.
+  - Also removed `A100-80GB` from the advertised GPU list — it does not exist; the gateway returns `HTTP 400 "Unsupported GPU type. Allowed: T4, L4, A10G, A100, H100"`.
+- Every one of the 13 published prices was checked against the live `payment-required` header and matches exactly ($0.0120 / $0.0520 / $0.0820 / $0.1020 / $0.2020 / $0.4020 flat; $0.1020 / $1.5020 / $4.0020 / $8.0020 / $192.0020 / $0.6687 / $2.0020 hourly). Documents the flat→hourly cliff too: `timeout:300` is $0.0120 but `timeout:301` is $0.0104 — briefly cheaper on CPU, until ~432s.
+- No code change to pricing logic; 165 tests, typecheck, build green.
+
 ## 0.31.2
 
 Found by an adversarial multi-agent audit of everything shipped tonight. 0.31.1 fixed three tools by hand; that was treating symptoms. The gateway applies its flat $0.002 transaction fee in `buildPaymentRequirements` for **every** route, so **every** tool reserving the base was short. This fixes the class.
