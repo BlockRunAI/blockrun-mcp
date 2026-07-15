@@ -19,9 +19,56 @@ type RawClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-function estimateModalCost(path: string): number {
-  // withTxFee: base + $0.002. Reserving the base was 3x short on non-create calls.
-  return withTxFee(path.includes("sandbox/create") ? 0.01 : 0.001);
+// sandbox/create is priced off the BODY, not the path. Mirrors
+// getModalCreatePricing() in the gateway's src/lib/modal.ts:
+//
+//   timeout <= 300s  -> flat rate: CPU $0.01, or the GPU tier below
+//   timeout >  300s  -> hourly:    rate x (timeout/3600), EXACT (not rounded up),
+//                                  charged upfront for the full requested lifetime
+//                                  with NO refund on early terminate
+//
+// Estimating on the path alone reserved a flat $0.01 for every create. Verified
+// live against the payment-required header:
+//
+//   { timeout: 86400, gpu: "H100" } -> charged $192.0020   (reserved $0.012 — 16,000x short)
+//   { timeout: 3600,  gpu: "A100" } -> charged   $4.0020
+//   { timeout: 300 }                -> charged   $0.0120
+//
+// A $1 agent cap could settle $192 of non-refundable spend. Keep these tables in
+// step with the gateway's; an unknown gpu string falls back to the CPU rate there,
+// so it does here too.
+const MODAL_FLAT_RATE_MAX_SECONDS = 300;
+const MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS = 300;
+const MODAL_CREATE_PRICE_USD = 0.01;
+const MODAL_OPERATION_PRICE_USD = 0.001;
+const MODAL_GPU_CREATE_PRICE_USD: Record<string, number> = {
+  T4: 0.05, L4: 0.08, A10G: 0.10, A100: 0.20, H100: 0.40,
+};
+const MODAL_CPU_HOURLY_PRICE_USD = 0.1;
+const MODAL_GPU_HOURLY_PRICE_USD: Record<string, number> = {
+  T4: 1.5, L4: 2.0, A10G: 2.5, A100: 4.0, H100: 8.0,
+};
+
+/** Exported for tests. Returns what x402 will CHARGE (base + the flat tx fee). */
+export function estimateModalCost(path: string, body?: unknown): number {
+  if (!path.includes("sandbox/create")) return withTxFee(MODAL_OPERATION_PRICE_USD);
+
+  const o = body && typeof body === "object" ? (body as { gpu?: unknown; timeout?: unknown }) : {};
+  const gpu = typeof o.gpu === "string" ? o.gpu : undefined;
+  // A non-numeric/absent timeout defaults to 300s upstream — the flat tier.
+  const seconds =
+    typeof o.timeout === "number" && Number.isFinite(o.timeout) && o.timeout > 0
+      ? o.timeout
+      : MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS;
+
+  if (seconds > MODAL_FLAT_RATE_MAX_SECONDS) {
+    // An unknown or empty gpu string falls back to the CPU rate — same as the
+    // gateway's `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`.
+    const hourly = gpu !== undefined ? MODAL_GPU_HOURLY_PRICE_USD[gpu] : undefined;
+    return withTxFee((hourly ?? MODAL_CPU_HOURLY_PRICE_USD) * (seconds / 3600));
+  }
+  const flat = gpu !== undefined ? MODAL_GPU_CREATE_PRICE_USD[gpu] : undefined;
+  return withTxFee(flat ?? MODAL_CREATE_PRICE_USD);
 }
 
 // Modal sandbox/exec is synchronous — the HTTP call stays open for the whole
@@ -68,7 +115,8 @@ Full action shapes + GPU type details in the \`modal\` skill.`,
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
-        const estimatedCost = estimateModalCost(cleanPath);
+        // Pass the body: sandbox/create is priced from gpu + timeout, not the path.
+        const estimatedCost = estimateModalCost(cleanPath, body);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {

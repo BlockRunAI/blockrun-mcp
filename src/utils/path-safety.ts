@@ -20,11 +20,28 @@
  * `\` as `/`, so `%2e%2e/...`, `.%2e/...`, and `..\..\...` normalize into
  * traversal too. A single decode matches the parser (it does not double-decode
  * `%252e`); a malformed `%` is left as-is rather than throwing.
+ *
+ * STRIP TAB/LF/CR FIRST. Per the URL spec the parser *removes* every ASCII tab
+ * (U+0009), newline (U+000A) and carriage return (U+000D) from its input before
+ * parsing — so `..<TAB>` is not a `..` segment to a naive equality check, but IS
+ * one by the time fetch() resolves it. That gap was exploitable:
+ *
+ *   blockrun_surf({ path: "..\t/phone/numbers/buy" })
+ *     -> guard sees the segment "..\t", not "..", and passes
+ *     -> parser strips the tab -> /api/v1/phone/numbers/buy
+ *     -> reserved $0.0095 (surf's price), charged $5.00
+ *
+ * A 526x under-reserve that also escapes profile scoping (a research-profile
+ * install could buy phone numbers). Verified: all of `..\t/`, `.\t./`, `..\n/`,
+ * `..\r/`, `\t../` and `..\t\` landed on /api/v1/phone/numbers/buy before this.
  */
 export function hasPathTraversal(path: string): boolean {
   let decoded = path;
   try { decoded = decodeURIComponent(path); } catch { /* malformed %: check raw */ }
-  return decoded.split(/[/\\]/).some((seg) => seg === ".." || seg === ".");
+  // Mirror the URL parser: it deletes these outright, so we must too before
+  // comparing segments — otherwise the string we check is not the string it sends.
+  const asParsed = decoded.replace(/[\t\n\r]/g, "");
+  return asParsed.split(/[/\\]/).some((seg) => seg === ".." || seg === ".");
 }
 
 /**

@@ -52,7 +52,14 @@ export function estimateSearchCost(body: unknown): number {
   };
   if (!body || typeof body !== "object") return reserve(SEARCH_DEFAULT_MAX_RESULTS);
   const raw = (body as { max_results?: unknown }).max_results;
-  const max = typeof raw === "number" && raw > 0 ? Math.min(50, Math.floor(raw)) : SEARCH_DEFAULT_MAX_RESULTS;
+  // Do NOT floor. The gateway prices the RAW value: max_results 2.7 quotes a base
+  // of $0.0709 while 2 quotes $0.0525 (2.7 x 0.025 x 1.05 exactly). Flooring to 2
+  // reserved $0.0525+fee against a $0.0709+fee charge. Cap at 50 to match the
+  // upstream ceiling; anything non-finite falls back to the default.
+  const max =
+    typeof raw === "number" && Number.isFinite(raw) && raw > 0
+      ? Math.min(50, raw)
+      : SEARCH_DEFAULT_MAX_RESULTS;
   return reserve(max);
 }
 

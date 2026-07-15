@@ -23,6 +23,37 @@ test("hasPathTraversal catches percent-encoded and backslash traversal", () => {
   assert.equal(hasPathTraversal("..\\..\\v1\\voice\\call"), true);
 });
 
+// Per the URL spec the parser DELETES every ASCII tab (U+0009), LF (U+000A) and
+// CR (U+000D) from its input before parsing. So "..<TAB>" is not a ".." segment
+// to a naive equality check, but IS one by the time fetch() resolves it. The
+// literal + %2e + backslash checks above all missed this shape, and it was live:
+//
+//   blockrun_surf({ path: "..\t/phone/numbers/buy" })
+//     -> guard saw the segment "..\t", passed it
+//     -> parser stripped the tab -> /api/v1/phone/numbers/buy
+//     -> reserved $0.0095 (surf), charged $5.00 — a 526x under-reserve that also
+//        escapes profile scoping (a research-profile install could buy numbers).
+//
+// Each case is asserted against the REAL parser first: a guard test that blocks
+// something harmless proves nothing.
+test("hasPathTraversal catches tab/newline-obfuscated traversal (URL parser strips them)", () => {
+  const BASE = "https://blockrun.ai/api/v1/surf/";
+  const escapes = (p: string) => {
+    try { return !new URL(BASE + p).pathname.startsWith("/api/v1/surf/"); } catch { return false; }
+  };
+  for (const p of [
+    "..\t/phone/numbers/buy",
+    ".\t./phone/numbers/buy",
+    "..\n/phone/numbers/buy",
+    "..\r/phone/numbers/buy",
+    "\t../phone/numbers/buy",
+    "..\t\\phone/numbers/buy",
+  ]) {
+    assert.equal(escapes(p), true, `precondition: ${JSON.stringify(p)} must actually escape the namespace`);
+    assert.equal(hasPathTraversal(p), true, `${JSON.stringify(p)} reaches ${new URL(BASE + p).pathname} but was not blocked`);
+  }
+});
+
 test("hasPathTraversal tolerates a malformed percent and legit encoded chars", () => {
   assert.equal(hasPathTraversal("foo%zzbar"), false); // malformed % must not throw
   assert.equal(hasPathTraversal("search/web%20query"), false); // %20 → space, no traversal
