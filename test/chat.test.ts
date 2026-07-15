@@ -9,49 +9,40 @@ function newBudget(limit: number | null = null): BudgetState {
   return { limit, spent: 0, calls: 0, agents: new Map() };
 }
 
-// ── #1: routing:"smart" + routing_profile:"free" must NOT bypass the gate ──
-test("estimateChatCost reserves a non-zero amount for smart+free (paid model, no bypass)", () => {
-  // routing_profile:"free" maps to undefined → the SDK routes to a PAID auto
-  // tier, so reserving $0 here would skip the budget gate entirely.
-  assert.ok(estimateChatCost(1024, undefined, undefined, "smart", "free") > 0);
-});
-
-test("estimateChatCost: smart+free reserves the same as smart+auto", () => {
-  assert.equal(
-    estimateChatCost(1024, undefined, undefined, "smart", "free"),
-    estimateChatCost(1024, undefined, undefined, "smart", "auto"),
-  );
-});
+// routing:"smart" was removed in 0.30.6 along with the ClawRouter dependency, so
+// the smart+free gate-bypass cases it used to guard are gone with it. Every path
+// below still resolves a tier/model AFTER the gate, so the worst-case reserve
+// rules these pin are what keep an agent loop from draining the wallet.
 
 test("estimateChatCost reserves for the extended-thinking budget, not just max_tokens", () => {
-  const noThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8", undefined, undefined);
-  const withThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8", undefined, undefined, 100_000);
+  const noThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8");
+  const withThink = estimateChatCost(1024, undefined, "anthropic/claude-opus-4.8", 100_000);
   assert.ok(withThink > noThink * 10, `100k thinking budget should reserve far more (got ${withThink} vs ${noThink})`);
 });
 
 test("estimateChatCost keeps genuinely-free paths at $0", () => {
-  assert.equal(estimateChatCost(1024, "free", undefined, undefined, undefined), 0);
-  assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash", undefined, undefined), 0);
+  assert.equal(estimateChatCost(1024, "free", undefined), 0);
+  assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash"), 0);
 });
 
 // ── balanced/coding tiers have FRONTIER primaries (gpt-5.5 / claude-opus-4.8),
 //    so the gate must reserve the frontier worst-case — not the cheap heuristic ──
 test("estimateChatCost reserves the frontier worst-case for balanced/coding (their primary is a frontier model)", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
-  assert.equal(estimateChatCost(1024, "balanced", undefined, undefined, undefined), frontier);
-  assert.equal(estimateChatCost(1024, "coding", undefined, undefined, undefined), frontier);
+  const frontier = estimateChatCost(1024, "reasoning", undefined);
+  assert.equal(estimateChatCost(1024, "balanced", undefined), frontier);
+  assert.equal(estimateChatCost(1024, "coding", undefined), frontier);
 });
 
 test("estimateChatCost reserves the frontier worst-case for a no-mode chat (defaults to the balanced tier → gpt-5.5)", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
-  assert.equal(estimateChatCost(1024, undefined, undefined, undefined, undefined), frontier);
+  const frontier = estimateChatCost(1024, "reasoning", undefined);
+  assert.equal(estimateChatCost(1024, undefined, undefined), frontier);
 });
 
 test("estimateChatCost keeps the explicitly-cheap tiers on the budget-model heuristic", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, undefined);
+  const frontier = estimateChatCost(1024, "reasoning", undefined);
   for (const mode of ["cheap", "fast", "glm"]) {
     assert.ok(
-      estimateChatCost(1024, mode, undefined, undefined, undefined) < frontier,
+      estimateChatCost(1024, mode, undefined) < frontier,
       `${mode} should stay on the cheap heuristic, not the frontier reserve`,
     );
   }
