@@ -8,6 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
@@ -19,7 +20,10 @@ type RawClient = {
 
 // prices/* is $0.001; protocols / protocol/{slug} / chains / yields are $0.005.
 function estimateDefiCost(path: string): number {
-  return path.startsWith("prices") ? 0.001 : 0.005;
+  // withTxFee: gateway charges base + $0.002 (src/utils/tx-fee.ts). Verified live:
+  // defillama/protocols base $0.0050 -> charged $0.0070; prices/* $0.001 -> $0.003.
+  // Reserving the base was 3x short on prices/*.
+  return withTxFee(path.startsWith("prices") ? 0.001 : 0.005);
 }
 
 export function registerDefiTool(server: McpServer, budget: BudgetState): void {

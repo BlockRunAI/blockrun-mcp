@@ -8,6 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -22,16 +23,35 @@ type RawClient = {
 // Exported for unit tests. Normalizes the slug (drops query/trailing-slash/case)
 // before the exact-match pricing so a perturbed path can't downgrade an
 // expensive route to the $0.001 default while the gateway charges full price.
+// Conservative reserve for a phone path we do not recognise. MUST NOT be $0.
+//
+// The old catch-all returned $0 for any unlisted GET, and the gateway has paid
+// routes this table never knew about: /v1/phone/numbers/search is live and
+// charges $0.0120 (verified against its payment-required header) while
+// reserving — and recording — $0. That is spend the ledger never sees, and a
+// gate an exhausted budget walks straight through. The gateway's own
+// PHONE_PRICES does not list numbers/search either, so this table cannot be
+// trusted to stay complete: fail CLOSED on the unknown.
+//
+// $0.0120 is the charge for the priciest known cheap-ish route (lookup and
+// numbers/search both settle there), so it covers today's unknowns without
+// blocking a reasonable budget. Genuinely free reads stay $0 via explicit match.
+const PHONE_UNKNOWN_RESERVE_USD = 0.012;
+
 export function estimatePhoneCost(rawPath: string, hasBody: boolean): number {
   const path = normalizeClassifyPath(rawPath);
+  // Explicitly free — matched exactly, never by fallthrough.
   if (!hasBody && path.startsWith("voice/call/")) return 0;
   if (path === "phone/numbers/release") return 0;
-  if (path === "phone/lookup") return 0.01;
-  if (path === "phone/lookup/fraud") return 0.05;
-  if (path === "phone/numbers/buy" || path === "phone/numbers/renew") return 5;
-  if (path === "phone/numbers/list") return 0.001;
-  if (path === "voice/call") return 0.54;
-  return hasBody ? 0.001 : 0;
+  // Known paid routes: base + the gateway's $0.002 flat fee (src/utils/tx-fee.ts).
+  // Verified live: lookup base $0.010 -> charged $0.0120; numbers/list $0.001 -> $0.0030.
+  if (path === "phone/lookup") return withTxFee(0.01);
+  if (path === "phone/lookup/fraud") return withTxFee(0.05);
+  if (path === "phone/numbers/buy" || path === "phone/numbers/renew") return withTxFee(5);
+  if (path === "phone/numbers/list") return withTxFee(0.001);
+  if (path === "voice/call") return withTxFee(0.54);
+  // Unknown: fail closed rather than reserve $0.
+  return PHONE_UNKNOWN_RESERVE_USD;
 }
 
 export function registerPhoneTool(server: McpServer, budget: BudgetState): void {

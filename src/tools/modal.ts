@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { buildClientWithTimeout } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -19,7 +20,8 @@ type RawClient = {
 };
 
 function estimateModalCost(path: string): number {
-  return path.includes("sandbox/create") ? 0.01 : 0.001;
+  // withTxFee: base + $0.002. Reserving the base was 3x short on non-create calls.
+  return withTxFee(path.includes("sandbox/create") ? 0.01 : 0.001);
 }
 
 // Modal sandbox/exec is synchronous — the HTTP call stays open for the whole

@@ -2,6 +2,16 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.31.2
+
+Found by an adversarial multi-agent audit of everything shipped tonight. 0.31.1 fixed three tools by hand; that was treating symptoms. The gateway applies its flat $0.002 transaction fee in `buildPaymentRequirements` for **every** route, so **every** tool reserving the base was short. This fixes the class.
+
+- **`fix(chat)` — CRITICAL: `mode:"free"` plus an explicit PAID model reserved $0, a total budget-gate bypass.** `estimateChatCost` returned `0` on `mode === "free"` unconditionally, but an explicit `model` **wins over `mode`** at call time (`targetModel = model || MODEL_TIERS[mode ?? "balanced"][0]`). So `{ mode:"free", model:"openai/gpt-5.5" }` ran a frontier model against a **$0 reserve** — any agent, including one already at its cap, got unmetered frontier calls by tacking on `mode:"free"`. Worst case measured: `mode:"free"` + `claude-opus-4.8` + a 100k thinking budget reserved **$0** on a call that settles over **$2**. Now an explicit model is priced on its own merits and `mode:"free"` only grants free when no model overrides it; genuinely free paths (`mode:"free"` alone, `nvidia/*`) still reserve $0.
+- **`fix(phone)` — CRITICAL: unlisted paid routes reserved AND recorded $0.** The catch-all returned `hasBody ? 0.001 : 0`, so any paid GET missing from the table was invisible to both the gate and the ledger. **`/v1/phone/numbers/search` is live and charges $0.0120** — and appears in neither this table nor the gateway's own `PHONE_PRICES`, so the table cannot be trusted to stay complete. Unknown routes now **fail closed** at $0.0120; explicitly-free reads stay $0.
+- **`fix(budget)` — the $0.002 tx fee was missing from six more estimators.** New shared `src/utils/tx-fee.ts` (`withTxFee`) mirrors the gateway's `addTransactionFee`, including its `$0` no-op so free tiers stay free. Verified against live `payment-required` headers: `defillama/protocols` $0.005→**$0.0070**, `prices/*` $0.001→**$0.0030** (3x short), `exa/search` $0.010→**$0.0120**, `rpc` $0.002→**$0.0040** (2x short), `phone/lookup` $0.010→**$0.0120**, `phone/numbers/list` $0.001→**$0.0030** (3x short), plus `modal`. `rpc` batches take the fee **once per request, not per element**.
+- **`fix(chat)` — float drift in the reserve.** `(1024/1e6)*20` is `0.020479999999999998`, which surfaced verbatim in budget messages. Rounded to micro-dollars.
+- 160 tests (new fail-closed coverage for `phone`), typecheck, build, stdio smoke green; every fixed reserve checked against the live gateway.
+
 ## 0.31.1
 
 - **`fix(budget)` — every paid tool reserved the BASE price, not the price. The 402's JSON `price` field is not what x402 charges.** A 402 body reports `price: {amount: "0.0075"}` — that is the base. What actually gets charged is `maxAmountRequired` inside the base64 **`payment-required` header**, and it is base **+ a $0.002 flat transaction fee**. The gateway states the split itself in `src/app/api/v1/pm/[...path]/route.ts`: *"Tier 1 (GET) = $0.0095/call ($0.0075 base + $0.002 tx fee)"*. Decoded live: every `/v1/surf/*` and `/v1/pm/*` route returns `maxAmountRequired=9500` → **$0.0095**.
