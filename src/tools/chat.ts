@@ -6,6 +6,7 @@ import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
 
@@ -24,9 +25,25 @@ export function estimateChatCost(
   model: string | undefined,
   thinkingBudget?: number,
 ): number {
-  // Free paths bypass the gate entirely.
-  if (mode === "free") return 0;
-  if (model?.startsWith("nvidia/")) return 0;
+  // Free paths bypass the gate entirely — but ONLY when the call is genuinely
+  // free, and `mode` alone does not make it so.
+  //
+  // An explicit `model` WINS over `mode` at call time:
+  //   targetModel = model || MODEL_TIERS[mode ?? "balanced"][0] || "openai/gpt-5.5"
+  // so { mode: "free", model: "openai/gpt-5.5" } runs gpt-5.5 and settles at
+  // frontier prices. Returning 0 for it — which is what an unconditional
+  // `mode === "free"` check does — is a TOTAL budget-gate bypass: any agent, even
+  // one already at its cap, gets unmetered frontier calls by tacking on
+  // mode:"free". Worst case measured: mode:"free" + claude-opus-4.8 + a 100k
+  // thinking budget reserved $0 on a call that can settle over $2.
+  //
+  // So: an explicit model decides on its own merits; `mode` only grants free when
+  // no model overrides it.
+  if (model) {
+    if (model.startsWith("nvidia/")) return 0; // genuinely free, whatever the mode
+  } else if (mode === "free") {
+    return 0; // no model to override it — resolves to the free tier
+  }
 
   // Anthropic bills extended-thinking tokens as output, so the thinking budget —
   // not max_tokens — is the dominant cost driver on the native claude-* path.
@@ -35,7 +52,11 @@ export function estimateChatCost(
   const out = Math.max((maxTokens ?? 1024) + (thinkingBudget ?? 0), 256);
   // ~$20 / 1M output tokens — a conservative upper bound covering premium
   // frontier output, floored so tiny completions still reserve something real.
-  const frontierReserve = Math.max(0.01, (out / 1_000_000) * 20);
+  // withTxFee: the gateway charges base + $0.002 (see src/utils/tx-fee.ts). The
+  // reserve must cover the CHARGE, not the base. Rounded to micro-dollars because
+  // the raw float drifts — (1024/1e6)*20 is 0.020479999999999998, which then
+  // surfaces verbatim in budget messages.
+  const frontierReserve = withTxFee(Math.max(0.01, Math.round((out / 1_000_000) * 20 * 1e6) / 1e6));
 
   // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
   // single model, can settle at a price we can't know up front — reserve
@@ -58,7 +79,7 @@ export function estimateChatCost(
   if (model) return frontierReserve;
 
   // Only the explicitly-cheap tiers (cheap/fast/glm) pick budget models.
-  return Math.max(0.002, (out / 1_000_000) * 3);
+  return withTxFee(Math.max(0.002, Math.round((out / 1_000_000) * 3 * 1e6) / 1e6));
 }
 
 /**

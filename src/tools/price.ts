@@ -15,6 +15,7 @@ import type {
   MarketSession,
 } from "@blockrun/llm";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
@@ -81,7 +82,10 @@ Examples:
           };
         }
 
-        const estimatedCost = paid ? 0.001 : 0;
+        // withTxFee: the gateway charges base + $0.002 (src/utils/tx-fee.ts), so a
+        // paid stock call settles at $0.0030 against a $0.001 base — reserving the
+        // base was 3x short. Free categories (crypto/fx/commodity) stay $0.
+        const estimatedCost = paid ? withTxFee(0.001) : 0;
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {

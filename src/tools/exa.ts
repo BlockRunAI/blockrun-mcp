@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -22,9 +23,12 @@ function estimateExaCost(path: string, body: unknown): number {
   const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
   if (cleanPath === "contents") {
     const urls = body && typeof body === "object" ? (body as { urls?: unknown }).urls : undefined;
-    return 0.002 * (Array.isArray(urls) && urls.length > 0 ? urls.length : 1);
+    // One flat fee per REQUEST, not per URL — the gateway adds it once to the
+    // whole priced call (see addTransactionFee in the gateway's lib/models.ts).
+    return withTxFee(0.002 * (Array.isArray(urls) && urls.length > 0 ? urls.length : 1));
   }
-  return 0.01;
+  // Verified live: exa/search charged $0.0120 against a $0.010 base.
+  return withTxFee(0.01);
 }
 
 export function registerExaTool(server: McpServer, budget: BudgetState): void {

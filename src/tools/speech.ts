@@ -11,6 +11,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
@@ -54,7 +55,12 @@ const VOICE_ALIASES: Array<{ alias: string; description: string }> = [
 function speechCost(model: string, charCount: number): number {
   const m = SPEECH_MODELS[model];
   const raw = (charCount / 1000) * (m?.pricePer1kChars ?? 0.05) * MARGIN;
-  return Math.max(raw, MIN_PAYMENT_USD);
+  // MIN_PAYMENT_USD mirrors the server's BASE floor, not its charge: the gateway
+  // adds a flat $0.002 tx fee on top, and its own route says so —
+  // "Price = (characters / 1000) x model rate, minimum $0.003/request"
+  // (api/v1/audio/speech/route.ts). Reserving the $0.001 floor was 3x short on
+  // every short render; a 10k-char one was $0.002 short.
+  return withTxFee(Math.max(raw, MIN_PAYMENT_USD));
 }
 
 export function registerSpeechTool(server: McpServer, budget: BudgetState): void {

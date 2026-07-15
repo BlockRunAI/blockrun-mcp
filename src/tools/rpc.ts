@@ -10,6 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -62,7 +63,11 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
         }
 
         const batchCount = Array.isArray(body) ? Math.max(body.length, 1) : 1;
-        const estimatedCost = RPC_PRICE_USD * batchCount;
+        // The gateway prices a batch per element, then adds ONE flat $0.002
+        // transaction fee to the whole request — so the fee wraps the product, it
+        // is not charged per element. Verified live: a single rpc call charged
+        // $0.004 against a $0.002 base, i.e. 2x what the old reserve covered.
+        const estimatedCost = withTxFee(RPC_PRICE_USD * batchCount);
 
         const cleanNetwork = network.trim().toLowerCase().replace(/^\/+|\/+$/g, "");
         // A chain slug never contains '/', '.', or '..'. Reject anything else so
