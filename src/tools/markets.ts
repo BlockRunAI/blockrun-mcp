@@ -27,7 +27,7 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
   server.registerTool(
     "blockrun_markets",
     {
-      description: `Prediction market + derivatives data via Predexon aggregator. Tier 1 = $0.001/call, Tier 2 = $0.005/call.
+      description: `Prediction market + derivatives data via Predexon aggregator. Flat $0.0075/call (every endpoint)/call.
 
 CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
 - markets — list canonical market/question containers with cross-venue Predexon IDs

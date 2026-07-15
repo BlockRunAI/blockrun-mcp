@@ -68,11 +68,13 @@ Wrong / missing required params return HTTP 400 **without charging** — pre-val
 
 ## Do NOT use Surf for prediction markets
 
-Surf carries 17 `prediction-market/*` endpoints (Polymarket + Kalshi). **Use `blockrun_markets` (Predexon) instead — same data, 7.5× cheaper, and far deeper.**
+Surf carries 17 `prediction-market/*` endpoints (Polymarket + Kalshi). **Use `blockrun_markets` (Predexon) instead — same data, same price, and far deeper.**
+
+Predexon used to be 7.5× cheaper; since 2026-07-15 both bill the same flat rate, so the choice is now purely about coverage — and Predexon still wins on coverage by a wide margin.
 
 | | Predexon (`blockrun_markets`) | Surf |
 |---|---|---|
-| Polymarket / Kalshi markets | **$0.0010** | $0.0075 |
+| Polymarket / Kalshi markets | $0.0075 | $0.0075 (same) |
 | Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
 | Limitless, Opinion, Predict.Fun, dFlow, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
 

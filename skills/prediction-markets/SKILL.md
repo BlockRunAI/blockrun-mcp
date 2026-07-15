@@ -77,8 +77,7 @@ Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child a
 
 | Tier | Price | What |
 |---|---|---|
-| **Tier 1** | $0.001 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA |
-| **Tier 2** | $0.005 | Wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
+| **All endpoints** | $0.0075 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
 
 Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base treasury.
 

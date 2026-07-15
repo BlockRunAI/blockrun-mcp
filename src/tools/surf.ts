@@ -16,7 +16,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
-import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
+import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type SurfClient = {
@@ -29,51 +29,25 @@ type SurfClient = {
 // list endpoints rather than use loose substring matching so a future T2
 // endpoint under wallet/* or social/* doesn't silently get charged as T1.
 
-// Tier 3 — $0.02. Heavy ClickHouse SQL, structured queries, surf-1.5 chat.
-const SURF_T3_PATHS = new Set([
-  "onchain/sql",
-  "onchain/query",
-  "onchain/schema",
-  "chat/completions",
-]);
+// Flat per-call price for EVERY Surf endpoint, base only (the gateway adds a
+// $0.002 transaction fee on top → $0.0095 customer-facing). Keep in step with
+// SURF_TIER_*_PRICE in the gateway's src/lib/surf.ts.
+export const SURF_PRICE_USD = 0.0075;
 
-// Tier 2 — $0.005. Exact-path matches.
-const SURF_T2_PATHS = new Set([
-  "exchange/depth",
-  "exchange/klines",
-  "exchange/funding-history",
-  "exchange/long-short-ratio",
-  "market/liquidation/exchange-list",
-  "market/liquidation/order",
-  "market/liquidation/chart",
-  "market/onchain-indicator",
-  "market/price-indicator",
-  "prediction-market/polymarket/positions",
-  "prediction-market/polymarket/activity",
-  "social/detail",
-  "social/ranking",
-  "social/smart-followers/history",
-  "social/mindshare",
-  "token/dex-trades",
-  "token/holders",
-  "token/transfers",
-  "web/fetch",
-]);
-
-// Tier 2 — $0.005. Namespace prefixes (every endpoint under these is T2).
-const SURF_T2_PREFIXES = ["search/", "wallet/"];
-
-// Exported for unit tests. Normalizes the slug (drops query/trailing-slash/case)
-// before the exact-set lookups so a perturbed T2/T3 path can't be under-recorded
-// as the $0.001 default while the gateway charges the real tier.
-export function estimateSurfCost(path: string): number {
-  const p = normalizeClassifyPath(path);
-  if (SURF_T3_PATHS.has(p)) return 0.02;
-  if (SURF_T2_PATHS.has(p)) return 0.005;
-  for (const prefix of SURF_T2_PREFIXES) {
-    if (p.startsWith(prefix)) return 0.005;
-  }
-  return 0.001;
+// Exported for unit tests.
+//
+// Surf is now a FLAT $0.0075/call — every endpoint, every former tier (gateway
+// change 2026-07-15: one network-uniform price across Surf and Predexon). The
+// tier sets above are retained because they still describe endpoint weight, but
+// they no longer affect price.
+//
+// This estimator feeds the BUDGET GATE, so it must never under-quote: it used
+// to return $0.001/$0.005/$0.02 while the gateway had already moved to
+// $0.0075 for T1/T2 — under-reserving on every cheap-looking call. A flat rate
+// removes the whole class of drift, since there is no longer a tier to
+// misclassify.
+export function estimateSurfCost(_path: string): number {
+  return SURF_PRICE_USD;
 }
 
 export function registerSurfTool(server: McpServer, budget: BudgetState): void {
@@ -85,9 +59,7 @@ export function registerSurfTool(server: McpServer, budget: BudgetState): void {
 Coverage: CEX market data (16 exchanges), on-chain SQL across 13 chains, 100M+ labeled wallets, prediction markets (Polymarket + Kalshi), social mindshare / CT intelligence, news, unified search, and Surf-1.5 chat with citations.
 
 Pricing (settled in USDC to Surf's Base treasury):
-- Tier 1 $0.001 — prices, rankings, lists, news, profiles, simple reads
-- Tier 2 $0.005 — order books, candles, search, wallet detail, social aggregates
-- Tier 3 $0.020 — raw on-chain SQL, structured queries, surf-1.5 chat
+- Flat $0.0075/call — every endpoint, including raw on-chain SQL. No tiers.
 
 Common paths (full 84-endpoint catalog in the surf skill):
 - market/price?symbol=BTC                     (T1)
