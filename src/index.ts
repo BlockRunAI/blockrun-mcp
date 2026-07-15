@@ -13,6 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { initializeMcpServer } from "./mcp-handler.js";
 import { warnOnLeakedKeys } from "./utils/key-leak-scanner.js";
+import { installBlockrunMcpUserAgent } from "./utils/user-agent.js";
 import { PROFILES } from "./profiles.js";
 
 // Read version from package.json so it can never drift from the published version.
@@ -54,6 +55,7 @@ function handleCliMetadataFlags(argv: string[]): void {
 }
 
 handleCliMetadataFlags(process.argv);
+installBlockrunMcpUserAgent(VERSION);
 
 async function checkForUpdate() {
   try {
