@@ -64,10 +64,12 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 | Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.001 |
 | Raw JSON-RPC on 40+ chains | `blockrun_rpc` | $0.002 |
 | Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.005 |
-| **Everything below** (on-chain SQL, wallet labels, social, news, unlocks, liquidations, ETF flows) | `blockrun_surf` | $0.0095 |
-| Raw SQL over 80+ ClickHouse tables | `blockrun_surf` path:"onchain/sql" | $0.022 |
+| **Everything below** (on-chain SQL, wallet labels, social, news, unlocks, liquidations, ETF flows) | `blockrun_surf` | $0.0075 |
+| Raw SQL over 80+ ClickHouse tables | `blockrun_surf` path:"onchain/sql" | $0.020 |
 
 **The rule:** a plain crypto price or a DEX pair is free. Only reach for `blockrun_surf` when you need something the free tools genuinely do not have — labels, SQL, social, news, unlocks.
+
+**Prediction markets are never a Surf question.** Surf carries `prediction-market/*` endpoints, but Predexon (`blockrun_markets`) serves the same Polymarket/Kalshi data at **$0.0010 vs $0.0075 — 7.5× cheaper** — and adds wallet clustering, smart money, sports, UMA, and five more venues that Surf does not have at all. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 
 ## blockrun_price — quotes & history (Pyth-backed)
 
@@ -127,7 +129,7 @@ blockrun_surf({ path: "market/etf",          params: { symbol: "BTC" } })       
 blockrun_surf({ path: "social/mindshare",    params: { project: "base" } })
 blockrun_surf({ path: "onchain/sql", body: {
   sql: "SELECT token_address, count() FROM ethereum.dex_trades WHERE block_time > now() - INTERVAL 1 DAY GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-}})                                                                                   // $0.022
+}})                                                                                   // $0.020
 ```
 
 ## blockrun_rpc — raw chain access
@@ -146,7 +148,7 @@ blockrun_rpc({ chain: "base", method: "eth_blockNumber", params: [] })
 blockrun_price({ action: "price", category: "crypto", symbol: "BTC-USD" })   // FREE
 ```
 
-Not `blockrun_surf({ path: "market/price" })` — that is $0.0095 for the same answer.
+Not `blockrun_surf({ path: "market/price" })` — that is $0.0075 for the same answer.
 
 ### 2. "Is this token legit?" ← compound, mostly free
 

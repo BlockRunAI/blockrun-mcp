@@ -55,15 +55,30 @@ blockrun_surf({ path: "chat/completions", body: {
 }})
 ```
 
-## Three Pricing Tiers
+## Pricing — two tiers, flat
 
 | Tier | Price | Used by |
 |------|-------|---------|
-| 1 | $0.001 | prices, rankings, lists, news, profiles, simple reads (~50 endpoints) |
-| 2 | $0.005 | order books, candles, search, wallet detail, social aggregates (~30 endpoints) |
-| 3 | $0.020 | raw on-chain SQL, structured queries, surf-1.5 chat (3 endpoints) |
+| Standard | $0.0075 | every read: prices, rankings, news, order books, candles, search, wallet detail, social, prediction markets (80 endpoints) |
+| Premium | $0.0200 | raw on-chain SQL, schema introspection, structured queries (3 endpoints) |
+
+Verified against the gateway's own 402 responses, which are free to request — send any call with no payment header and it replies with the exact price. Standard is genuinely flat: `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines` and `search/web` all quote $0.0075.
 
 Wrong / missing required params return HTTP 400 **without charging** — pre-validation runs before settlement.
+
+## Do NOT use Surf for prediction markets
+
+Surf carries 17 `prediction-market/*` endpoints (Polymarket + Kalshi). **Use `blockrun_markets` (Predexon) instead — same data, 7.5× cheaper, and far deeper.**
+
+| | Predexon (`blockrun_markets`) | Surf |
+|---|---|---|
+| Polymarket / Kalshi markets | **$0.0010** | $0.0075 |
+| Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
+| Limitless, Opinion, Predict.Fun, dFlow, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
+
+The only Surf prediction-market endpoint with no Predexon equivalent is `prediction-market/category-metrics`. Everything else is a strictly worse buy. See [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
+
+**Reach for Surf when Predexon cannot answer it:** on-chain SQL, 100M+ wallet labels across 13 chains, 16 CEXs, social/CT intelligence, news, tokenomics/unlocks, liquidations, ETF flows, VC portfolios. Predexon has none of those.
 
 ## Quick Decision Table — "User asks about X"
 
