@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.31.1
+
+- **`fix(budget)` — every paid tool reserved the BASE price, not the price. The 402's JSON `price` field is not what x402 charges.** A 402 body reports `price: {amount: "0.0075"}` — that is the base. What actually gets charged is `maxAmountRequired` inside the base64 **`payment-required` header**, and it is base **+ a $0.002 flat transaction fee**. The gateway states the split itself in `src/app/api/v1/pm/[...path]/route.ts`: *"Tier 1 (GET) = $0.0095/call ($0.0075 base + $0.002 tx fee)"*. Decoded live: every `/v1/surf/*` and `/v1/pm/*` route returns `maxAmountRequired=9500` → **$0.0095**.
+- **`blockrun_markets` was ~9.5x short.** `estimateMarketCost` still returned the pre-flat tiers (`$0.001` / `$0.005`) — 0.31.0 updated the tool *description* to flat but not the estimator. So the gate reserved `$0.001` against a `$0.0095` charge, and `recordSpending()` booked `$0.001` of a `$0.0095` spend: the budget **ledger** under-counted too, not just the reserve. Now flat `$0.0095`.
+- **`blockrun_surf` was $0.002 short.** Its own comment already said *"the gateway adds a $0.002 transaction fee on top → $0.0095 customer-facing"* and *"this estimator feeds the BUDGET GATE, so it must never under-quote"* — and then set the constant to the base. Now `$0.0095`.
+- **`blockrun_search` was $0.002 short** — 0.30.10 fixed the 5% buffer but pinned the body's `price` field, so it stayed under by the flat fee at every size. Reserves now match the header exactly: `max_results` 1/5/10/20/50 → `$0.0283/$0.1333/$0.2645/$0.5270/$1.3145`. Tests repinned to the **charged** column; `test/surf.test.ts` likewise.
+- **Skills corrected**: `prediction-markets`, `crypto-data`, `surf` and `gentech-blockrun` advertised `$0.0075`. Users pay **$0.0095**. An agent budgeting off those numbers under-reserves on every call.
+- **The lesson, now written into the code**: the base is not the price. Read `maxAmountRequired` from the `payment-required` header. This has been wrong twice in the same direction — first stale tiers after the gateway went flat, then the base mistaken for the price — both times by trusting a number that looked authoritative. The public pricing pages (`/services/surf` $0.0095, `/services/predexon` GET $0.003 / POST $0.007 for the then-current base) were **right all along**.
+
 ## 0.31.0
 
 - **`fix(surf,markets)` — Surf and Predexon are now one flat $0.0075/call, and the budget gate was under-reserving.** The gateway collapsed every prediction-market / crypto-data tier to a single network-uniform price (2026-07-15). `estimateSurfCost()` still priced from tier tables ($0.001 / $0.005 / $0.02) — and it had *already* drifted before this change, since the gateway moved Surf T1/T2 to $0.0075 while the estimator kept quoting $0.001. It feeds the spend cap, so every cheap-looking call reserved less than it cost. It now returns the flat rate, which deletes the drift at the root rather than re-syncing a table that will drift again.

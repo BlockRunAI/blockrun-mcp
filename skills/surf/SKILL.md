@@ -59,10 +59,10 @@ blockrun_surf({ path: "chat/completions", body: {
 
 | Tier | Price | Used by |
 |------|-------|---------|
-| Standard | $0.0075 | every read: prices, rankings, news, order books, candles, search, wallet detail, social, prediction markets (80 endpoints) |
+| Standard | $0.0095 | every read: prices, rankings, news, order books, candles, search, wallet detail, social, prediction markets (80 endpoints) |
 | Premium | $0.0200 | raw on-chain SQL, schema introspection, structured queries (3 endpoints) |
 
-Verified against the gateway's own 402 responses, which are free to request — send any call with no payment header and it replies with the exact price. Standard is genuinely flat: `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines` and `search/web` all quote $0.0075.
+Verified against the gateway's own 402 responses, which are free to request — send any call with no payment header and it replies with the exact price. Standard is genuinely flat: `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines` and `search/web` all quote $0.0095.
 
 Wrong / missing required params return HTTP 400 **without charging** — pre-validation runs before settlement.
 
@@ -74,7 +74,7 @@ Predexon used to be 7.5× cheaper; since 2026-07-15 both bill the same flat rate
 
 | | Predexon (`blockrun_markets`) | Surf |
 |---|---|---|
-| Polymarket / Kalshi markets | $0.0075 | $0.0075 (same) |
+| Polymarket / Kalshi markets | $0.0095 | $0.0095 (same) |
 | Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
 | Limitless, Opinion, Predict.Fun, dFlow, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
 
