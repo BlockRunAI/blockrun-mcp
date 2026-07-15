@@ -93,15 +93,20 @@ export function registerModalTool(server: McpServer, budget: BudgetState): void 
     {
       description: `Run isolated code in a BlockRun-hosted Modal sandbox — disposable remote container, optional GPU.
 
-Use when you need: a clean ephemeral environment, GPU access (T4/L4/A10G/A100/A100-80GB/H100), or a safer place for untrusted code. Prefer local tools for normal repo work.
+Use when you need: a clean ephemeral environment, GPU access (T4/L4/A10G/A100/H100 — those five only), or a safer place for untrusted code. Prefer local tools for normal repo work.
+
+⚠️ \`timeout\` IS THE BILLED LIFETIME — charged upfront in full, NEVER refunded. It is not an idle timeout: you pay for the time you ASK for, not the time you use, and terminating early refunds nothing. Ask for what you need, not a safe-looking ceiling.
+- timeout ≤ 300s → flat: $0.0120 CPU · $0.0520 T4 · $0.0820 L4 · $0.1020 A10G · $0.2020 A100 · $0.4020 H100
+- timeout > 300s → PER-HOUR × the full requested lifetime: $0.10/h CPU · $1.50 T4 · $2.00 L4 · $2.50 A10G · $4.00 A100 · $8.00/h H100
+  e.g. { timeout: 600, gpu: "A100" } = $0.6687 · { timeout: 86400, gpu: "H100" } = $192.00
 
 Common paths (all POST):
-- sandbox/create     — body: { image?, timeout?, cpu?, memory?, gpu?, setup_commands? }    ($0.01)
-- sandbox/exec       — body: { sandbox_id, command: ["python","-c","..."], timeout? }      ($0.001)
-- sandbox/status     — body: { sandbox_id }                                                ($0.001)
-- sandbox/terminate  — body: { sandbox_id }                                                ($0.001)
+- sandbox/create     — body: { image?, timeout?, cpu?, memory?, gpu?, setup_commands? }    (see above — $0.0120 to $192.00)
+- sandbox/exec       — body: { sandbox_id, command: ["python","-c","..."], timeout? }      ($0.0030)
+- sandbox/status     — body: { sandbox_id }                                                ($0.0030)
+- sandbox/terminate  — body: { sandbox_id }                                                ($0.0030)
 
-Full action shapes + GPU type details in the \`modal\` skill.`,
+Full pricing tables + GPU details in the \`modal\` skill.`,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/modal/, e.g. 'sandbox/create', 'sandbox/exec'"),
         body: z.any().optional().describe("JSON body. Sent as POST."),
