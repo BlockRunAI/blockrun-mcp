@@ -287,7 +287,7 @@ blockrun_wallet action:"setup"                  # shows the Solana address + fun
 
 Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. Switch back with `blockrun_wallet action:"chain" chain:"base"`. The server keeps both wallets; switching just changes which one pays.
 
-**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface`, paid stock `blockrun_price`, `blockrun_chat routing:"smart"` (ClawRouter), and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
+**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
 
 ---
 
@@ -298,7 +298,6 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 - **CRITICAL: On any payment / balance / 402 error, call `blockrun_wallet` *first*** to check status, then `action:"setup"` for funding. Don't retry the failing tool blindly — the wallet is empty.
 - **CRITICAL: `blockrun_polymarket` moves REAL user funds** (pUSD on Polygon), separate from the x402 API budget. Never `buy`/`sell`/`redeem` with `confirm:true` unless the user explicitly approved that exact trade; without `confirm` you get a safe dry-run. Discover markets/token IDs with `blockrun_markets` first.
 - **CRITICAL: `blockrun_surf`'s 84-endpoint catalog is in [`skills/surf/SKILL.md`](skills/surf/SKILL.md); `blockrun_markets`' full endpoint list is in its tool description** (worked examples in [`skills/prediction-markets/SKILL.md`](skills/prediction-markets/SKILL.md)). Browse those before guessing paths.
-- **CRITICAL: `blockrun_chat routing:"smart"` (ClawRouter) only works on Base wallets.** On Solana, pass `mode:` or `model:` directly.
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures / client timeouts do NOT charge. Don't retry-loop — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`, then pass `agent_id:"X"` to every downstream call. The child is auto-blocked at zero.
 - **Free tier first for drafts:** `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto/FX/commodity), and `blockrun_models` are $0.
@@ -374,7 +373,6 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
   ```
   Then restart Claude Code. Or pin absolute paths (`which npx`).
 - **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (≥20.19). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install.
-- **`Smart routing (ClawRouter) not available on Solana`** → Pass `model:` or `mode:` to `blockrun_chat`, or `echo base > ~/.blockrun/.chain`.
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
 - **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
 - **Polymarket: neg-risk ("winner") market buy fails, or `redeem` reverts, though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approvals a pre-upgrade deposit wallet may lack — including the collateral-adapter approvals `redeem` needs). See the [setup guide](docs/polymarket-trading-setup.md).
