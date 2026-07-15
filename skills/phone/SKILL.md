@@ -52,11 +52,11 @@ blockrun_phone({ path: `voice/call/${r.call_id}` })
 
 | Path | Body | Price | Effect |
 |---|---|---|---|
-| `phone/lookup` | `{ phoneNumber }` | $0.01 | Carrier, line type (mobile/landline/VoIP) |
-| `phone/lookup/fraud` | `{ phoneNumber }` | $0.05 | + SIM-swap signals, call-forwarding detection |
+| `phone/lookup` | `{ phoneNumber }` | $0.0120 | Carrier, line type (mobile/landline/VoIP) |
+| `phone/lookup/fraud` | `{ phoneNumber }` | $0.0520 | + SIM-swap signals, call-forwarding detection |
 | `phone/numbers/buy` | `{ country?: "US"\|"CA", areaCode? }` | $5.00 | 30-day lease, US or CA |
 | `phone/numbers/renew` | `{ phoneNumber }` | $5.00 | Extend lease 30 days |
-| `phone/numbers/list` | `{}` | $0.001 | Your wallet-owned numbers |
+| `phone/numbers/list` | `{}` | $0.0030 | Your wallet-owned numbers |
 | `phone/numbers/release` | `{ phoneNumber }` | free | Return to pool |
 
 ### Outbound AI calls (`/v1/voice/*`)

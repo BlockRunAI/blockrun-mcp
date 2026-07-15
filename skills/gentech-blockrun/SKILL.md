@@ -63,9 +63,11 @@ blockrun_wallet(action="status")
 
 ## Daily Usage Patterns
 
-### Pattern 1: Regular Price Checks ($0.001 each)
+### Pattern 1: Regular Price Checks (FREE)
 
-The cheapest BlockRun calls. Use them liberally.
+Crypto, FX and commodity quotes cost **nothing** — `blockrun_price` is free for those
+categories (only `stocks`/`usstock` is paid, at $0.0030). Use them liberally, and do
+not pay $0.0095 to `blockrun_surf` for a quote you can get for $0.
 
 ```python
 # Single price
@@ -79,42 +81,42 @@ blockrun_price(action="price", category="crypto", symbol="SOL-USD")
 blockrun_price(action="list", category="crypto", query="sol")
 ```
 
-**Cost:** $0 per list call, $0.001 per price call. **Use `list` for free discovery.**
+**Cost:** $0 — crypto/FX/commodity price *and* list calls are both free. Only `category:"stocks"` is paid ($0.0030).
 
-### Pattern 2: Token Research Pipeline ($0.002–0.012)
+### Pattern 2: Token Research Pipeline (~$0.014)
 
-Combine free + cheap tools for a complete token picture.
+Start with the free tools, then pay only for what they cannot answer.
 
 ```python
 # 1. Free — DEX liquidity + volume (free endpoint)
 blockrun_dex({ query: "SOL" })
 
-# 2. $0.001 — CEX price
+# 2. FREE — CEX price (crypto category is free)
 blockrun_price(action="price", category="crypto", symbol="SOL-USD")
 
-# 3. $0.001 — Protocol TVL
+# 3. $0.0070 each — Protocol TVL
 blockrun_defi({ path: "protocols" })
 blockrun_defi({ path: "protocol/jupiter" })
 
-# 4. $0.001 — Chain TVL
+# 4. $0.0070 — Chain TVL
 blockrun_defi({ path: "chains" })
 ```
 
-**Total: ~$0.003–0.004 per full token analysis.** Replace CoinGecko/CMC tabs entirely.
+**Total: ~$0.021 per full token analysis** (2 free calls + 3 x $0.0070 DefiLlama). Replace CoinGecko/CMC tabs entirely.
 
-### Pattern 3: Research + Synthesis ($0.010–0.035)
+### Pattern 3: Research + Synthesis (~$0.012 + chat)
 
 Use Exa (neural search) + BlockRun Chat (second opinion) for thorough research.
 
 ```python
-# 1. $0.01 — Neural web search with Exa
+# 1. $0.0120 — Neural web search with Exa
 blockrun_exa({ path: "search", body: {
   query: "latest AI agent infrastructure developments 2026",
   numResults: 10,
   category: "research paper"
 }})
 
-# 2. $0.001 — Get second opinion from GLM-5 (excellent for technical details)
+# 2. per-token — Get second opinion from GLM-5 (excellent for technical details)
 blockrun_chat({ mode: "glm", message: "Summarize the key trends..." })
 ```
 
@@ -144,13 +146,13 @@ blockrun_wallet(action="report")
 ### DeFi Intelligence Pipeline
 
 ```python
-# 1. TVL & protocol health ($0.001)
+# 1. TVL & protocol health ($0.0070)
 blockrun_defi({ path: "protocol/aave-v3" })
 
-# 2. Yield pools ($0.001)
+# 2. Yield pools ($0.0070)
 blockrun_defi({ path: "yields" })
 
-# 3. Token price ($0.001)
+# 3. Token price (FREE — crypto category)
 blockrun_price(action="price", category="crypto", symbol="AAVE-USD")
 
 # 4. DEX activity (free)
@@ -163,7 +165,7 @@ blockrun_dex({ token: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9" })
 # 1. Current holdings (free — local data or blockrun_rpc)
 blockrun_rpc({ network: "base", method: "eth_getBalance", params: ["0xabc...", "latest"] })
 
-# 2. Token prices ($0.001 each)
+# 2. Token prices (FREE — crypto category)
 blockrun_price(action="price", category="crypto", symbol="ETH-USD")
 blockrun_price(action="price", category="crypto", symbol="USDC-USD")
 
@@ -202,10 +204,10 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_dex` | FREE | unlimited |
 | `blockrun_rpc` | $0.002 | on-chain reads |
 | `blockrun_wallet` (status/report) | FREE | before every session |
-| `blockrun_price` (quote) | $0.001 | per-token lookup |
-| `blockrun_defi` | $0.005 | protocol/chain analysis |
+| `blockrun_price` (quote) | **FREE** | crypto/FX/commodity; stocks $0.0030 |
+| `blockrun_defi` | $0.0070 | protocol/chain analysis ($0.0030 for prices/*) |
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
-| `blockrun_chat` (glm mode) | $0.001 | Zhipu GLM-5 coding |
+| `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |
 | `blockrun_exa` (search) | $0.01 | deep research |
 | `blockrun_surf` | $0.0095 | crypto data, wallets/candles/search, on-chain SQL (flat) |
 | `blockrun_speech` | $0.05/1k chars | TTS |
@@ -269,7 +271,7 @@ if float(balance["usdcBalance"]) < 0.50:
 
 BlockRun calls are cheap but not free. Cache results that don't change minute-to-minute:
 
-- **Token prices:** Cache for 30–60 seconds (change faster but $0.001 each is negligible)
+- **Token prices:** No need to cache aggressively — crypto/FX/commodity quotes via `blockrun_price` are FREE.
 - **Protocol TVL:** Cache for 1 hour (updates hourly)
 - **Wallet labels:** Cache for 24 hours (rarely change)
 - **On-chain SQL results:** Cache for 1 hour (most queries return the same answer)
