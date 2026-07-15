@@ -2,6 +2,13 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.30.10
+
+- **`fix(search)` — the budget gate reserved less than a search actually costs.** `blockrun_search` is the most expensive tool here (priced per *source*: a default call settles ~$0.26 while most tools cost $0.001), and its reserve mirrored `$0.025 x max_results` — but the gateway settles **5% above that, rounded up to 4dp**. So every search reserved short, and the gate exists precisely to stop an agent overshooting its cap. Verified against the gateway's own 402 quotes, which are free to request (send any call with no payment header and it replies with the exact price): `max_results` 1/5/10/20/50 quote $0.0263/$0.1313/$0.2625/$0.5250/$1.3125 — the reserve now matches each exactly.
+- Computed in **integer micro-dollars**, because the float form is not exact: `0.025 * 1.05` is `0.026250000000000002`, which rounds to `$0.026251` — still under the gateway's `$0.0263`, i.e. still short. A reserve must never be short. New `test/search-cost.test.ts` pins the five live quotes, the bare-`{query}` default, the 50-source ceiling, and that garbage `max_results` (`0`, `-5`, `"10"`, `null`, `NaN`, `{}`) falls back to the default reserve rather than $0 — a $0 reserve is a gate bypass.
+- The tool description was understating it too (`default max_results=10 → $0.25`); it now leads with the fact that search is priced per source and expensive by default (~$0.26 at the default, ~$1.31 at 50), and suggests capping `max_results`.
+- **`fix(build)` — tests were never typechecked.** `tsconfig.json` had `include: ["src/**/*"]`, so `npm run typecheck` passed while `test/` contained genuine type errors — which is exactly how 0.30.6's broken `estimateChatCost` call signatures reached a commit. Proven before fixing: a planted `const _bad: number = "definitely not a number"` in `test/chat.test.ts` typechecked clean. Now `include: ["src/**/*", "test/**/*"]` and the same planted error fails with `TS2322`. `dist/` is unaffected (tsup builds from `entry`, not `include`) — no test artifacts ship.
+
 ## 0.30.9
 
 - **`docs(skills)` — new `crypto-data` skill: three crypto tools had no skill, and agents were paying for data two of them give away free.** `blockrun_defi` (DefiLlama TVL/yields), `blockrun_price` (Pyth quotes + OHLC for crypto/FX/commodities/12 stock markets), and `blockrun_dex` (DexScreener pairs/liquidity) were mentioned only in passing by the general `gentech-blockrun` catalog — no triggers, no paths, no examples. They were effectively undiscoverable.

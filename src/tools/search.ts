@@ -22,21 +22,34 @@ type RawClient = {
 // Pricing scales with max_results (capped 1–50, default 10 upstream) at
 // $0.025 per returned source. Mirrors getSearchPrice() in
 // blockrun/src/app/api/v1/search/route.ts.
-const SEARCH_PRICE_PER_SOURCE = 0.025;
 const SEARCH_DEFAULT_MAX_RESULTS = 10;
+// The gateway settles 5% above $0.025 × max_results, then rounds UP to 4dp.
+// Verified against its own 402 quotes, which are free to request (send any call
+// with no payment header): max_results 1/5/10/20/50 quote
+// $0.0263/$0.1313/$0.2625/$0.5250/$1.3125. Reserving the unbuffered $0.025 × n
+// left the gate short of what the call actually settles at — the exact overshoot
+// the reserve exists to prevent.
+//
+// Integer micro-dollars, because the float form is not exact: 0.025 * 1.05 is
+// 0.026250000000000002, which rounds to $0.026251 — still under the gateway's
+// $0.0263, i.e. still short. A reserve must never be short.
+const SEARCH_MICRO_PER_SOURCE = 26_250; // $0.025 x 1.05, exact in micro-dollars
+const SEARCH_MICRO_QUANTUM = 100; // the gateway quotes to 4dp = 100 micro-dollars
 
-function estimateSearchCost(body: unknown): number {
-  if (!body || typeof body !== "object") return SEARCH_PRICE_PER_SOURCE * SEARCH_DEFAULT_MAX_RESULTS;
+export function estimateSearchCost(body: unknown): number {
+  const reserve = (max: number) =>
+    (Math.ceil((SEARCH_MICRO_PER_SOURCE * max) / SEARCH_MICRO_QUANTUM) * SEARCH_MICRO_QUANTUM) / 1e6;
+  if (!body || typeof body !== "object") return reserve(SEARCH_DEFAULT_MAX_RESULTS);
   const raw = (body as { max_results?: unknown }).max_results;
   const max = typeof raw === "number" && raw > 0 ? Math.min(50, Math.floor(raw)) : SEARCH_DEFAULT_MAX_RESULTS;
-  return SEARCH_PRICE_PER_SOURCE * max;
+  return reserve(max);
 }
 
 export function registerSearchTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_search",
     {
-      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. $0.025 per returned source (max_results × $0.025; default max_results=10 → $0.25).
+      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. PRICED PER SOURCE and expensive by default: $0.025 × max_results, +5% gateway buffer — default max_results=10 settles ~$0.26 (max_results=50 → ~$1.31). Pass a smaller max_results to cap spend; for a plain fact, 3 sources (~$0.08) is usually enough.
 
 Common shape:
 - body: { query: "...", sources: ["web","x","news"], max_results: 10, from_date: "YYYY-MM-DD", to_date: "YYYY-MM-DD" }
