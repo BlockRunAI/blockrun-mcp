@@ -1,7 +1,6 @@
 // src/tools/chat.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { LLMClient } from "@blockrun/llm";
 import { buildClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
@@ -23,17 +22,11 @@ export function estimateChatCost(
   maxTokens: number | undefined,
   mode: string | undefined,
   model: string | undefined,
-  routing: string | undefined,
-  routingProfile: string | undefined,
   thinkingBudget?: number,
 ): number {
   // Free paths bypass the gate entirely.
   if (mode === "free") return 0;
   if (model?.startsWith("nvidia/")) return 0;
-  // NOTE: routing_profile:"free" is NOT a free path. @blockrun/llm 2.x dropped
-  // the free routing profile, so it maps to undefined → the gateway picks a PAID
-  // auto-tier model. Reserving $0 here previously let an agent loop drain the
-  // wallet past the cap. It falls through to the smart-routing reserve below.
 
   // Anthropic bills extended-thinking tokens as output, so the thinking budget —
   // not max_tokens — is the dominant cost driver on the native claude-* path.
@@ -43,16 +36,6 @@ export function estimateChatCost(
   // ~$20 / 1M output tokens — a conservative upper bound covering premium
   // frontier output, floored so tiny completions still reserve something real.
   const frontierReserve = Math.max(0.01, (out / 1_000_000) * 20);
-
-  // Smart routing: cost varies by profile; reserve the worst-case it may settle.
-  if (routing === "smart") {
-    switch (routingProfile) {
-      case "eco":     return 0.01;
-      case "premium": return frontierReserve;
-      case "auto":
-      default:        return Math.max(0.01, frontierReserve * 0.5);
-    }
-  }
 
   // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
   // single model, can settle at a price we can't know up front — reserve
@@ -107,7 +90,6 @@ Notable modes:
 - mode:"cheap" → GLM-5, NVIDIA free, DeepSeek
 - mode:"reasoning" → Claude Opus, o3, o1, deepseek-reasoner
 - mode:"free" → NVIDIA models (no cost)
-- routing:"smart" → auto-select via ClawRouter
 
 Pick directly: model:"zai/glm-5", model:"openai/o3", model:"nvidia/deepseek-v4-flash" (free).
 
@@ -116,8 +98,6 @@ Run blockrun_models to see all available models with pricing.`,
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'zai/glm-5', 'openai/o3')"),
         mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: glm = Zhipu GLM-5/GLM-5-Turbo ($0.001/call, great for coding), coding = GLM-5 + code models, cheap = GLM-5 + budget, free = NVIDIA only (ignored if model specified)"),
-        routing: z.enum(["smart"]).optional().describe('Set to "smart" to auto-select the optimal model via ClawRouter (14-dimension AI routing)'),
-        routing_profile: z.enum(["free", "eco", "auto", "premium"]).optional().default("auto").describe('Cost/quality profile for ClawRouter: "eco" (budget), "auto" (balanced, default), "premium" (best quality). Note: "free" maps to "auto" (the SDK dropped the free profile) and still settles a PAID model — for zero-cost generation use mode:"free" or model:"nvidia/...". Only applies when routing:"smart".'),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
@@ -140,7 +120,7 @@ Run blockrun_models to see all available models with pricing.`,
         })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.5' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
       },
     },
-    async ({ message, model, mode, routing, routing_profile, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
+    async ({ message, model, mode, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
       // Fresh per-call client so withSettledCost's getSpending() delta isolates
       // THIS call's cost (the shared singleton's cumulative counter double-counts
       // concurrent calls — see buildClient).
@@ -149,11 +129,9 @@ Run blockrun_models to see all available models with pricing.`,
       // OpenAI-compatible response shaping, forwarded to every call path below.
       const responseFormat = response_format ? ({ type: response_format } as const) : undefined;
 
-      // Budget gate: global + per-agent enforcement.
-      // Smart routing picks the model AFTER the gate, so use a per-profile
-      // worst-case estimate so a single premium-profile call cannot blow past
-      // a near-exhausted budget. Mode-based heuristics escalate similarly.
-      const estimatedCost = estimateChatCost(max_tokens, mode, model, routing, routing_profile, thinking?.budget_tokens);
+      // Budget gate: global + per-agent enforcement. The tier/model is resolved
+      // AFTER the gate, so reserve the worst case it could settle at.
+      const estimatedCost = estimateChatCost(max_tokens, mode, model, thinking?.budget_tokens);
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails (the
       // real settled cost is booked separately via recordActualSpend).
@@ -196,51 +174,15 @@ Run blockrun_models to see all available models with pricing.`,
         });
       }
 
-      // ClawRouter smart routing (EVM/Base only)
-      if (routing === "smart") {
-        // smartChat() takes a single prompt string and cannot carry a `messages`
-        // array, so combining the two would silently drop the conversation
-        // history. Reject the combination instead of answering without context.
-        if (messages && messages.length > 0) {
-          return {
-            content: [{ type: "text", text: formatError('routing:"smart" does not support multi-turn `messages` — smart routing answers a single prompt. Send the conversation via `messages` with an explicit `model`/`mode` (no routing), or send a single `message` with routing:"smart".') }],
-            isError: true,
-          };
-        }
-        if (!(llm instanceof LLMClient)) {
-          return {
-            content: [{ type: "text", text: "Smart routing (ClawRouter) is not available on Solana. Use a specific model or mode instead." }],
-            isError: true,
-          };
-        }
-        try {
-          const { result, settledUsd } = await withSettledCost(llm, () => llm.smartChat(message, {
-            system,
-            maxTokens: max_tokens,
-            maxOutputTokens: max_tokens,
-            temperature,
-            // @blockrun/llm 2.x dropped the "free" routing profile; the gateway
-            // already routes to the most cost-effective model by default, so we
-            // omit it and let ClawRouter pick (matches the SDK upgrade path).
-            routingProfile: routing_profile === "free" ? undefined : routing_profile,
-            responseFormat,
-            stop,
-          }));
-          // Book the REAL settled cost (getSpending delta); fall back to
-          // ClawRouter's own estimate, then the gate reserve.
-          recordActualSpend(budget, settledUsd, result.routing.costEstimate || estimatedCost, agent_id);
-          return {
-            content: [{ type: "text", text: `[${result.model} | ${result.routing.tier} | $${result.routing.costEstimate.toFixed(4)} | ${Math.round((result.routing.savings ?? 0) * 100)}% savings]\n\n${result.response}` }],
-            structuredContent: {
-              model_used: result.model,
-              response: result.response,
-              routing: result.routing,
-            },
-          };
-        } catch (error) {
-          return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
-        }
-      }
+      // NOTE: routing:"smart" (llm.smartChat → @blockrun/clawrouter) was removed in
+      // 0.30.6. It auto-picked the cheapest capable model, which serves an agent
+      // that has no model of its own — but every caller here is already running
+      // inside a frontier model and reaches for this tool to get what that model
+      // LACKS: a specific model, an image, live X data. It was the sole reason the
+      // router was in our dependency tree (~50MB, ~15% of the install), and the sole
+      // reason clawrouter@0.12.220's broken bundle could take this server down.
+      // Callers wanting a cheap model should pass mode:"cheap"/"glm" or an explicit
+      // model — both resolve here, with no router.
 
       // Multi-turn conversation
       if (messages && messages.length > 0) {
