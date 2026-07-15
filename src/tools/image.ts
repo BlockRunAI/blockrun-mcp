@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
 import { reserveBudget, recordSpending, recordActualSpend, reReserveIfHigher, BudgetExceededError } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { formatError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import type { BudgetState } from "../types.js";
@@ -146,12 +147,34 @@ function isLargerThanBase(size: string): boolean {
   return Math.max(Number(m[1]), Number(m[2])) > 1024;
 }
 
+// The gateway charges catalog_base x 1.05 + $0.002 — the catalog figure is NOT
+// the price. Verified against live payment-required headers:
+//   zai/cogview-4          base $0.015 -> charged $0.017751  (raw base was 15.5% short)
+//   google/nano-banana-pro base $0.100 -> charged $0.107001
+//
+// Mirror the server's arithmetic EXACTLY, float drift included. It computes the
+// whole expression in floats and then ceils to micro-USDC, and the drift is
+// load-bearing — it adds a micro-dollar the "clean" version misses:
+//
+//   0.015 * 1.05      = 0.015750000000000002   (not 0.01575)
+//         + 0.002     = 0.017750000000000002
+//         * 1e6       = 17750.000000000002
+//         Math.ceil   = 17751                  -> $0.017751, the charged amount
+//
+// Rounding at any intermediate step yields $0.017750 and the reserve lands one
+// micro SHORT. So: do NOT use withTxFee() here (it rounds), and do not
+// pre-round the buffer. Same shape as the gateway's
+// usdToMicroUsdc(addTransactionFee(price)).
+const IMAGE_QUOTE_BUFFER = 1.05;
+const IMAGE_TX_FEE_USD = 0.002;
+
 function estimateCost(model: string, size: string): number {
-  const base = GENERATE_MODEL_COST[model] ?? 0.06;
-  if (LARGE_SIZE_COST[model] && isLargerThanBase(size)) {
-    return LARGE_SIZE_COST[model];
-  }
-  return base;
+  const catalog =
+    LARGE_SIZE_COST[model] && isLargerThanBase(size)
+      ? LARGE_SIZE_COST[model]
+      : (GENERATE_MODEL_COST[model] ?? 0.06);
+  if (!(catalog > 0)) return 0;
+  return Math.ceil((catalog * IMAGE_QUOTE_BUFFER + IMAGE_TX_FEE_USD) * 1e6) / 1e6;
 }
 
 // The Solana gateway routes render synchronously (generation runs 10-180s,

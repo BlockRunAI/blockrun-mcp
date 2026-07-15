@@ -15,7 +15,9 @@ Found by an adversarial multi-agent audit of everything shipped tonight. 0.31.1 
 - **`fix(price)`** — paid stock calls reserved $0.001 against a **$0.0030** charge (3x short).
 - **`fix(search)`** — the reserve floored `max_results`; the gateway prices the **raw** value (`2.7` quotes a $0.0709 base vs `2` at $0.0525). Flooring under-reserved on any fractional input.
 - **Not changed, deliberately:** the audit recommended dropping `checkBudget`'s `cost > 0` guard so a $0 reserve can still be denied. Rejected — this server has genuinely free paths (`blockrun_price` crypto/fx/commodity, `blockrun_dex`, `mode:"free"`, `nvidia/*`, free phone reads) and denying them on an exhausted budget would be a regression, since a free call spends nothing. The real defect was **paid** calls estimated at $0, fixed above at the source. Verified on an exhausted budget: free calls pass, the $192 modal call is denied.
-- 165 tests (new `test/modal-cost.test.ts`, tab/newline traversal coverage, `phone` fail-closed), typecheck, build, stdio smoke green; every fixed reserve checked against the live gateway.
+- **`fix(image)` — the reserve, the Cost footer and the ledger all understated real spend.** `estimateCost` returned the raw catalog figure while the gateway settles `catalog x 1.05 + $0.002` — `zai/cogview-4` reserved $0.0150 against a live-verified **$0.017751** (15.5% short); `google/nano-banana-pro` $0.10 vs **$0.107001**. The estimate now mirrors the server's arithmetic **including its float drift**, which is load-bearing: `0.015 * 1.05` is `0.015750000000000002`, so `ceil((base*1.05 + 0.002) * 1e6)` yields `17751` where any pre-rounded version yields `17750` and lands a micro short. Reserve, footer and ledger now all report the charged price.
+- **`fix(speech)`** — `MIN_PAYMENT_USD` mirrored the server's **base** floor. The gateway's own route says *"Price = (characters / 1000) x model rate, minimum $0.003/request"* — that $0.003 is $0.001 + the $0.002 fee, so a short render reserved 3x short.
+- 165 tests, typecheck, build, stdio smoke green; every fixed reserve checked against the live gateway.
 
 ## 0.31.1
 

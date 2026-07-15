@@ -36,32 +36,39 @@ function makeHarness() {
   return { call: (args: Record<string, unknown>) => handler!(args), budget };
 }
 
-test("generate result includes a Cost line at the model's catalog price", async () => {
+// The Cost footer and the ledger must report what the user is CHARGED, not the
+// catalog base. The gateway settles catalog x 1.05 + $0.002 (verified live:
+// cogview-4 base $0.015 -> charged $0.017751), so reporting the catalog figure
+// understated real spend in the footer, the confirmSpend prompt and the ledger.
+test("generate result includes a Cost line at the CHARGED price, not the catalog base", async () => {
   const { call } = makeHarness();
   const res = await call({ prompt: "a red cube", model: "openai/gpt-image-2", size: "1024x1024" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.0600/);
-  assert.equal(res.structuredContent.cost_usd, 0.06);
+  assert.match(text, /Cost: \$0\.0650/); // 0.06 catalog x 1.05 + $0.002
+  assert.equal(res.structuredContent.cost_usd, 0.065);
   assert.equal(res.isError, undefined);
 });
 
-test("large gpt-image-2 render is billed at the large-size price", async () => {
+test("large gpt-image-2 render is billed at the large-size CHARGED price", async () => {
   const { call } = makeHarness();
   const res = await call({ prompt: "wide banner", model: "openai/gpt-image-2", size: "1536x1024" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.1200/);
-  assert.equal(res.structuredContent.cost_usd, 0.12);
+  assert.match(text, /Cost: \$0\.1280/);
+  assert.equal(res.structuredContent.cost_usd, 0.128);
 });
 
 test("cheapest model (cogview-4) shows its own price", async () => {
   const { call } = makeHarness();
   const res = await call({ prompt: "a cat", model: "zai/cogview-4" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.0150/);
+  assert.match(text, /Cost: \$0\.0178/);
 });
 
 test("budget records the same amount that is reported to the user", async () => {
   const { call, budget } = makeHarness();
   await call({ prompt: "a dog", model: "google/nano-banana" });
-  assert.equal(budget.spent, 0.05);
+  // The CHARGED price, not the $0.05 catalog base: 0.05 * 1.05 + $0.002, ceiled to
+  // micro-USDC exactly as the gateway does. Footer and ledger must agree on it —
+  // that is what this test is for.
+  assert.equal(budget.spent, 0.054501);
 });
