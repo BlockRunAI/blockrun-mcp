@@ -2,6 +2,14 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.30.8
+
+- **`docs(skills)` — the prediction-markets skill never mentioned the tool it ships with, so agents could not reach Predexon at all.** `skills/prediction-markets/SKILL.md` referenced `blockrun_markets` **zero** times across 263 lines while teaching `client.pm(...)` — the Python SDK — 37 times. An agent in Claude Code following it would try to `import blockrun_llm` and write Python instead of calling the tool sitting right in front of it. Rewritten against the live registry on the pattern `skills/surf/SKILL.md` already proved: MCP invocation first (`blockrun_markets({ path, params, body })`), Python demoted to a "for non-MCP use" footnote.
+- **It also taught three paths that do not exist.** `polymarket/search`, `polymarket/query`, and `kalshi/query` are absent from the live Predexon registry (the real path is `markets/search`), so an agent that got past the Python problem would have 404'd anyway. Removed.
+- **The endpoints worth paying for were invisible.** `triggers:` had no entry for smart money, whales, leaderboards, P&L, price history, candles, orderbooks, or open interest — so the skill never fired for those intents and 42 of 58 endpoints were undiscoverable. Triggers 16 → 42; decision table 16 rows → **all 58 endpoints**; description now leads with what a public API cannot give you (history that cannot be backfilled, wallet clustering, smart-money positioning, cross-venue canonical IDs — no account, no API key) rather than "Predexon v2, $0.001/call".
+- **Added worked examples phrased as user questions**, including compound recipes that show why the data is worth paying for: *"who's smart money betting on in this market?"* (`market/{id}/smart-money` → `wallet/{addr}` → `wallet/positions/{addr}`), *"this whale is up 400% — who are they really?"* (`identity` → `cluster` → `pnl` → `similar`), *"find me something to copy-trade"*, and *"is the same bet cheaper on another venue?"*.
+- No code change; `dist/` is byte-identical to 0.30.7.
+
 ## 0.30.7
 
 - **`docs` — the README documented a feature 0.30.6 deleted.** `routing:"smart"` was removed from `blockrun_chat` along with the ClawRouter dependency, but three README claims survived the release and shipped inside the package (`files` includes `README.md`, so it is also what npmjs.com renders): the Base-only fallback list, a **CRITICAL** note telling agents smart routing is Base-only, and a troubleshooting entry for a `Smart routing (ClawRouter) not available on Solana` error that can no longer occur. Anyone following them would pass `routing:"smart"`, get nothing back, and reasonably conclude the server was broken — the exact failure mode 0.30.6 set out to end. Removed all three. The ClawRouter links under Related Projects stay: it is still a real product, just no longer anything this server depends on.

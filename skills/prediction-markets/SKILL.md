@@ -1,263 +1,265 @@
 ---
 name: prediction-markets
-description: Use when user asks about event probabilities, prediction market odds, what people are betting on, Polymarket or Kalshi prices, sports markets, wallet identity / clustering, or wants to find markets on a specific topic (elections, crypto, sports, macro events). Predexon v2 endpoints (canonical cross-venue markets, sports, wallet identity, keyset pagination) live in production as of 2026-05.
+description: Use when the user asks about event probabilities, prediction market odds, what people are betting on, Polymarket/Kalshi prices, sports markets — or about the things you CANNOT get from a public API: historical price/volume/orderbook time series, smart-money positioning, whale leaderboards, wallet P&L, wallet identity and on-chain clustering, and canonical IDs matching the same question across venues. 58 endpoints over Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle. Pay-per-call in USDC via x402 — no Predexon account, no API key.
 triggers:
   - "polymarket"
   - "kalshi"
   - "dflow"
+  - "limitless"
+  - "predict.fun"
+  - "predexon"
   - "prediction market"
   - "event probability"
   - "betting odds"
+  - "implied probability"
   - "what are people betting on"
   - "election odds"
   - "crypto market odds"
   - "binance futures"
   - "yes/no market"
-  - "implied probability"
   - "sports markets"
+  - "smart money"
+  - "smart wallet"
+  - "whale"
+  - "top traders"
+  - "top holders"
+  - "who is winning"
+  - "best traders"
+  - "copy trade"
+  - "leaderboard"
+  - "wallet pnl"
+  - "wallet profit"
+  - "trader performance"
   - "wallet identity"
   - "wallet cluster"
+  - "price history"
+  - "candles"
+  - "candlestick"
+  - "ohlcv"
+  - "orderbook"
+  - "order book history"
+  - "open interest"
+  - "volume history"
+  - "trade history"
   - "cross-venue markets"
-  - "predexon"
+  - "arbitrage"
+  - "uma oracle"
 ---
 
-# Prediction Markets
+# Prediction Markets (Predexon)
 
-Real-time prediction market data via BlockRun (powered by Predexon v2). Covers canonical cross-venue markets, Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, sports, and Binance Futures.
+58 endpoints across Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle — one x402 gateway, no Predexon account or API key.
 
-## Quick Decision Table
+**What is worth paying for.** Current market lists are free from public APIs. These are not, and cannot be backfilled after the fact:
 
-| User wants... | Method | Path | Cost |
-|--------------|--------|------|------|
-| **Canonical cross-venue markets** | `client.pm(path)` | `"markets"` | $0.001 |
-| **Venue-native flattened listings** | `client.pm(path)` | `"markets/listings"` | $0.001 |
-| **Resolve canonical outcome ID** | `client.pm(path)` | `"outcomes/{predexon_id}"` | $0.001 |
-| **Search across all venues** | `client.pm(path, q=...)` | `"markets/search"` | $0.005 |
-| Active Polymarket events | `client.pm(path)` | `"polymarket/events"` | $0.001 |
-| Polymarket events (keyset paginated) | `client.pm(path, pagination_key=...)` | `"polymarket/events/keyset"` | $0.001 |
-| Polymarket markets (keyset paginated) | `client.pm(path, pagination_key=...)` | `"polymarket/markets/keyset"` | $0.001 |
-| Specific Kalshi market | `client.pm(path)` | `"kalshi/markets/TICKER"` | $0.001 |
-| **Sports categories** | `client.pm(path)` | `"sports/categories"` | $0.001 |
-| **Sports markets (by league/sport)** | `client.pm(path, league=...)` | `"sports/markets"` | $0.001 |
-| **Wallet identity (single)** | `client.pm(path)` | `"polymarket/wallet/identity/{wallet}"` | $0.005 |
-| **Wallet identity (bulk, up to 200)** | `client.pm_query(path, body)` | `"polymarket/wallet/identities"` | $0.005 |
-| **Wallet on-chain cluster** | `client.pm(path)` | `"polymarket/wallet/{address}/cluster"` | $0.005 |
-| dFlow markets | `client.pm(path)` | `"dflow/..."` | $0.001-$0.005 |
-| Binance Futures | `client.pm(path)` | `"binance/..."` | $0.005 |
+- **History** — candlesticks, orderbook snapshots, volume charts, open interest, trade history. Built from continuous ingestion; nobody can reconstruct it retroactively.
+- **Smart money** — leaderboards, cohort stats, top holders, which wallets are positioned where, and which markets high-performing wallets just entered.
+- **Wallet intelligence** — profiles, P&L time series, identity metadata, and on-chain clustering (find the other wallets behind one address).
+- **Cross-venue canonical IDs** — one question, matched across five venues. The basis for arbitrage and consensus.
 
-## Instructions
+## How to Call from MCP
 
-### 1. Initialize
+One tool, three params. Method auto-routes: POST when `body` is set, GET otherwise.
 
-```python
-import os
-from pathlib import Path
+```ts
+blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 
-chain_file = Path.home() / ".blockrun" / ".chain"
-chain = chain_file.read_text().strip() if chain_file.exists() else "base"
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1h" } })
 
-if chain == "solana":
-    from blockrun_llm import setup_agent_solana_wallet
-    client = setup_agent_solana_wallet()
-else:
-    from blockrun_llm import setup_agent_wallet
-    client = setup_agent_wallet()
+blockrun_markets({ path: "polymarket/wallet/identities", body: {
+  addresses: ["0xabc...", "0xdef..."]
+}})
 ```
 
-### 2. List Active Events
+Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child agent's budget.
 
-```python
-# All active Polymarket events
-events = client.pm("polymarket/events")
-for event in events.get("data", events if isinstance(events, list) else [])[:10]:
-    print(f"{event.get('title', '?')} — {event.get('slug', '')}")
+## Two Pricing Tiers
+
+| Tier | Price | What |
+|---|---|---|
+| **Tier 1** | $0.001 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA |
+| **Tier 2** | $0.005 | Wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
+
+Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base treasury.
+
+## Quick Decision Table — "User asks about X"
+
+| User wants… | path | Tier |
+|---|---|---|
+| **Same question across venues** | `markets` | 1 |
+| **Search every venue at once** | `markets/search` | 2 |
+| Venue-native tradable listings | `markets/listings` | 1 |
+| Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
+| **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
+| Active matched pairs | `matching-markets/pairs` | 2 |
+| Active Polymarket events | `polymarket/events` | 1 |
+| Polymarket markets | `polymarket/markets` | 1 |
+| Large result sets (stable paging) | `polymarket/markets/keyset` | 1 |
+| Crypto up/down markets | `polymarket/crypto-updown` | 1 |
+| Current/historical price of a token | `polymarket/market-price/{token_id}` | 1 |
+| **Price history (OHLCV)** | `polymarket/candlesticks/{condition_id}` | 1 |
+| **OHLCV for one outcome** | `polymarket/candlesticks/token/{token_id}` | 1 |
+| **Volume over time (YES/NO split)** | `polymarket/volume-chart/{condition_id}` | 1 |
+| **Historical orderbook snapshots** | `polymarket/orderbooks` | 1 |
+| **Historical trades** | `polymarket/trades` | 1 |
+| Merges / splits / redeems for a user | `polymarket/activity` | 1 |
+| Cumulative volume for a market | `polymarket/markets/{token_id}/volume` | 1 |
+| **Open interest history** | `polymarket/markets/{condition_id}/open_interest` | 1 |
+| Positions (filterable) | `polymarket/positions` | 1 |
+| **Global smart-wallet leaderboard** | `polymarket/leaderboard` | 1 |
+| **Leaderboard for one market** | `polymarket/leaderboard/market/{condition_id}` | 1 |
+| **Cohort performance by trading style** | `polymarket/cohorts/stats` | 1 |
+| **Top holders of a market** | `polymarket/market/{condition_id}/top-holders` | 1 |
+| **Smart money on a market** | `polymarket/market/{condition_id}/smart-money` | 2 |
+| **Markets smart wallets just entered** | `polymarket/markets/smart-activity` | 2 |
+| **Full smart-wallet profile** | `polymarket/wallet/{wallet}` | 2 |
+| Per-market breakdown for a wallet | `polymarket/wallet/{wallet}/markets` | 2 |
+| **Wallets with similar portfolios** | `polymarket/wallet/{wallet}/similar` | 2 |
+| **Wallet P&L + realized series** | `polymarket/wallet/pnl/{wallet}` | 2 |
+| Wallet open/historical positions | `polymarket/wallet/positions/{wallet}` | 2 |
+| Wallet volume by BUY/SELL side | `polymarket/wallet/volume-chart/{wallet}` | 2 |
+| Batch wallet profiles | `polymarket/wallets/profiles` | 2 |
+| Filter wallets by markets traded | `polymarket/wallets/filter` | 2 |
+| **Wallet identity (ENS/Twitter/etc)** | `polymarket/wallet/identity/{wallet}` | 2 |
+| **Bulk identity (≤200, POST)** | `polymarket/wallet/identities` | 2 |
+| **On-chain cluster for a wallet** | `polymarket/wallet/{address}/cluster` | 2 |
+| UMA oracle questions by state | `polymarket/uma/markets` | 1 |
+| UMA status + timeline for a market | `polymarket/uma/market/{condition_id}` | 1 |
+| Kalshi markets | `kalshi/markets` | 1 |
+| Kalshi trades / orderbooks | `kalshi/trades`, `kalshi/orderbooks` | 1 |
+| Sports categories | `sports/categories` | 1 |
+| Sports markets by league | `sports/markets` | 1 |
+| One game, all venue outcomes | `sports/markets/{game_id}` | 1 |
+| Equivalent sports outcomes | `sports/outcomes/{predexon_id}` | 1 |
+| Limitless / Opinion / Predict.Fun markets | `limitless/markets`, `opinion/markets`, `predictfun/markets` | 1 |
+| Their historical orderbook snapshots | `limitless/orderbooks`, `opinion/orderbooks`, `predictfun/orderbooks` | 1 |
+| dFlow trades | `dflow/trades` | 1 |
+| dFlow wallet positions / P&L | `dflow/wallet/positions/{w}`, `dflow/wallet/pnl/{w}` | 2 |
+| Binance candles / ticks | `binance/candles/{symbol}`, `binance/ticks/{symbol}` | 2 |
+
+## Worked Examples
+
+### 1. "What are people betting on right now?"
+
+```ts
+blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 ```
 
-### 3. Search by Topic
+### 2. "What's the market saying about the 2028 election?"
 
-```python
-# Search Polymarket for a topic
-results = client.pm("polymarket/search", q="bitcoin ETF")
-for market in results.get("data", results if isinstance(results, list) else [])[:10]:
-    title = market.get("title", "?")
-    # Outcome prices are in the market object
-    print(f"{title}")
-    for outcome in market.get("outcomes", []):
-        print(f"  {outcome.get('title', '?')}: {outcome.get('price', '?')}")
+Search every venue in one call, then resolve the canonical outcome.
+
+```ts
+blockrun_markets({ path: "markets/search", params: { q: "2028 presidential election" } })
+blockrun_markets({ path: "outcomes/PXM-12345" })   // → venue listings + prices side by side
 ```
 
-### 4. Specific Kalshi Market
+### 3. "Show me this market's price history" (impossible from a free API)
 
-```python
-# Get a specific Kalshi market by ticker
-market = client.pm("kalshi/markets/KXBTC-25MAR14")
-print(f"Market: {market.get('title', market.get('ticker', '?'))}")
-yes_price = market.get("yes_bid", market.get("yes_price", "?"))
-no_price = market.get("no_bid", market.get("no_price", "?"))
-print(f"YES: {yes_price} | NO: {no_price}")
+```ts
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1h" } })
+blockrun_markets({ path: "polymarket/volume-chart/0xCONDITION_ID" })
+blockrun_markets({ path: "polymarket/markets/0xCONDITION_ID/open_interest" })
 ```
 
-### 5. Structured Query (POST)
+### 4. "Who's smart money betting on in this market?" ← compound
 
-Use for complex filtering — active markets only, sorted by volume, with pagination.
+Positioning → then profile the wallets behind it.
 
-```python
-# Polymarket: active markets sorted by volume, limit 20
-data = client.pm_query("polymarket/query", {
-    "filter": "active",
-    "limit": 20,
-    "order": "volume",
-})
+```ts
+// 1. Which high-performing wallets are in this market, and on which side
+blockrun_markets({ path: "polymarket/market/0xCONDITION_ID/smart-money" })
 
-# Kalshi: all markets in a specific series
-data = client.pm_query("kalshi/query", {
-    "series_ticker": "KXBTC",
-    "limit": 50,
-})
+// 2. Profile the top wallet it returns — win rate, P&L, style
+blockrun_markets({ path: "polymarket/wallet/0xWHALE" })
+
+// 3. What else are they in right now?
+blockrun_markets({ path: "polymarket/wallet/positions/0xWHALE" })
 ```
 
-### 6. Canonical Cross-Venue Markets (v2)
+### 5. "This whale is up 400% — who are they really?" ← compound
 
-Predexon v2 unifies markets across Polymarket, Kalshi, Limitless, Opinion, Predict.Fun behind canonical IDs. One call returns the same question regardless of venue.
+Identity plus the on-chain cluster: one trader often runs many wallets.
 
-```python
-# All canonical markets (filter by venue, status, category, league, event_id)
-markets = client.pm("markets", venue="polymarket", status="active")
-for m in markets.get("markets", [])[:10]:
-    print(f"{m.get('predexon_id')} — {m.get('title')}")
-
-# Flattened venue-native listings (each row = a tradable listing on one venue)
-listings = client.pm("markets/listings", category="elections")
-
-# Resolve a canonical outcome ID across venues
-detail = client.pm("outcomes/PXM-12345")
-print(detail.get("title"), detail.get("venue_listings"))
+```ts
+blockrun_markets({ path: "polymarket/wallet/identity/0xWHALE" })        // ENS, socials, portfolio
+blockrun_markets({ path: "polymarket/wallet/0xWHALE/cluster" })         // linked wallets + confidence
+blockrun_markets({ path: "polymarket/wallet/pnl/0xWHALE" })             // realized P&L series
+blockrun_markets({ path: "polymarket/wallet/0xWHALE/similar" })         // who trades like them
 ```
 
-### 7. Sports Markets (v2)
+### 6. "Find me something to copy-trade" ← compound
 
-```python
-# List sports categories (NBA, NFL, MLB, soccer leagues, …)
-categories = client.pm("sports/categories")
-
-# Sports markets grouped by game — filter by league or venue
-nba = client.pm("sports/markets", league="NBA", status="open")
-for game in nba.get("markets", [])[:10]:
-    print(f"{game.get('title')} @ {game.get('start_time')}")
-    for venue in game.get("venue_listings", []):
-        print(f"  {venue.get('venue')}: {venue.get('price')}")
+```ts
+blockrun_markets({ path: "polymarket/leaderboard", params: { limit: "20" } })   // best wallets
+blockrun_markets({ path: "polymarket/markets/smart-activity" })                 // where they just moved
+blockrun_markets({ path: "polymarket/cohorts/stats" })                          // which style is working
 ```
 
-### 8. Keyset Pagination (v2)
+Then trade it with `blockrun_polymarket` (see `skills/polymarket-trading/SKILL.md`). **Real money — always dry-run first.**
 
-For large Polymarket result sets, prefer keyset pagination over offset. It is stable across writes and faster on big tables.
+### 7. "Is the same bet cheaper on another venue?" ← arbitrage
 
-```python
-# First page
-page = client.pm("polymarket/markets/keyset", limit="100")
-markets = page.get("markets", [])
-next_key = page.get("pagination", {}).get("next_key")
-
-# Subsequent pages
-while next_key:
-    page = client.pm("polymarket/markets/keyset", limit="100", pagination_key=next_key)
-    markets.extend(page.get("markets", []))
-    next_key = page.get("pagination", {}).get("next_key")
+```ts
+blockrun_markets({ path: "matching-markets", params: { status: "active" } })
+blockrun_markets({ path: "matching-markets/pairs" })
 ```
 
-### 9. Wallet Identity & On-Chain Clustering (v2, Tier 2)
+### 8. "Who's ahead in tonight's NBA games?"
 
-Cross-context wallet labels (ENS, Twitter, Discord, portfolio metrics) plus on-chain relationship graph data — exposed as three endpoints. **All Tier 2 ($0.005/call).**
-
-```python
-# Single wallet identity
-ident = client.pm("polymarket/wallet/identity/0xabc...")
-print(ident.get("ens_name"), ident.get("twitter"), ident.get("portfolio_value"))
-
-# Bulk identity lookup (POST, up to 200 wallets per call)
-batch = client.pm_query("polymarket/wallet/identities", {
-    "addresses": ["0xabc...", "0xdef...", "0x123..."],
-})
-for row in batch.get("results", []):
-    print(row.get("wallet"), row.get("label"))
-
-# Cluster — discover wallets connected via on-chain transfers + identity proofs
-cluster = client.pm("polymarket/wallet/0xabc.../cluster")
-for related in cluster.get("cluster", []):
-    print(related.get("wallet"), related.get("relationship_type"), related.get("confidence_score"))
+```ts
+blockrun_markets({ path: "sports/markets", params: { league: "NBA", status: "open" } })
+blockrun_markets({ path: "sports/markets/GAME_ID" })   // every venue's price for that game
 ```
 
-## Common Workflows
+### 9. "Is this market about to resolve?"
 
-**"What are people betting on in crypto right now?"**
-```python
-events = client.pm("polymarket/search", q="crypto bitcoin ethereum")
-for e in events.get("data", [])[:5]:
-    print(e.get("title", "?"))
-    for o in e.get("outcomes", []):
-        print(f"  {o.get('title')}: {o.get('price')} (implies {round(float(o.get('price', 0))*100)}%)")
+```ts
+blockrun_markets({ path: "polymarket/uma/markets", params: { state: "proposed" } })
+blockrun_markets({ path: "polymarket/uma/market/0xCONDITION_ID" })   // dispute timeline
 ```
 
-**"Track a smart wallet's identity + cluster"**
-```python
-seed = "0xabc..."
-ident = client.pm(f"polymarket/wallet/identity/{seed}")
-cluster = client.pm(f"polymarket/wallet/{seed}/cluster")
-print(f"{ident.get('label')} (ENS {ident.get('ens_name')})")
-print(f"  Cluster size: {len(cluster.get('cluster', []))} wallets")
+## Method Routing — When to Use `body`
+
+Almost everything is GET → use `params`. Only bulk identity takes a body:
+
+```ts
+blockrun_markets({ path: "polymarket/wallet/identities", body: { addresses: ["0x1", "0x2"] } })
 ```
 
-**"What's the probability of X event?"**
-```python
-# 1. Search for the event
-results = client.pm("polymarket/search", q="US election 2026")
+## Paging Large Result Sets
 
-# 2. Get specific market details
-if results.get("data"):
-    market_id = results["data"][0].get("id", results["data"][0].get("slug"))
-    detail = client.pm(f"polymarket/events/{market_id}")
-    print(detail)
+Prefer keyset over offset — stable across writes, faster on big tables.
+
+```ts
+const p1 = blockrun_markets({ path: "polymarket/markets/keyset", params: { limit: "100" } })
+// then pass the returned pagination.next_key back in:
+blockrun_markets({ path: "polymarket/markets/keyset", params: { limit: "100", pagination_key: "<next_key>" } })
 ```
 
-**"Show me all active Kalshi markets"**
-```python
-data = client.pm_query("kalshi/query", {"limit": 50, "status": "open"})
-markets = data.get("markets", data.get("data", []))
-for m in markets[:10]:
-    print(f"{m.get('ticker')} — {m.get('title')}: YES={m.get('yes_bid')} NO={m.get('no_bid')}")
-```
-
-## Data Case Study: Sentiment Signal from Markets
-
-Prediction markets are often better probability estimates than polls or pundit takes. Pattern:
-
-```python
-import json
-
-# 1. Find relevant markets
-crypto_markets = client.pm("polymarket/search", q="bitcoin price end of year")
-
-# 2. Extract implied probabilities
-for market in crypto_markets.get("data", [])[:3]:
-    print(f"\n{market.get('title', '?')}")
-    for outcome in market.get("outcomes", []):
-        p = float(outcome.get("price", 0)) * 100
-        print(f"  {outcome.get('title')}: {p:.0f}% implied probability")
-
-# 3. Save for later analysis
-with open(os.path.expanduser("~/.blockrun/data/markets_snapshot.json"), "w") as f:
-    json.dump(crypto_markets, f, indent=2, default=str)
-```
+`polymarket/events/keyset` works the same way.
 
 ## Notes on Response Shape
 
-Predexon returns raw API responses. Structure varies by exchange:
-- **Polymarket**: usually `{ "data": [...] }` or `{ "events": [...] }`
-- **Kalshi**: usually `{ "markets": [...] }` with `ticker`, `yes_bid`, `no_bid` fields
-- **Print raw response first** when exploring a new path: `print(json.dumps(result, indent=2)[:1000])`
+Predexon returns raw upstream responses; shape varies by venue.
 
-## Requirements
+- **Polymarket** — usually `{ data: [...] }` or `{ events: [...] }`
+- **Kalshi** — usually `{ markets: [...] }` with `ticker`, `yes_bid`, `no_bid`. Tickers look like `KXBTC-25MAR14` (series + expiry).
+- **Canonical v2** — `{ markets: [...] }` with `predexon_id` + `venue_listings`
+- Print the raw response when exploring a path you have not used before.
 
-- BlockRun SDK: `pip install blockrun-llm`
-- USDC wallet funded (`client.get_balance()`)
-- Kalshi tickers: format is `KXBTC-25MAR14` (series + expiry date)
+Prices are probabilities 0–1. `0.62` means the market implies 62%.
+
+## Python SDK (for non-MCP use)
+
+Inside the MCP, use `blockrun_markets` above. For standalone scripts:
+
+```python
+from blockrun_llm import setup_agent_wallet   # setup_agent_solana_wallet() on Solana
+client = setup_agent_wallet()
+
+client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="1h")
+client.pm_query("polymarket/wallet/identities", {"addresses": ["0xabc"]})
+```
+
+Requires `pip install blockrun-llm` and a funded USDC wallet (`client.get_balance()`).
