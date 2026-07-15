@@ -8,26 +8,28 @@ import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
-function estimateMarketCost(path: string, body: unknown): number {
-  if (body !== undefined) return 0.005;
-  const p = path.toLowerCase();
-  if (
-    p.includes("wallet") ||
-    p.includes("smart") ||
-    p.includes("matching-markets") ||
-    p.includes("markets/search") ||
-    p.includes("binance/")
-  ) {
-    return 0.005;
-  }
-  return 0.001;
+// What x402 CHARGES, which is not the 402's JSON `price` field. That field is the
+// BASE ($0.0075); the charge is base + a $0.002 flat transaction fee, and it lives
+// in `maxAmountRequired` inside the base64 `payment-required` header. Decoded live
+// 2026-07-15: every /v1/pm/* route quotes maxAmountRequired=9500 → $0.0095, flat.
+// The gateway states the same split in src/app/api/v1/pm/[...path]/route.ts:
+//   "Tier 1 (GET) = $0.0095/call ($0.0075 base + $0.002 tx fee)"
+//
+// This used to return the old tiers (0.001/0.005). Predexon went flat on
+// 2026-07-15 and the tool description was updated but this was not — so the gate
+// reserved $0.001 against a $0.0095 charge (~9.5x short) and recordSpending()
+// booked $0.001 of a $0.0095 spend, under-counting the ledger too.
+export const MARKETS_PRICE_USD = 0.0095;
+
+function estimateMarketCost(_path: string, _body: unknown): number {
+  return MARKETS_PRICE_USD;
 }
 
 export function registerMarketsTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_markets",
     {
-      description: `Prediction market + derivatives data via Predexon aggregator. Flat $0.0075/call (every endpoint)/call.
+      description: `Prediction market + derivatives data via Predexon aggregator. Flat $0.0095/call (every endpoint) — $0.0075 base + $0.002 tx fee.
 
 CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
 - markets — list canonical market/question containers with cross-venue Predexon IDs

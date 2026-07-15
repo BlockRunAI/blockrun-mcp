@@ -167,7 +167,7 @@ blockrun_rpc({ network: "base", method: "eth_getBalance", params: ["0xabc...", "
 blockrun_price(action="price", category="crypto", symbol="ETH-USD")
 blockrun_price(action="price", category="crypto", symbol="USDC-USD")
 
-# 3. Prediction market positions ($0.0075)
+# 3. Prediction market positions ($0.0095)
 blockrun_markets({ path: "polymarket/positions" })
 ```
 
@@ -207,12 +207,12 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | $0.001 | Zhipu GLM-5 coding |
 | `blockrun_exa` (search) | $0.01 | deep research |
-| `blockrun_surf` | $0.0075 | crypto data, wallets/candles/search, on-chain SQL (flat) |
+| `blockrun_surf` | $0.0095 | crypto data, wallets/candles/search, on-chain SQL (flat) |
 | `blockrun_speech` | $0.05/1k chars | TTS |
 | `blockrun_image` | $0.015–0.12 | image generation |
 | `blockrun_music` | $0.1575 | music tracks |
 | `blockrun_video` | $0.40+ | short video clips |
-| `blockrun_markets` | $0.0075 | prediction market data, wallet analytics (flat) |
+| `blockrun_markets` | $0.0095 | prediction market data, wallet analytics (flat) |
 | `blockrun_modal` | $0.001+ | remote sandbox execution |
 | `blockrun_phone` | $0.01–5.00 | phone lookups |
 

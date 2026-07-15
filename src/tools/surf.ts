@@ -29,23 +29,28 @@ type SurfClient = {
 // list endpoints rather than use loose substring matching so a future T2
 // endpoint under wallet/* or social/* doesn't silently get charged as T1.
 
-// Flat per-call price for EVERY Surf endpoint, base only (the gateway adds a
-// $0.002 transaction fee on top → $0.0095 customer-facing). Keep in step with
-// SURF_TIER_*_PRICE in the gateway's src/lib/surf.ts.
-export const SURF_PRICE_USD = 0.0075;
+// Flat per-call price CHARGED for every Surf endpoint: $0.0075 base + $0.002
+// flat transaction fee. Keep in step with SURF_TIER_*_PRICE in the gateway's
+// src/lib/surf.ts, and note that constant is the BASE — not what a caller pays.
+export const SURF_PRICE_USD = 0.0095;
 
 // Exported for unit tests.
 //
-// Surf is now a FLAT $0.0075/call — every endpoint, every former tier (gateway
-// change 2026-07-15: one network-uniform price across Surf and Predexon). The
-// tier sets above are retained because they still describe endpoint weight, but
-// they no longer affect price.
+// Surf is a FLAT $0.0095/call — every endpoint, every former tier (gateway change
+// 2026-07-15: one network-uniform price across Surf and Predexon). The tier sets
+// above are retained because they still describe endpoint weight, but they no
+// longer affect price.
 //
-// This estimator feeds the BUDGET GATE, so it must never under-quote: it used
-// to return $0.001/$0.005/$0.02 while the gateway had already moved to
-// $0.0075 for T1/T2 — under-reserving on every cheap-looking call. A flat rate
-// removes the whole class of drift, since there is no longer a tier to
-// misclassify.
+// This estimator feeds the BUDGET GATE, so it must never under-quote — and the
+// number to quote is what x402 CHARGES, not the 402's JSON `price` field. That
+// field reports the base ($0.0075); the charge is in `maxAmountRequired` inside
+// the base64 `payment-required` header, and every /v1/surf/* route decodes to
+// 9500 micro = $0.0095 (verified live 2026-07-15).
+//
+// This has now been wrong twice in the same direction, both times by trusting a
+// number that looked authoritative: first the stale $0.001/$0.005/$0.02 tiers
+// after the gateway went flat, then the $0.0075 base after it was mistaken for
+// the price. Read the header.
 export function estimateSurfCost(_path: string): number {
   return SURF_PRICE_USD;
 }
@@ -59,7 +64,7 @@ export function registerSurfTool(server: McpServer, budget: BudgetState): void {
 Coverage: CEX market data (16 exchanges), on-chain SQL across 13 chains, 100M+ labeled wallets, prediction markets (Polymarket + Kalshi), social mindshare / CT intelligence, news, unified search, and Surf-1.5 chat with citations.
 
 Pricing (settled in USDC to Surf's Base treasury):
-- Flat $0.0075/call — every endpoint, including raw on-chain SQL. No tiers.
+- Flat $0.0095/call — every endpoint, including raw on-chain SQL. No tiers. ($0.0075 base + $0.002 tx fee.)
 
 Common paths (full 84-endpoint catalog in the surf skill):
 - market/price?symbol=BTC                     (T1)

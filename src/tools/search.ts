@@ -23,22 +23,33 @@ type RawClient = {
 // $0.025 per returned source. Mirrors getSearchPrice() in
 // blockrun/src/app/api/v1/search/route.ts.
 const SEARCH_DEFAULT_MAX_RESULTS = 10;
-// The gateway settles 5% above $0.025 × max_results, then rounds UP to 4dp.
-// Verified against its own 402 quotes, which are free to request (send any call
-// with no payment header): max_results 1/5/10/20/50 quote
-// $0.0263/$0.1313/$0.2625/$0.5250/$1.3125. Reserving the unbuffered $0.025 × n
-// left the gate short of what the call actually settles at — the exact overshoot
-// the reserve exists to prevent.
+// READ THE `payment-required` HEADER, NOT THE JSON BODY.
 //
-// Integer micro-dollars, because the float form is not exact: 0.025 * 1.05 is
-// 0.026250000000000002, which rounds to $0.026251 — still under the gateway's
-// $0.0263, i.e. still short. A reserve must never be short.
-const SEARCH_MICRO_PER_SOURCE = 26_250; // $0.025 x 1.05, exact in micro-dollars
-const SEARCH_MICRO_QUANTUM = 100; // the gateway quotes to 4dp = 100 micro-dollars
+// A 402's JSON `price` field is the BASE. What x402 actually charges is
+// `maxAmountRequired` inside the base64 `payment-required` header, and it is
+// base + a $0.002 flat transaction fee. The two differ on every route:
+//
+//   max_results   body price   header (CHARGED)
+//   1             $0.0263      $0.0283
+//   10 (default)  $0.2625      $0.2645
+//   50            $1.3125      $1.3145
+//
+// Keying the reserve off the body — which is what 0.30.10 did — leaves the gate
+// $0.002 short on every search. Same trap as $0.0075 vs $0.0095 elsewhere: the
+// base is not the price.
+const SEARCH_MICRO_PER_SOURCE = 26_250; // $0.025 x 1.05 base, exact in micro-dollars
+const SEARCH_MICRO_QUANTUM = 100; // the gateway rounds the base UP to 4dp = 100 micro
+const SEARCH_MICRO_TX_FEE = 2_000; // $0.002 flat, added on top of the rounded base
+//
+// Integer micro-dollars throughout, because the float form is not exact:
+// 0.025 * 1.05 is 0.026250000000000002, which rounds to $0.026251 — under the
+// base itself, let alone the charge. A reserve must never be short.
 
 export function estimateSearchCost(body: unknown): number {
-  const reserve = (max: number) =>
-    (Math.ceil((SEARCH_MICRO_PER_SOURCE * max) / SEARCH_MICRO_QUANTUM) * SEARCH_MICRO_QUANTUM) / 1e6;
+  const reserve = (max: number) => {
+    const base = Math.ceil((SEARCH_MICRO_PER_SOURCE * max) / SEARCH_MICRO_QUANTUM) * SEARCH_MICRO_QUANTUM;
+    return (base + SEARCH_MICRO_TX_FEE) / 1e6;
+  };
   if (!body || typeof body !== "object") return reserve(SEARCH_DEFAULT_MAX_RESULTS);
   const raw = (body as { max_results?: unknown }).max_results;
   const max = typeof raw === "number" && raw > 0 ? Math.min(50, Math.floor(raw)) : SEARCH_DEFAULT_MAX_RESULTS;
