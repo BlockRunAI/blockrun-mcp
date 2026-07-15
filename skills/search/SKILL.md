@@ -15,7 +15,7 @@ triggers:
 
 # Live Search (Grok)
 
-Real-time web + news search with AI-summarized results and citations. **$0.025 × `max_results`** (default 10 → $0.25 per call). Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
+Real-time web + news search with AI-summarized results and citations. **PRICED PER SOURCE and expensive by default: $0.025 × `max_results`, +5% +$0.002 → default 10 settles $0.2645 per call.** Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
 
 ## How to Call from MCP
 
@@ -33,7 +33,7 @@ blockrun_search({ body: {
 |---|---|---|---|
 | `query` | yes | string | Natural-language search query |
 | `sources` | no | string[] | Subset of `["web","news"]`. Default: both. Does NOT multiply price. |
-| `max_results` | no | number | 1–50, default 10. **Drives the price** at $0.025 each. |
+| `max_results` | no | number | 1–50, default 10. **Drives the price** — ~$0.0263 charged per source. Pass a small number to cap spend; the gateway prices the raw value and does not floor fractions. |
 | `from_date` | no | string | `YYYY-MM-DD` lower bound on result date |
 | `to_date` | no | string | `YYYY-MM-DD` upper bound |
 
@@ -53,14 +53,14 @@ blockrun_search({ body: {
 ```ts
 blockrun_search({ body: { query: "Ethereum ETF approval SEC", sources: ["news","web"], max_results: 8 } })
 ```
-**Cost: $0.025 × 8 = $0.20.**
+**Cost: ~$0.2120** (8 sources: $0.025 × 8 × 1.05 + $0.002).
 
 ### 2. "What is X saying about Solana's latest outage?"
 
 ```ts
 blockrun_search({ body: { query: "Solana outage today", sources: ["x"], max_results: 15 } })
 ```
-**Cost: $0.025 × 15 = $0.375.**
+**Cost: ~$0.3958** (15 sources: $0.025 × 15 × 1.05 + $0.002).
 
 ### 3. "Background on Pectra upgrade, last 90 days only"
 
@@ -71,7 +71,7 @@ blockrun_search({ body: {
   from_date: "2026-02-17"
 }})
 ```
-**Cost: $0.025 × 10 (default) = $0.25.**
+**Cost: $0.2645** (10 sources, the default — verified live).
 
 ## search vs exa — Pick the Right Tool
 

@@ -60,12 +60,14 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 | **FX rate / commodity (gold, oil)** | `blockrun_price` category:"fx" or `"commodity"` | **FREE** |
 | **Which symbols exist?** | `blockrun_price` action:"list" | **FREE** |
 | **DEX pair, liquidity, volume, contract** | `blockrun_dex` | **FREE** |
-| Stock quote / history (12 markets) | `blockrun_price` category:"stocks" | $0.001 |
-| Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.001 |
-| Raw JSON-RPC on 40+ chains | `blockrun_rpc` | $0.002 |
-| Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.005 |
+| Stock quote / history (12 markets) | `blockrun_price` category:"stocks" | $0.0030 |
+| Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.0030 |
+| Raw JSON-RPC on 40+ chains | `blockrun_rpc` | $0.0040 |
+| Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.0070 |
 | **Everything below** (on-chain SQL, wallet labels, social, news, unlocks, liquidations, ETF flows) | `blockrun_surf` | $0.0095 |
 | Raw SQL over 80+ ClickHouse tables | `blockrun_surf` path:"onchain/sql" | $0.0095 |
+
+Every price below is what x402 actually **charges** (the base plus the gateway's $0.002 flat fee), verified against live `payment-required` headers — not the base you may see in a 402 body.
 
 **The rule:** a plain crypto price or a DEX pair is free. Only reach for `blockrun_surf` when you need something the free tools genuinely do not have — labels, SQL, social, news, unlocks.
 
@@ -73,7 +75,7 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 
 ## blockrun_price — quotes & history (Pyth-backed)
 
-Free for crypto, FX and commodities. $0.001 only for stocks.
+Free for crypto, FX and commodities. $0.0030 only for stocks.
 
 ```ts
 blockrun_price({ action: "price",   category: "crypto",    symbol: "BTC-USD" })            // FREE
@@ -82,7 +84,7 @@ blockrun_price({ action: "history", category: "crypto",    symbol: "ETH-USD",
 blockrun_price({ action: "price",   category: "fx",        symbol: "EUR-USD" })            // FREE
 blockrun_price({ action: "price",   category: "commodity", symbol: "XAU-USD" })            // FREE — gold
 blockrun_price({ action: "list",    category: "crypto" })                                  // FREE — discovery
-blockrun_price({ action: "price",   category: "stocks",    symbol: "AAPL", market: "us" }) // $0.001
+blockrun_price({ action: "price",   category: "stocks",    symbol: "AAPL", market: "us" }) // $0.0030
 ```
 
 Stock markets: `us`, `hk`, `jp`, `kr`, `gb`, `de`, `fr`, `nl`, `ie`, `lu`, `cn`, `ca` — `market` is required when `category:"stocks"`.
@@ -104,11 +106,11 @@ Path-based, GET only.
 
 | path | cost | returns |
 |---|---|---|
-| `protocols` | $0.005 | every DeFi protocol ranked by TVL |
-| `protocol/{slug}` | $0.005 | one protocol's TVL history + chain breakdown |
-| `chains` | $0.005 | TVL by chain |
-| `yields` | $0.005 | yield pools with APY + TVL (large — filter client-side) |
-| `prices/{coins}` | $0.001 | token prices by contract, e.g. `base:0x8335…,coingecko:ethereum` |
+| `protocols` | $0.0070 | every DeFi protocol ranked by TVL |
+| `protocol/{slug}` | $0.0070 | one protocol's TVL history + chain breakdown |
+| `chains` | $0.0070 | TVL by chain |
+| `yields` | $0.0070 | yield pools with APY + TVL (large — filter client-side) |
+| `prices/{coins}` | $0.0030 | token prices by contract, e.g. `base:0x8335…,coingecko:ethereum` |
 
 ```ts
 blockrun_defi({ path: "protocol/aave-v3" })
@@ -129,12 +131,12 @@ blockrun_surf({ path: "market/etf",          params: { symbol: "BTC" } })       
 blockrun_surf({ path: "social/mindshare",    params: { project: "base" } })
 blockrun_surf({ path: "onchain/sql", body: {
   sql: "SELECT token_address, count() FROM ethereum.dex_trades WHERE block_time > now() - INTERVAL 1 DAY GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-}})                                                                                   // $0.020
+}})                                                                                   // $0.0095
 ```
 
 ## blockrun_rpc — raw chain access
 
-40+ chains, one endpoint, no node, no key. $0.002/call (batches charge per element). See [`skills/rpc/SKILL.md`](../rpc/SKILL.md).
+40+ chains, one endpoint, no node, no key. $0.0040/call (batches charge per element, plus one flat fee per request). See [`skills/rpc/SKILL.md`](../rpc/SKILL.md).
 
 ```ts
 blockrun_rpc({ chain: "base", method: "eth_blockNumber", params: [] })

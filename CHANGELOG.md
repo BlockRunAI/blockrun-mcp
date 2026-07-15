@@ -2,6 +2,16 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.31.4
+
+Closes the last of the audit findings: every price an agent reads is now the price it is **charged**, verified against live `payment-required` headers.
+
+- **`docs(surf)` — taught an endpoint that does not exist.** `chat/completions` (Surf-1.5) returns **404** on the gateway; the skill had a worked example, a catalog row, a trigger and pricing notes for it. All removed.
+- **`docs(surf)` — Surf has no premium tier any more.** The skill billed `onchain/sql` at `$0.0200`. Upstream `SURF_TIER_1/2/3_PRICE` are now **all identical**, and `onchain/sql` quotes the same **$0.0095** as every other Surf read. The tier column is gone — one flat rate, SQL included.
+- **`docs(gentech-blockrun)` — billed free calls.** `blockrun_price` crypto/FX/commodity quotes are **FREE**; the skill charged `$0.001` for them across four patterns and told agents to cache aggressively to save money that was never being spent. Also refreshed stale `defi` ($0.001 → **$0.0070**, prices/* → **$0.0030**) and `exa` ($0.01 → **$0.0120**) figures, and stopped quoting a flat rate for `blockrun_chat`, which is per-token.
+- **`docs(crypto-data, search, phone)`** — repriced to the charge: `defi` **$0.0070** / prices/* **$0.0030**, `rpc` **$0.0040**, `surf` **$0.0095**, stocks **$0.0030**, `phone/lookup` **$0.0120**, `lookup/fraud` **$0.0520**, `numbers/list` **$0.0030**, `numbers/buy` **$5.002**. `search` understated every example — the default 10-source call settles **$0.2645**, not $0.25, and the skill now says it is priced per source and expensive by default.
+- No code change; 165 tests, typecheck, build green.
+
 ## 0.31.3
 
 - **`docs(modal)` — the tool and skill advertised `$0.01` for a call that can cost `$192`.** 0.31.2 fixed the *reserve* so the gate catches it; this fixes what we **tell the agent**, which is what walks it into the charge in the first place. Three separate lies, all live-verified:
