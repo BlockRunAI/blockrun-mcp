@@ -12,7 +12,7 @@ test("estimatePhoneCost prices the exact known tiers at the CHARGED price", () =
   assert.equal(estimatePhoneCost("phone/numbers/renew", true), 5.002);
   assert.equal(estimatePhoneCost("voice/call", true), 0.542);
   assert.equal(estimatePhoneCost("phone/lookup", true), 0.012);
-  assert.equal(estimatePhoneCost("phone/lookup/fraud", true), 0.052);
+  assert.equal(estimatePhoneCost("phone/lookup/fraud", true), 0.052001);
   assert.equal(estimatePhoneCost("phone/numbers/release", true), 0);
   assert.equal(estimatePhoneCost("phone/numbers/list", true), 0.003);
 });

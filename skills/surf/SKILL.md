@@ -139,7 +139,7 @@ The only Surf prediction-market endpoint with no Predexon equivalent is `predict
 ```ts
 blockrun_surf({ path: "market/price", params: { symbol: "BTC" } })
 ```
-**Cost: $0.001.** Returns price history; latest point = current price.
+**Cost: $0.0095.** Returns price history; latest point = current price.
 
 ### 2. "Top 10 tokens by DEX volume on Ethereum in the last 24h"
 
@@ -198,12 +198,12 @@ blockrun_surf({ path: "social/ranking" })
 ### 6. "ETF flows + funding rate + long/short — give me the macro picture"
 
 ```ts
-blockrun_surf({ path: "market/etf",                params: { symbol: "BTC" } })       // T1
-blockrun_surf({ path: "market/fear-greed" })                                          // T1
-blockrun_surf({ path: "exchange/funding-history",  params: { pair: "BTC-USDT" } })   // T2
-blockrun_surf({ path: "exchange/long-short-ratio", params: { pair: "BTC-USDT" } })   // T2
+blockrun_surf({ path: "market/etf",                params: { symbol: "BTC" } })
+blockrun_surf({ path: "market/fear-greed" })
+blockrun_surf({ path: "exchange/funding-history",  params: { pair: "BTC-USDT" } })
+blockrun_surf({ path: "exchange/long-short-ratio", params: { pair: "BTC-USDT" } })
 ```
-**Cost: 2 × $0.001 + 2 × $0.005 = $0.012.**
+**Cost: 4 × $0.0095 = $0.038.**
 
 ## Method Routing — When to Use `body`
 

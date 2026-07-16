@@ -70,14 +70,14 @@ SPORTS (Tier 1):
 - sports/markets/:game_id — single sports game with all venue outcomes
 - sports/outcomes/:predexon_id — equivalent sports outcomes across venues for a Predexon ID
 
-KALSHI (Tier 1): kalshi/markets, kalshi/trades, kalshi/orderbooks
-LIMITLESS / OPINION / PREDICT.FUN (Tier 1): {platform}/markets, {platform}/orderbooks
-DFLOW: dflow/trades (T1), dflow/wallet/positions/:wallet (T2), dflow/wallet/pnl/:wallet (T2)
-BINANCE FUTURES (Tier 2): binance/candles/:symbol, binance/ticks/:symbol
+KALSHI: kalshi/markets, kalshi/trades, kalshi/orderbooks
+LIMITLESS / OPINION / PREDICT.FUN: {platform}/markets, {platform}/orderbooks
+DFLOW: dflow/trades, dflow/wallet/positions/:wallet, dflow/wallet/pnl/:wallet
+BINANCE FUTURES: binance/candles/:symbol, binance/ticks/:symbol
 
 CROSS-PLATFORM:
-- matching-markets, matching-markets/pairs — equivalent markets across Polymarket+Kalshi (T2)
-- markets/search — search across all platforms in one call (T2)
+- matching-markets, matching-markets/pairs — equivalent markets across Polymarket+Kalshi
+- markets/search — search across all platforms in one call
 
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
       inputSchema: {

@@ -139,7 +139,7 @@ blockrun_surf({ path: "onchain/sql", body: {
 40+ chains, one endpoint, no node, no key. $0.0040/call (batches charge per element, plus one flat fee per request). See [`skills/rpc/SKILL.md`](../rpc/SKILL.md).
 
 ```ts
-blockrun_rpc({ chain: "base", method: "eth_blockNumber", params: [] })
+blockrun_rpc({ network: "base", method: "eth_blockNumber", params: [] })
 ```
 
 ## Worked Examples

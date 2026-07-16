@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
@@ -15,7 +16,10 @@ import {
 } from "@blockrun/llm";
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
-const MUSIC_COST = 0.1575;
+// withTxFee: music.ts was never in the tx-fee sweep. Live-verified:
+// audio/generations charges $0.1595 against a $0.1575 reserve — short exactly
+// the gateway's $0.002 flat fee.
+const MUSIC_COST = withTxFee(0.1575);
 // Async slow-path polling. MiniMax music takes 1-3 min: fast tracks complete
 // inline (200), slower ones return 202 + poll_url and we poll like blockrun_video.
 const MUSIC_POLL_INTERVAL_MS = 5_000;

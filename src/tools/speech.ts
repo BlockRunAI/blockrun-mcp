@@ -29,7 +29,11 @@ const SPEECH_TIMEOUT = 60_000; // TTS is synchronous (<1s for Flash); 60s covers
 const VOICES_TIMEOUT = 15_000;
 const MARGIN = 1.05; // 5% platform fee, baked into the server's quoted price
 const MIN_PAYMENT_USD = 0.001;
-const SOUND_EFFECT_COST = 0.05 * MARGIN;
+// withTxFee: the sweep that fixed speechCost() four lines below skipped this
+// constant. Live-verified: audio/sound-effects charges 54501 micro ($0.054501)
+// against a $0.0525 reserve. withTxFee ceils, matching the server — a plain
+// round would land on $0.054500, one micro short.
+const SOUND_EFFECT_COST = withTxFee(0.05 * MARGIN);
 
 // Per-model $/1k chars and max input — mirrors SPEECH_MODELS in the gateway.
 const SPEECH_MODELS: Record<string, { pricePer1kChars: number; maxInputChars: number }> = {

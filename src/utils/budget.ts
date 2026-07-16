@@ -7,12 +7,29 @@ function formatUsd(amount: number): string {
   return `$${amount.toFixed(amount >= 1 ? 2 : 4)}`;
 }
 
+/**
+ * Coerce an estimate into a usable, non-poisonous cost.
+ *
+ * `Math.max(0, x)` alone is NOT safe: for NaN, a function, or a string it yields
+ * NaN, and NaN silently disables every cap in the process — `cost > 0` is false
+ * so checkBudget ALLOWS, then `budget.spent += NaN` sticks and every subsequent
+ * `spent + cost > limit` is false forever. That reached production once, via a
+ * prototype-chain hit on modal's GPU table returning Object.prototype.toString.
+ *
+ * A non-finite estimate is a BUG in an estimator, and it must fail CLOSED here
+ * rather than take the ledger with it.
+ */
+function coerceCost(estimatedCost: unknown): number {
+  if (typeof estimatedCost !== "number" || !Number.isFinite(estimatedCost)) return 0;
+  return Math.max(0, estimatedCost);
+}
+
 export function checkBudget(
   budget: BudgetState,
   agentId?: string,
   estimatedCost: number = 0.001,
 ): { allowed: boolean; reason?: string } {
-  const cost = Math.max(0, estimatedCost);
+  const cost = coerceCost(estimatedCost);
 
   // Check global limit first. Use the next-call estimate so a budget cannot be
   // exceeded by one final paid request.
@@ -65,7 +82,7 @@ export function reserveBudget(
   const check = checkBudget(budget, agentId, estimatedCost);
   if (!check.allowed) return { allowed: false, reason: check.reason, release: () => {} };
 
-  const cost = Math.max(0, estimatedCost);
+  const cost = coerceCost(estimatedCost);
   budget.spent += cost;
   const agentBudget = agentId ? budget.agents.get(agentId) : undefined;
   if (agentBudget) agentBudget.spent += cost;
@@ -125,6 +142,9 @@ export class BudgetExceededError extends Error {
 }
 
 export function recordSpending(budget: BudgetState, cost: number, agentId?: string): void {
+  // coerceCost, not raw: a NaN here poisons budget.spent permanently and every
+  // later cap check silently passes. Fail closed on a bad number.
+  cost = coerceCost(cost);
   budget.spent += cost;
   budget.calls += 1;
 

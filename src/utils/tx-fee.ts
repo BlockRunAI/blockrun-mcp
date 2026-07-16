@@ -5,9 +5,11 @@
 // under-reserves on every paid call and recordSpending() under-counts the ledger.
 //
 // WHY THIS EXISTS: a 402's JSON body reports `price: {amount}` = the BASE. What
-// x402 actually charges is `maxAmountRequired` inside the base64
-// `payment-required` RESPONSE HEADER, and it is base + $0.002. The two differ on
-// every route:
+// x402 actually charges is the `amount` inside the base64 `payment-required`
+// RESPONSE HEADER, and it is base + $0.002. (This gateway speaks x402Version 2,
+// whose field is `amount`. v1's `maxAmountRequired` is simply absent — read that
+// key and you get `null` rather than an error, which reads as "free".) The two
+// differ on every route:
 //
 //   route                     body      charged
 //   pm/polymarket/markets     $0.0075   $0.0095
@@ -23,7 +25,7 @@
 //
 //   curl -s -D - -o /dev/null https://blockrun.ai/api/v1/pm/polymarket/markets \
 //     | grep -i '^payment-required:' | sed 's/^[^:]*: *//' | base64 -d \
-//     | jq '.accepts[0].maxAmountRequired'   # micro-USDC; / 1e6 = USD
+//     | jq '.accepts[0].amount'   # micro-USDC; / 1e6 = USD
 //
 // Mirrors addTransactionFee() in the gateway's src/lib/models.ts. Keep in step.
 
@@ -44,9 +46,27 @@ export const TRANSACTION_FEE_USD = 0.002;
  * $0 budget would reject them.
  */
 export function withTxFee(baseUsd: number): number {
+  // Never pass a non-number/non-finite value through. `!(x > 0)` is true for NaN,
+  // for a function, and for a string — so the old early-return handed them
+  // straight to the budget gate, where Math.max(0, x) becomes NaN, `cost > 0` is
+  // false (so the call is ALLOWED), and `spent += NaN` disables every cap for the
+  // life of the process. That actually happened: a prototype-chain hit on the
+  // modal GPU table returned Object.prototype.toString. A bad estimate must fail
+  // CLOSED — treat it as free-but-unpriceable rather than poison the ledger.
+  if (typeof baseUsd !== "number" || !Number.isFinite(baseUsd)) return 0;
   if (!(baseUsd > 0)) return baseUsd;
-  // Integer micro-dollars: the float form drifts (0.005 + 0.002 is
-  // 0.007000000000000001), and a reserve that reads as 0.0070000000000001 is
-  // cosmetically wrong in every budget message it appears in.
-  return Math.round((baseUsd + TRANSACTION_FEE_USD) * 1e6) / 1e6;
+  // CEIL, mirroring the gateway's usdToMicroUsdc: `Math.ceil(usd * 1_000_000)`.
+  // Rounding is correct only by luck — it agrees with ceil whenever the addition
+  // is exact, and silently under-reserves by one micro-dollar wherever float
+  // drift creeps in, which is precisely where a x1.05 margin is involved:
+  //
+  //   base            base + fee              *1e6                ceil    round
+  //   0.005           0.007                   7000                7000    7000   (agree)
+  //   0.0075          0.0095                  9500                9500    9500   (agree)
+  //   0.05 * 1.05     0.05450000000000001     54500.00000000001   54501   54500  <- round is SHORT
+  //   0.015 * 1.05    0.017750000000000002    17750.000000000004  17751   17750  <- round is SHORT
+  //
+  // The server ceils unconditionally, so we must too. Verified live:
+  // audio/sound-effects quotes 54501 micro, not 54500.
+  return Math.ceil((baseUsd + TRANSACTION_FEE_USD) * 1e6) / 1e6;
 }
