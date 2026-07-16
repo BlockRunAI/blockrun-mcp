@@ -63,7 +63,7 @@ blockrun_phone({ path: `voice/call/${r.call_id}` })
 
 | Path | Method | Body | Price |
 |---|---|---|---|
-| `voice/call` | POST | `{ to, task, from, voice?, max_duration?, language?, first_sentence?, wait_for_greeting? }` | $0.54 flat |
+| `voice/call` | POST | `{ to, task, from, voice?, max_duration?, language?, first_sentence?, wait_for_greeting? }` | $0.5420 flat |
 | `voice/call/{call_id}` | GET (no body) | – | free poll |
 
 > **`from` is REQUIRED and must be a number your wallet owns.** Provision one first with `phone/numbers/buy` ($5, 30-day lease). 400 errors from `voice/call` are almost always missing `from`.
@@ -100,7 +100,7 @@ blockrun_phone({ path: `voice/call/${r.call_id}` })
 ```ts
 blockrun_phone({ path: "phone/lookup/fraud", body: { phoneNumber: "+14155550150" } })
 ```
-Returns carrier, line type, SIM-swap indicator, call-forwarding state. **Cost: $0.05.**
+Returns carrier, line type, SIM-swap indicator, call-forwarding state. **Cost: $0.0520.**
 
 ### 2. Spin up a US number with a 415 area code
 
@@ -139,7 +139,7 @@ while (true) {
   await new Promise(r => setTimeout(r, 5000))
 }
 ```
-**Cost: $0.54 flat for the call.** Status polling is free.
+**Cost: $0.5420 flat for the call.** Status polling is free.
 
 ### 4. List your wallet's leased numbers + release one
 
@@ -158,7 +158,7 @@ await blockrun_phone({ path: "phone/numbers/release", body: { phoneNumber: numbe
 
 ## When NOT to Use
 
-- **High-volume autodialer / robocall workloads** — pricing is per-call ($0.54 each) which doesn't amortize like wholesale telephony
+- **High-volume autodialer / robocall workloads** — pricing is per-call ($0.5420 each) which doesn't amortize like wholesale telephony
 - **Receiving inbound calls** — `numbers/buy` provisions a number but inbound routing is not exposed via MCP; use Bland directly
 - **Two-way human-to-human calls** — this is for AI-driven outbound; for real-time human bridging, use a SIP provider
 
@@ -167,7 +167,7 @@ await blockrun_phone({ path: "phone/numbers/release", body: { phoneNumber: numbe
 - `phone/lookup` is cheap reconnaissance; `phone/lookup/fraud` is 5× the price but adds SIM-swap + call-forwarding signals you can't get from a basic carrier lookup
 - Voice calls return immediately with a `call_id`; the call runs in the background. Always poll `voice/call/{call_id}` to get the transcript
 - The poll endpoint is free — poll as often as you want, but every 5s is plenty
-- Calls that fail upstream (recipient hangs up, no answer) still charge the flat $0.54 — Bland's pricing model
+- Calls that fail upstream (recipient hangs up, no answer) still charge the flat $0.5420 — Bland's pricing model
 
 ## Reference
 

@@ -85,7 +85,7 @@ blockrun_search({ body: {
 ## Notes
 
 - Returns AI-summarized text + a list of sources with URLs. The summary is one paragraph; sources let you drill in.
-- **Price is per result, not per source.** `max_results: 20` with one source or three sources both cost $0.025 × 20 = $0.50. Pass a smaller `max_results` to cap spend.
+- **Price is per result, not per source.** `max_results: 20` with one source or three sources both charge **$0.527** ($0.025 × 20 × 1.05 + $0.002 — verified live). Pass a smaller `max_results` to cap spend.
 - Date filters are strict — results outside the window are dropped, not down-ranked.
 
 ## Reference

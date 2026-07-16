@@ -119,7 +119,7 @@ await blockrun_modal({ path: "sandbox/exec", body: {
 }})
 await blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: sb.sandbox_id } })
 ```
-**Cost: $0.012** ($0.01 + $0.001 + $0.001).
+**Cost: $0.0180** — create $0.0120 + exec $0.0030 + terminate $0.0030. Every call carries the $0.002 transaction fee, so three calls pay it three times; batch your work into one `exec` rather than several.
 
 ### 2. GPU inference, A100, with deps pre-installed
 
@@ -132,7 +132,9 @@ blockrun_modal({ path: "sandbox/create", body: {
   setup_commands: ["pip install --quiet transformers accelerate"]
 }})
 ```
-Then `sandbox/exec` with your inference command. Sandbox auto-evicts after 1200s idle.
+Then `sandbox/exec` with your inference command.
+
+**Cost: $1.3413** — create $1.3353 + exec $0.0030 + terminate $0.0030. `timeout: 1200` is above the 300s flat tier, so the A100 bills hourly for the full 20 minutes you asked for: $4.00/h × (1200/3600) = $1.3333, + the $0.002 fee. It is **charged upfront and never refunded** — it does NOT auto-evict when idle, and terminating after 30 seconds still costs the full $1.3353. Ask for the time you actually need.
 
 ### 3. Test untrusted code Claude generated
 

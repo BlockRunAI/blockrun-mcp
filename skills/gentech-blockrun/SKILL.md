@@ -83,7 +83,7 @@ blockrun_price(action="list", category="crypto", query="sol")
 
 **Cost:** $0 — crypto/FX/commodity price *and* list calls are both free. Only `category:"stocks"` is paid ($0.0030).
 
-### Pattern 2: Token Research Pipeline (~$0.014)
+### Pattern 2: Token Research Pipeline (~$0.021)
 
 Start with the free tools, then pay only for what they cannot answer.
 
@@ -176,19 +176,19 @@ blockrun_markets({ path: "polymarket/positions" })
 ### Content Generation Pipeline
 
 ```python
-# 1. Research ($0.01)
+# 1. Research ($0.0120)
 blockrun_exa({ path: "search", body: { query: "agentic commerce trends", numResults: 5 }})
 
-# 2. Image generation for post ($0.015 cheapest to $0.12 quality)
+# 2. Image generation for post ($0.0178 cheapest to $0.1070 quality)
 blockrun_image({ prompt: "AI agent futuristic dashboard with neon grids" })
 
-# 3. Voiceover for video ($0.05/1k chars)
+# 3. Voiceover for video ($0.0545/1k chars)
 blockrun_speech({ input: "Your narration text here...", voice: "sarah" })
 
-# 4. Music track ($0.1575)
+# 4. Music track ($0.1595)
 blockrun_music({ prompt: "upbeat synthwave background" })
 
-# 5. Short video clip ($0.40)
+# 5. Short video clip ($0.402)
 blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 ```
 
@@ -202,30 +202,29 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 |-----------|-------|-----------|
 | `blockrun_price` (list) | FREE | daily discovery |
 | `blockrun_dex` | FREE | unlimited |
-| `blockrun_rpc` | $0.002 | on-chain reads |
+| `blockrun_rpc` | $0.0040 | on-chain reads (batch: $0.002/element + $0.002) |
 | `blockrun_wallet` (status/report) | FREE | before every session |
 | `blockrun_price` (quote) | **FREE** | crypto/FX/commodity; stocks $0.0030 |
 | `blockrun_defi` | $0.0070 | protocol/chain analysis ($0.0030 for prices/*) |
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |
-| `blockrun_exa` (search) | $0.01 | deep research |
+| `blockrun_exa` (search) | $0.0120 | deep research (`contents`: $0.002/URL + $0.002) |
 | `blockrun_surf` | $0.0095 | crypto data, wallets/candles/search, on-chain SQL (flat) |
-| `blockrun_speech` | $0.05/1k chars | TTS |
-| `blockrun_image` | $0.015–0.12 | image generation |
-| `blockrun_music` | $0.1575 | music tracks |
-| `blockrun_video` | $0.40+ | short video clips |
+| `blockrun_speech` | $0.0545/1k chars | TTS |
+| `blockrun_image` | $0.0178–0.1070 | image generation |
+| `blockrun_music` | $0.1595 | music tracks |
+| `blockrun_video` | $0.402+ | short video clips (per-second × duration) |
 | `blockrun_markets` | $0.0095 | prediction market data, wallet analytics (flat) |
-| `blockrun_modal` | $0.001+ | remote sandbox execution |
-| `blockrun_phone` | $0.01–5.00 | phone lookups |
+| `blockrun_modal` | $0.0030–$192 | remote sandbox execution — `timeout` drives the price, see the modal skill |
+| `blockrun_phone` | $0.0120–$5.002 | lookups; number buy/renew is $5.002 |
 
 ### Daily Budget Formula (GenTech's Setup)
 
 ```yaml
 # ~$0.30/day typical
 Daily budget:
-  Free tools:     unlimited (dex, list, wallet status)
-  Tier-1 data:   ~$0.05 (prices, defi, surf T1)
-  Tier-2 data:   ~$0.05 (surf T2, markets T1)
+  Free tools:     unlimited (price quotes, dex, list, wallet status)
+  Crypto data:   ~$0.10 (surf + markets, flat $0.0095 each; defi $0.0070)
   AI calls:      ~$0.10 (chat free mode, occasional glm)
   Media:         ~$0.10 (occasional image/speech)
   Total:         ~$0.30/day
@@ -276,7 +275,7 @@ BlockRun calls are cheap but not free. Cache results that don't change minute-to
 - **Wallet labels:** Cache for 24 hours (rarely change)
 - **On-chain SQL results:** Cache for 1 hour (most queries return the same answer)
 
-GenTech's approach: Don't bother caching prices ($0.001 is too cheap to cache). Cache TVL and wallet labels aggressively.
+GenTech's approach: Don't bother caching prices (crypto/FX/commodity quotes are FREE). Cache TVL and wallet labels aggressively.
 
 ---
 
