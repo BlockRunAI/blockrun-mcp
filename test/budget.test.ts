@@ -167,3 +167,23 @@ test("parseBudgetLimitEnv parses a default cap, ignores junk", () => {
   assert.equal(parseBudgetLimitEnv("0"), null);
   assert.equal(parseBudgetLimitEnv("-3"), null);
 });
+
+// A NaN estimate must never poison the ledger. `Math.max(0, x)` is NOT enough:
+// for NaN / a function / a string it yields NaN, `cost > 0` is false so the gate
+// ALLOWS, and `budget.spent += NaN` sticks — every later `spent + cost > limit`
+// is false, so the cap is dead for the life of the process. That reached
+// production via a prototype-chain hit on modal's GPU table returning
+// Object.prototype.toString. A bad estimate is an estimator bug: fail CLOSED.
+test("a non-finite estimate cannot disable the budget cap", () => {
+  for (const poison of [NaN, Infinity, -Infinity, "0.5", null, undefined, {}, [], () => 1, Object.prototype.toString] as any[]) {
+    const b: BudgetState = { limit: 1.0, spent: 0, calls: 0, agents: new Map() };
+    const gate = reserveBudget(b, undefined, poison);
+    assert.ok(Number.isFinite(b.spent), `reserveBudget(${String(poison)}) left spent = ${b.spent}`);
+    gate.release();
+    assert.ok(Number.isFinite(b.spent), `release() after ${String(poison)} left spent = ${b.spent}`);
+    recordSpending(b, poison, undefined);
+    assert.ok(Number.isFinite(b.spent), `recordSpending(${String(poison)}) left spent = ${b.spent}`);
+    // the cap must still work afterwards
+    assert.equal(checkBudget(b, undefined, 500).allowed, false, `cap died after ${String(poison)}`);
+  }
+});

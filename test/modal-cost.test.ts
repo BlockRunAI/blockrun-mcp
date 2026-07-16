@@ -22,12 +22,12 @@ const CHARGED: Array<[string, unknown, number]> = [
   // flat tier: timeout <= 300
   ["sandbox/create", {}, 0.012],
   ["sandbox/create", { timeout: 300 }, 0.012],
-  ["sandbox/create", { timeout: 300, gpu: "T4" }, 0.052],
-  ["sandbox/create", { timeout: 300, gpu: "H100" }, 0.402],
+  ["sandbox/create", { timeout: 300, gpu: "T4" }, 0.052001],
+  ["sandbox/create", { timeout: 300, gpu: "H100" }, 0.402001],
   // hourly tier: timeout > 300, exact hours (not rounded up)
-  ["sandbox/create", { timeout: 3600, gpu: "A100" }, 4.002],
+  ["sandbox/create", { timeout: 3600, gpu: "A100" }, 4.002001],
   ["sandbox/create", { timeout: 86400, gpu: "H100" }, 192.002],
-  ["sandbox/create", { timeout: 3600 }, 0.102], // CPU hourly $0.10
+  ["sandbox/create", { timeout: 3600 }, 0.102001], // CPU hourly $0.10
   ["sandbox/create", { timeout: 1801, gpu: "T4" }, 1.5 * (1801 / 3600) + 0.002],
 ];
 
@@ -54,7 +54,26 @@ test("estimateModalCost never reserves the flat rate for an expensive sandbox", 
 
 test("estimateModalCost falls back to the CPU rate for an unknown gpu, like the gateway", () => {
   assert.equal(estimateModalCost("sandbox/create", { timeout: 300, gpu: "NOPE" }), 0.012);
-  assert.equal(estimateModalCost("sandbox/create", { timeout: 3600, gpu: "NOPE" }), 0.102);
+  assert.equal(estimateModalCost("sandbox/create", { timeout: 3600, gpu: "NOPE" }), 0.102001);
+});
+
+// A plain object literal inherits from Object.prototype, so TABLE["toString"]
+// returns a FUNCTION and `?? default` never fires. That function flowed into the
+// budget gate as NaN and permanently disabled every cap for the process:
+// reserveBudget does Math.max(0, fn) = NaN, checkBudget's `cost > 0` is false so
+// it ALLOWS, and `spent += NaN` sticks — a $1-capped agent was then cleared for a
+// $500 call. The "unknown gpu" test above is blind to it: ordinary keys like
+// "NOPE" fall back correctly; only prototype keys escape. Hence a Map.
+test("estimateModalCost is not fooled by Object.prototype keys as a gpu", () => {
+  for (const key of ["toString", "valueOf", "constructor", "hasOwnProperty", "__proto__", "isPrototypeOf"]) {
+    for (const timeout of [300, 3600]) {
+      const got = estimateModalCost("sandbox/create", { timeout, gpu: key });
+      assert.equal(typeof got, "number", `gpu:"${key}" timeout:${timeout} returned a ${typeof got}, not a number`);
+      assert.ok(Number.isFinite(got), `gpu:"${key}" timeout:${timeout} returned ${got}`);
+      // must fall back to the CPU rate, exactly like any other unknown gpu
+      assert.equal(got, timeout > 300 ? 0.102001 : 0.012, `gpu:"${key}" must fall back to the CPU rate`);
+    }
+  }
 });
 
 test("estimateModalCost treats a missing/garbage timeout as the 300s default (flat)", () => {

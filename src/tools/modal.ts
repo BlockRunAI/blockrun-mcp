@@ -41,13 +41,21 @@ const MODAL_FLAT_RATE_MAX_SECONDS = 300;
 const MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS = 300;
 const MODAL_CREATE_PRICE_USD = 0.01;
 const MODAL_OPERATION_PRICE_USD = 0.001;
-const MODAL_GPU_CREATE_PRICE_USD: Record<string, number> = {
-  T4: 0.05, L4: 0.08, A10G: 0.10, A100: 0.20, H100: 0.40,
-};
+// Map, not an object literal. A literal inherits from Object.prototype, so
+// TABLE["toString"] resolves to a FUNCTION and the `?? default` fallback never
+// fires — the function then flows into the budget gate as NaN and permanently
+// disables every cap for the process (reserveBudget does Math.max(0, fn) = NaN,
+// checkBudget's `cost > 0` is false so it ALLOWS, then `spent += NaN` sticks).
+// Reachable via toString/valueOf/constructor/hasOwnProperty/__proto__. A Map has
+// no prototype keys, so `.get()` returns undefined for all of them and the
+// fallback works. See test/modal-cost.test.ts.
+const MODAL_GPU_CREATE_PRICE_USD = new Map<string, number>([
+  ["T4", 0.05], ["L4", 0.08], ["A10G", 0.1], ["A100", 0.2], ["H100", 0.4],
+]);
 const MODAL_CPU_HOURLY_PRICE_USD = 0.1;
-const MODAL_GPU_HOURLY_PRICE_USD: Record<string, number> = {
-  T4: 1.5, L4: 2.0, A10G: 2.5, A100: 4.0, H100: 8.0,
-};
+const MODAL_GPU_HOURLY_PRICE_USD = new Map<string, number>([
+  ["T4", 1.5], ["L4", 2.0], ["A10G", 2.5], ["A100", 4.0], ["H100", 8.0],
+]);
 
 /** Exported for tests. Returns what x402 will CHARGE (base + the flat tx fee). */
 export function estimateModalCost(path: string, body?: unknown): number {
@@ -62,12 +70,12 @@ export function estimateModalCost(path: string, body?: unknown): number {
       : MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS;
 
   if (seconds > MODAL_FLAT_RATE_MAX_SECONDS) {
-    // An unknown or empty gpu string falls back to the CPU rate — same as the
-    // gateway's `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`.
-    const hourly = gpu !== undefined ? MODAL_GPU_HOURLY_PRICE_USD[gpu] : undefined;
+    // An unknown or empty gpu falls back to the CPU rate — same as the gateway's
+    // `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`.
+    const hourly = gpu !== undefined ? MODAL_GPU_HOURLY_PRICE_USD.get(gpu) : undefined;
     return withTxFee((hourly ?? MODAL_CPU_HOURLY_PRICE_USD) * (seconds / 3600));
   }
-  const flat = gpu !== undefined ? MODAL_GPU_CREATE_PRICE_USD[gpu] : undefined;
+  const flat = gpu !== undefined ? MODAL_GPU_CREATE_PRICE_USD.get(gpu) : undefined;
   return withTxFee(flat ?? MODAL_CREATE_PRICE_USD);
 }
 
