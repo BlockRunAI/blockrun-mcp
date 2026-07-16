@@ -2,6 +2,15 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.31.5
+
+Round 2 of the audit loop — regression-hunting round 1's own fixes. Everything functional held; the only casualties were artifacts of my own regex surgery in 0.31.4.
+
+- **`fix(skills)` — the surf rewrite left the file inconsistent.** Deleting the `chat/completions` section with a regex (rather than by hand) left: worked-example headings numbered **1, 2, 3, 4, 6, 7** with a hole where 5 had been; an **empty `### Chat — 1` category heading** whose only endpoint 404s; and a catalog claiming **83 endpoints / 13 categories** while the per-category counts still summed to **84**. Renumbered, orphan removed, counts reconciled — 12 categories summing to 83, matching the header.
+- **Verified no functional regression from the 0.31.2–0.31.4 fixes.** Every genuinely free path still reserves exactly $0 (`chat` mode:"free" alone, `nvidia/*`, `phone/numbers/release`, GET `voice/call/{id}`) — important because `checkBudget` only short-circuits at exactly 0, so a $0.002 reserve on a free call would deny it on an exhausted budget. Every paid path still > $0. `search` returns a finite, positive reserve for all of `2.7 / 0.5 / 50.9 / 51 / 1e308 / Infinity / -Infinity / NaN / "10" / null / true / [] / {} / undefined`, and 50.9 still caps at 50. `modal` returns a finite reserve for every garbage body, and non-create paths stay $0.0030 regardless of what the body carries.
+- **`modal` divergence on invalid input is harmless, confirmed live:** `gpu:"h100"` (lowercase), `gpu:"NOPE"`, `timeout:86401`, `timeout:"3600"` all return **HTTP 400 without charging**, so an estimate that diverges there costs nothing — the reserve is released in the `finally`. Every *valid* shape matches the header exactly.
+- 165 tests, typecheck, build green.
+
 ## 0.31.4
 
 Closes the last of the audit findings: every price an agent reads is now the price it is **charged**, verified against live `payment-required` headers.
