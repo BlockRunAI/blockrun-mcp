@@ -187,7 +187,7 @@ blockrun_surf({ path: "prediction-market/polymarket/prices",
                 params: { condition_id: "0x..." } })
 ```
 
-### 6. "Where's mindshare moving for L1s?"
+### 5. "Where's mindshare moving for L1s?"
 
 ```ts
 blockrun_surf({ path: "social/mindshare", params: { q: "solana", interval: "1d" } })
@@ -195,7 +195,7 @@ blockrun_surf({ path: "social/mindshare", params: { q: "monad",  interval: "1d" 
 blockrun_surf({ path: "social/ranking" })
 ```
 
-### 7. "ETF flows + funding rate + long/short — give me the macro picture"
+### 6. "ETF flows + funding rate + long/short — give me the macro picture"
 
 ```ts
 blockrun_surf({ path: "market/etf",                params: { symbol: "BTC" } })       // T1
@@ -230,7 +230,7 @@ result = client._request_with_payment_raw("/v1/surf/onchain/sql", {
 })
 ```
 
-## Full Endpoint Catalog (83 endpoints, 13 categories)
+## Full Endpoint Catalog (83 endpoints, 12 categories)
 
 ### Exchange (CEX) — 7
 `exchange/markets` · `exchange/price` · `exchange/perp` · `exchange/depth` · `exchange/klines` · `exchange/funding-history` · `exchange/long-short-ratio`
@@ -268,8 +268,6 @@ result = client._request_with_payment_raw("/v1/surf/onchain/sql", {
 
 ### Web — 1
 `web/fetch`
-
-### Chat — 1
 
 ## Gotchas
 
