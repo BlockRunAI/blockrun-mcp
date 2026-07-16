@@ -1,6 +1,6 @@
 ---
 name: prediction-markets
-description: Use when the user asks about event probabilities, prediction market odds, what people are betting on, Polymarket/Kalshi prices, sports markets — or about the things you CANNOT get from a public API: historical price/volume/orderbook time series, smart-money positioning, whale leaderboards, wallet P&L, wallet identity and on-chain clustering, and canonical IDs matching the same question across venues. 58 endpoints over Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle. Pay-per-call in USDC via x402 — no Predexon account, no API key.
+description: "Use when the user asks about event probabilities, prediction market odds, what people are betting on, Polymarket/Kalshi prices, sports markets — or about the things you CANNOT get from a public API: historical price/volume/orderbook time series, smart-money positioning, whale leaderboards, wallet P&L, wallet identity and on-chain clustering, and canonical IDs matching the same question across venues. 58 endpoints over Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle. Pay-per-call in USDC via x402 — no Predexon account, no API key."
 triggers:
   - "polymarket"
   - "kalshi"
