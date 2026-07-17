@@ -98,9 +98,12 @@ export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via th
 
 // Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
 // Used only for read-only approval/balance checks (viem public client).
-// 1rpc first — polygon-rpc.com was observed lagging several blocks behind, which
-// made freshly-confirmed deploys/approvals read as still-pending.
+// PublicNode first: 1rpc requires registration for eth_call, Llama's Polygon
+// hostname is intermittently unavailable, and polygon-rpc.com returns a
+// disabled-tenant error. A failed post-redeem read must never mask a confirmed
+// state change as an ambiguous payout.
 export const POLYGON_RPC_URLS = [
+  "https://polygon-bor-rpc.publicnode.com",
   "https://1rpc.io/matic",
   "https://polygon.llamarpc.com",
   "https://polygon-rpc.com",
