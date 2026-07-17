@@ -59,6 +59,11 @@ export function buildRedeemCall(negRisk: boolean, conditionId: Hex): { target: H
   };
 }
 
+/** A receipt alone is insufficient: CTF redeem can silently be a no-op. */
+export function didRedeemAnyHeldPosition(before: readonly bigint[], after: readonly bigint[]): boolean {
+  return before.some((balance, index) => balance > 0n && (after[index] ?? balance) < balance);
+}
+
 export async function redeemPosition(input: { condition_id?: string; confirm?: boolean }): Promise<ToolResult> {
   if (!input.condition_id) {
     return { text: `Pass condition_id:"0x…" (see action:"positions" for redeemable markets).`, isError: true };
@@ -147,6 +152,25 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
 
     const balanceAfter = await getPusdBalance(owner).catch(() => null);
     const paidOut = balanceBefore !== null && balanceAfter !== null ? balanceAfter - balanceBefore : null;
+    // A transaction hash is not proof of redemption: using a collateral-derived
+    // position id that nobody holds succeeds on-chain yet burns nothing.
+    const balancesAfter = await Promise.all(tokens.map((t) => pc.readContract({
+      address: CONDITIONAL_TOKENS as Hex,
+      abi: ERC1155_ABI,
+      functionName: "balanceOf",
+      args: [owner, BigInt(t.token_id as string)],
+    }))).catch(() => null);
+    if (balancesAfter === null || !didRedeemAnyHeldPosition(balances, balancesAfter)) {
+      return {
+        text: [
+          `⚠️ Redeem transaction confirmed, but held ERC-1155 outcome tokens did not decrease.`,
+          `It may have used the wrong collateral path or the RPC state is stale; re-run action:"positions" and retry.`,
+          ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
+        ].join("\n"),
+        structured: { conditionId, negRisk, transactionHash: txHash, paidOutUsd: paidOut, pusdBalance: balanceAfter },
+        isError: true,
+      };
+    }
     const heldWinner = held.some((h) => h.winner);
     if (paidOut !== null && paidOut <= 0 && heldWinner) {
       return {

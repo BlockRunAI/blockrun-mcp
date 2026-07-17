@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decodeFunctionData, type Hex } from "viem";
-import { buildRedeemCall } from "../src/utils/polymarket/redeem.js";
+import { buildRedeemCall, didRedeemAnyHeldPosition } from "../src/utils/polymarket/redeem.js";
 import {
   CONDITIONAL_TOKENS,
   CTF_COLLATERAL_ADAPTER,
@@ -48,4 +48,10 @@ test("redeem calldata is the CTF-mirror redeemPositions with the conditionId", (
     assert.equal(conditionId, CONDITION_ID);
     assert.deepEqual([...indexSets], [1n, 2n]);
   }
+});
+
+test("redeem must consume a held ERC-1155 position before it can report success", () => {
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 0n], [0n, 0n]), true);
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 0n], [1_000_000n, 0n]), false);
+  assert.equal(didRedeemAnyHeldPosition([0n, 0n], [0n, 0n]), false);
 });

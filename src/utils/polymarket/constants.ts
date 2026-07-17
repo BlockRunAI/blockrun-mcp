@@ -21,6 +21,9 @@ export const NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296";
 export const CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 // pUSD — Polymarket's 1:1 collateral wrapper (labelled CollateralToken proxy).
 export const PUSD_COLLATERAL = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+// The legacy collateral held by the underlying CTF. Correct adapter redemptions
+// wrap this into pUSD, but historic direct redeems can leave USDC.e behind.
+export const USDCE_COLLATERAL = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 // pUSD collateral adapters — the ONLY correct redeem targets in the pUSD era.
 // CTF positions (the CLOB token_ids) are still keyed to USDC.e (standard) or
 // the legacy NegRiskAdapter's wrapped collateral (neg-risk); calling the CTF /

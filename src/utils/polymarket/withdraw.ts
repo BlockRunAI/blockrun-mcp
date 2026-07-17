@@ -18,12 +18,14 @@ import {
   BASE_CHAIN_ID,
   BASE_USDC,
   BRIDGE_API_HOST,
+  COLLATERAL_ONRAMP,
   ERC20_ABI,
   getBuilderCode,
   getSigType,
   POLYGON_RPC_URLS,
   PUSD_COLLATERAL,
   PUSD_DECIMALS,
+  USDCE_COLLATERAL,
 } from "./constants.js";
 import { getPolymarketAccount } from "./client.js";
 import type { ToolResult } from "./orders.js";
@@ -32,14 +34,26 @@ import { getFundsAddress } from "./positions.js";
 import { sendWalletBatch } from "./relayer.js";
 import { getPublicClient } from "./setup.js";
 
-async function rawPusdBalance(owner: Hex): Promise<bigint> {
+async function rawTokenBalance(token: Hex, owner: Hex): Promise<bigint> {
   return getPublicClient().readContract({
-    address: PUSD_COLLATERAL as Hex,
+    address: token,
     abi: ERC20_ABI,
     functionName: "balanceOf",
     args: [owner],
   });
 }
+
+const COLLATERAL_ONRAMP_ABI = [{
+  type: "function",
+  name: "wrap",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "_asset", type: "address" },
+    { name: "_to", type: "address" },
+    { name: "_amount", type: "uint256" },
+  ],
+  outputs: [],
+}] as const;
 
 interface WithdrawInput {
   amount_usd?: number;
@@ -57,19 +71,25 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
   const recipient = (input.to_address as Hex) || getPolymarketAccount().address;
 
   try {
-    // Amount: explicit amount_usd, else the full pUSD balance.
-    const balanceRaw = await rawPusdBalance(owner);
-    const balanceUsd = Number(formatUnits(balanceRaw, PUSD_DECIMALS));
-    if (balanceRaw === 0n) {
-      return { text: `No pUSD to withdraw — the deposit wallet ${owner} holds $0. (Redeem/sell a position first.)`, isError: true };
+    // Normal adapter redemptions return pUSD. Historic direct CTF redemptions
+    // may leave USDC.e instead, so normalize that residue before withdrawing.
+    const [pusdRaw, usdceRaw] = await Promise.all([
+      rawTokenBalance(PUSD_COLLATERAL as Hex, owner),
+      rawTokenBalance(USDCE_COLLATERAL as Hex, owner),
+    ]);
+    const totalRaw = pusdRaw + usdceRaw;
+    const totalUsd = Number(formatUnits(totalRaw, PUSD_DECIMALS));
+    if (totalRaw === 0n) {
+      return { text: `No pUSD or USDC.e to withdraw — the deposit wallet ${owner} holds $0. (Redeem/sell a position first.)`, isError: true };
     }
     const amountRaw = input.amount_usd !== undefined
       ? BigInt(Math.floor(input.amount_usd * 10 ** PUSD_DECIMALS))
-      : balanceRaw;
-    if (amountRaw > balanceRaw) {
-      return { text: `Requested $${input.amount_usd} exceeds the pUSD balance of $${balanceUsd.toFixed(2)}.`, isError: true };
+      : totalRaw;
+    if (amountRaw > totalRaw) {
+      return { text: `Requested $${input.amount_usd} exceeds the withdrawable collateral balance of $${totalUsd.toFixed(2)}.`, isError: true };
     }
     const amountUsd = Number(formatUnits(amountRaw, PUSD_DECIMALS));
+    const wrapRaw = amountRaw > pusdRaw ? amountRaw - pusdRaw : 0n;
 
     if (input.confirm !== true) {
       return {
@@ -79,11 +99,36 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
           `  from deposit wallet: ${owner}`,
           `  to (agent wallet): ${recipient}`,
           ``,
+          ...(wrapRaw > 0n ? [`  First wrap: $${Number(formatUnits(wrapRaw, PUSD_DECIMALS)).toFixed(2)} legacy USDC.e → pUSD`] : []),
           `pUSD is unwrapped to USDC (Uniswap v3 — minor slippage may apply); instant, no Polymarket fee.`,
           `Re-call with confirm:true to execute.`,
         ].join("\n"),
-        structured: { dryRun: true, amountUsd, from: owner, to: recipient, toChainId: BASE_CHAIN_ID, toToken: BASE_USDC },
+        structured: { dryRun: true, amountUsd, from: owner, to: recipient, toChainId: BASE_CHAIN_ID, toToken: BASE_USDC, pusdUsd: Number(formatUnits(pusdRaw, PUSD_DECIMALS)), usdceUsd: Number(formatUnits(usdceRaw, PUSD_DECIMALS)), wrapUsd: Number(formatUnits(wrapRaw, PUSD_DECIMALS)) },
       };
+    }
+
+    // In the deposit-wallet mode approval + wrap are one atomic relayer batch.
+    // EOA mode waits for each confirmation before sending pUSD to the bridge.
+    if (wrapRaw > 0n) {
+      const approve = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [COLLATERAL_ONRAMP as Hex, wrapRaw] });
+      const wrap = encodeFunctionData({ abi: COLLATERAL_ONRAMP_ABI, functionName: "wrap", args: [USDCE_COLLATERAL as Hex, owner, wrapRaw] });
+      if (getSigType() === 3) {
+        await sendWalletBatch([
+          { target: USDCE_COLLATERAL, value: "0", data: approve },
+          { target: COLLATERAL_ONRAMP, value: "0", data: wrap },
+        ], owner, "Wrap legacy USDC.e");
+      } else {
+        const account = getPolymarketAccount();
+        const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+        const approveHash = await wallet.sendTransaction({ to: USDCE_COLLATERAL as Hex, data: approve, chain: polygon, account });
+        await getPublicClient().waitForTransactionReceipt({ hash: approveHash });
+        const wrapHash = await wallet.sendTransaction({ to: COLLATERAL_ONRAMP as Hex, data: wrap, chain: polygon, account });
+        await getPublicClient().waitForTransactionReceipt({ hash: wrapHash });
+      }
+      const normalizedPusd = await rawTokenBalance(PUSD_COLLATERAL as Hex, owner);
+      if (normalizedPusd < amountRaw) {
+        throw new Error("legacy USDC.e wrap confirmed but the required pUSD balance was not observed; do not retry the withdrawal blindly");
+      }
     }
 
     // 1. Ask the bridge for a one-time deposit address for this withdrawal.
