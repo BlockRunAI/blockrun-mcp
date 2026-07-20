@@ -2,6 +2,19 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.0
+
+Kimi K3 and the current high-end lineup, plus the tier lists rebuilt against the live catalogue instead of edited by hand. The interesting part is why nobody noticed they had rotted: **a retired model ID does not fail.** The gateway silently aliases it onto something else — `nvidia/llama-4-maverick` answers `200 OK` while being served by `gpt-oss-120b`, and `moonshot/kimi-k2.6` still quotes a price. Only a wholly unknown ID `400`s. So "it works" was never evidence a tier was correct, and 8 dead IDs had accumulated across 6 tiers.
+
+- **`feat(models)` — `moonshot/kimi-k3` ($3/$15, 1M ctx, vision + reasoning + coding)** added to `balanced`, `reasoning`, and `coding`. It supersedes the whole k2.x line, which is gone from the catalogue — `kimi-k2.6` was still listed in three tiers and was being aliased somewhere unchosen on every hit.
+- **`feat(models)` — the current high end, none of which we served.** `gpt-5.6-sol` ($5/$30, 1M) and `gpt-5.6-terra` ($2.5/$15, 1M); `claude-sonnet-5` ($3/$15, 1M) and `claude-fable-5` ($10/$50, 1M); `grok-4.5` ($2.5/$9, native search), `grok-4.3` ($1.5/$4, 1M) and `grok-build-0.1` (coding); `qwen3.7-max`; `deepseek-v4-pro` ($0.435/$0.87, 1M — frontier-class reasoning at budget-tier pricing, now `cheap[0]`); `minimax-m3`; `glm-5.2`/`glm-5.1`.
+- **`feat(chat)` — the default model is now `openai/gpt-5.6-terra`.** `balanced[0]` is what every call with no `model` resolves to. Newer line, 1M context, and **half the price** of the outgoing `gpt-5.5` default ($2.5/$15 vs $5/$30).
+- **`fix(models)` — the `free` tier was 4/5 retired.** `llama-4-maverick`, `qwen3-coder-480b`, `gpt-oss-120b` and `gpt-oss-20b` are all delisted; the tier only ever "worked" through the aliasing above, i.e. free calls were being served by a model nobody picked. Rebuilt from the `$0` models the catalogue actually lists.
+- **`fix(models)` — being listed is not being alive; every entry was live-probed.** `nvidia/mistral-large-3-675b` is in the catalogue at `$0` and **hangs**: no response, no error, connection held open past 90s, reproduced twice. It had landed at `free[0]` on the first pass — the first model every `mode:"free"` call tries — where it would have stalled the routing loop before it could fall through. Excluded and documented.
+- **`docs(chat)` — the tool description no longer advertises the old tiers.** It still told the model `mode:"coding"` meant "GLM-5 first" when `coding[0]` had been `claude-opus-4.8` for several releases, and pointed `mode:"reasoning"` at `o1`. Modes, examples and the `model` hints now match what the tiers actually contain.
+- **Budget gate re-verified, not assumed.** Adding $180/M and $168/M models raises the question of whether the `$20/M` frontier reserve still covers the worst case. It does — the gateway quotes sublinearly, so `gpt-5.4-pro` at 128k `max_tokens` quotes **$2.42** against a **$2.56** reserve — but headroom is only ~5%, so the constant was left alone rather than guessed at. Cheap-tier candidates probed the same way, all with wide margins.
+- All 49 tier IDs validated against live `GET /v1/models`. 169 tests, typecheck, build, `verify:prices` (20/20 exact), and the stdio smoke test (19 tools) green.
+
 ## 0.31.6
 
 Round 3. Two of these were live the whole time and invisible to every prior round: a skill that never loaded, and an endpoint that never existed. Both were found by asking the gateway instead of reading our own files.

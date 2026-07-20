@@ -25,7 +25,7 @@ test("estimateChatCost keeps genuinely-free paths at $0", () => {
   assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash"), 0);
 });
 
-// ── balanced/coding tiers have FRONTIER primaries (gpt-5.5 / claude-opus-4.8),
+// ── balanced/coding tiers have FRONTIER primaries (gpt-5.6-terra / claude-opus-4.8),
 //    so the gate must reserve the frontier worst-case — not the cheap heuristic ──
 test("estimateChatCost reserves the frontier worst-case for balanced/coding (their primary is a frontier model)", () => {
   const frontier = estimateChatCost(1024, "reasoning", undefined);
@@ -33,7 +33,7 @@ test("estimateChatCost reserves the frontier worst-case for balanced/coding (the
   assert.equal(estimateChatCost(1024, "coding", undefined), frontier);
 });
 
-test("estimateChatCost reserves the frontier worst-case for a no-mode chat (defaults to the balanced tier → gpt-5.5)", () => {
+test("estimateChatCost reserves the frontier worst-case for a no-mode chat (defaults to the balanced tier → gpt-5.6-terra)", () => {
   const frontier = estimateChatCost(1024, "reasoning", undefined);
   assert.equal(estimateChatCost(1024, undefined, undefined), frontier);
 });
