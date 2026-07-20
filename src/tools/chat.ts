@@ -29,8 +29,8 @@ export function estimateChatCost(
   // free, and `mode` alone does not make it so.
   //
   // An explicit `model` WINS over `mode` at call time:
-  //   targetModel = model || MODEL_TIERS[mode ?? "balanced"][0] || "openai/gpt-5.5"
-  // so { mode: "free", model: "openai/gpt-5.5" } runs gpt-5.5 and settles at
+  //   targetModel = model || MODEL_TIERS[mode ?? "balanced"][0] || "openai/gpt-5.6-terra"
+  // so { mode: "free", model: "openai/gpt-5.6-sol" } runs gpt-5.6-sol and settles at
   // frontier prices. Returning 0 for it — which is what an unconditional
   // `mode === "free"` check does — is a TOTAL budget-gate bypass: any agent, even
   // one already at its cap, gets unmetered frontier calls by tacking on
@@ -60,7 +60,7 @@ export function estimateChatCost(
 
   // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
   // single model, can settle at a price we can't know up front — reserve
-  // conservatively. balanced[0] = openai/gpt-5.5 and coding[0] =
+  // conservatively. balanced[0] = openai/gpt-5.6-terra and coding[0] =
   // anthropic/claude-opus-4.8 (see MODEL_TIERS), the same frontier primaries as
   // reasoning/powerful, and a no-mode chat resolves to "balanced" (see the
   // routing loop below) — so undefined counts too. Reserving the cheap heuristic
@@ -106,19 +106,20 @@ export function registerChatTool(server: McpServer, budget: BudgetState): void {
       description: `Get a second opinion from another AI model, or use a specialized model for a specific task.
 
 Notable modes:
-- mode:"glm" → Zhipu GLM-5 / GLM-5-Turbo ($0.001/call, excellent for coding tasks, pays via USDC on BlockRun)
-- mode:"coding" → GLM-5 first, then code-specialized models
-- mode:"cheap" → GLM-5, NVIDIA free, DeepSeek
-- mode:"reasoning" → Claude Opus, o3, o1, deepseek-reasoner
+- mode:"powerful" → Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
+- mode:"reasoning" → Claude Opus 4.8, GPT-5.6-sol, Kimi K3, Grok 4.3, deepseek-v4-pro
+- mode:"coding" → Claude Opus 4.8, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
+- mode:"cheap" → deepseek-v4-pro, MiniMax M3, GLM-5, NVIDIA free
+- mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (cheap, strong at coding)
 - mode:"free" → NVIDIA models (no cost)
 
-Pick directly: model:"zai/glm-5", model:"openai/o3", model:"nvidia/deepseek-v4-flash" (free).
+Pick directly: model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"anthropic/claude-opus-4.8", model:"xai/grok-4.5", model:"nvidia/deepseek-v4-flash" (free).
 
 Run blockrun_models to see all available models with pricing.`,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
-        model: z.string().optional().describe("Specific model ID (e.g., 'zai/glm-5', 'openai/o3')"),
-        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: glm = Zhipu GLM-5/GLM-5-Turbo ($0.001/call, great for coding), coding = GLM-5 + code models, cheap = GLM-5 + budget, free = NVIDIA only (ignored if model specified)"),
+        model: z.string().optional().describe("Specific model ID (e.g., 'moonshot/kimi-k3', 'openai/gpt-5.6-sol', 'zai/glm-5')"),
+        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 4.8, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (cheap, great for coding), cheap = budget models, free = NVIDIA only (ignored if model specified)"),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
@@ -138,7 +139,7 @@ Run blockrun_models to see all available models with pricing.`,
               z.object({ type: z.literal("image_url"), image_url: z.object({ url: z.string().describe("https URL or data:<mime>;base64,<...> URI") }) }),
             ])),
           ]).describe("Plain text, or an array of parts for multimodal input (text + image_url). Images are honored on the native anthropic/claude-* path."),
-        })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.5' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
+        })).optional().describe("Conversation history for multi-turn context. When provided, 'message' is appended as the final user turn. Use with explicit 'model' param (defaults to 'openai/gpt-5.6-terra' if not specified). Note: if you include a role:'system' entry in messages[], do not also pass the system param to avoid duplicate system messages."),
       },
     },
     async ({ message, model, mode, system, max_tokens, temperature, response_format, stop, thinking, agent_id, messages }) => {
@@ -207,7 +208,7 @@ Run blockrun_models to see all available models with pricing.`,
 
       // Multi-turn conversation
       if (messages && messages.length > 0) {
-        const targetModel = model || MODEL_TIERS[(mode ?? "balanced") as RoutingMode]?.[0] || "openai/gpt-5.5";
+        const targetModel = model || MODEL_TIERS[(mode ?? "balanced") as RoutingMode]?.[0] || "openai/gpt-5.6-terra";
         const fullMessages = [
           ...(system ? [{ role: "system" as const, content: system }] : []),
           ...messages,
