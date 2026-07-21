@@ -93,7 +93,12 @@ jobs:
       # Same independent-guard shape as the two publishes above — it checks
       # whether the tag already exists rather than assuming, so re-runs and
       # workflow_dispatch are safe.
+      # Gated on the same version diff as the npm publish above. Without it, a
+      # push that only touched publish.yml (or a workflow_dispatch) would tag
+      # HEAD and title the release from an unrelated commit subject — precisely
+      # in the "release is missing" state this automation exists to repair.
       - name: Tag + GitHub release
+        if: steps.v.outputs.pkg != steps.v.outputs.npm
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.pkg }}
@@ -123,10 +128,19 @@ jobs:
             TITLE="$TAG — $HEADLINE"
           fi
 
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+          # Ask the REMOTE, not the local clone: actions/checkout fetches no tags
+          # by default, so `git rev-parse "$TAG"` always missed and the push ran
+          # unconditionally. An annotated tag already on origin is then rejected
+          # as non-fast-forward, and `set -e` fails the job AFTER npm and the
+          # registry have already published — the worst place to fail.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG already on origin — not re-pushing"
+          else
             git tag -a "$TAG" -m "$TITLE"
             git push origin "$TAG"
           fi
 
-          gh release create "$TAG" --title "$TITLE" --notes-file /tmp/notes.md --latest
+          # Pin the release to the tag's commit explicitly rather than letting
+          # GitHub default to the branch head.
+          gh release create "$TAG" --title "$TITLE" --notes-file /tmp/notes.md --latest --target "$(git rev-parse HEAD)"
           echo "Released $TAG"
