@@ -2,6 +2,40 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.8
+
+Paid chat calls now stream. A non-streaming request to a slow reasoning model
+(Kimi K3 with a large prompt generates for minutes) moves ZERO bytes between
+"request accepted" and "body ready", so the edge in front of the gateway kills
+the idle connection at ~100s and returns 524 — AFTER the x402 payment settled.
+Charged, nothing delivered. Observed live 2026-07-21, twice.
+
+- **`fix(chat)` — paid EVM paths use SSE streaming and assemble server-side.**
+  All three paid call shapes (explicit model, multi-turn `messages`, paid
+  routing tiers) switch to the SDK's `chatCompletionStream` and concatenate
+  deltas; bytes flow from the first chunk (reasoning models emit keepalive
+  chunks while thinking), so the idle timer never fires. Verified live: a
+  125s kimi-k3 generation that 524'd on the old path completes. The free
+  NVIDIA tier keeps the non-streaming client whose short timeout its
+  deadline loop depends on; Solana clients have no streaming API and keep
+  the old path (capability-checked, not assumed).
+- **Empty answer + `finish_reason:"length"` is now an explicit error.**
+  Reasoning tokens count toward `max_tokens`; a hard task with a small budget
+  can burn the whole budget thinking and emit zero visible text (measured:
+  kimi-k3, 8000 max_tokens, 0 chars). That surfaced as a silent empty reply —
+  indistinguishable from success. It now throws with the cause and the fix
+  (raise `max_tokens`).
+- Guards that keep the stream honest: a non-SSE response (a route that ignores
+  `stream:true`) is parsed as a plain JSON completion instead of yielding "";
+  an in-band `error` event throws instead of returning partial text; a stream
+  with no data for 120s aborts with a stall error (the SDK clears its fetch
+  timeout once headers arrive, so this idle guard is the only backstop).
+- x402 accounting is unchanged: the SDK's streaming method runs the same
+  payment flow and increments the same spend counter the budget ledger reads.
+- 234 tests (11 new pinning SSE assembly, fallbacks, stall, and the
+  reasoning-exhaustion diagnosis), typecheck, build green. Server-side half
+  (settle-on-success / refund on 5xx at the gateway) is tracked separately.
+
 ## 0.32.7
 
 Setup's approval report now shows the post-transaction chain state, not the
