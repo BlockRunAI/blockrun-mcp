@@ -136,3 +136,23 @@ test("no MODEL_TIERS tier repeats a model id", () => {
     assert.equal(new Set(models).size, models.length, `tier ${tier} contains a duplicate id`);
   }
 });
+
+// Until 0.32.3 the reserve came from output alone, so a large pasted document
+// reserved the same as a one-line question: a 100k-word prompt settled $0.2557
+// against a $0.0225 reserve (11.4x short), break-even at only ~15 KB of prompt.
+// One approved call blew a BLOCKRUN_BUDGET_LIMIT several times over.
+test("estimateChatCost scales the reserve with prompt size, not just max_tokens", () => {
+  const tiny = estimateChatCost(1024, "balanced", undefined, undefined, 50);
+  const big = estimateChatCost(1024, "balanced", undefined, undefined, 600 * 1024);
+  assert.ok(big > tiny * 10, `a 600 KB prompt must reserve far more than a one-liner (${big} vs ${tiny})`);
+  assert.ok(big > 0.2557, `must cover the measured $0.2557 settle, got ${big}`);
+});
+
+test("prompt size does not make a genuinely free call cost anything", () => {
+  assert.equal(estimateChatCost(1024, "free", undefined, undefined, 600 * 1024), 0);
+  assert.equal(estimateChatCost(1024, undefined, "nvidia/gpt-oss-120b", undefined, 600 * 1024), 0);
+});
+
+test("omitting promptChars keeps the previous reserve (no silent inflation)", () => {
+  assert.equal(estimateChatCost(1024, "balanced", undefined), estimateChatCost(1024, "balanced", undefined, undefined, 0));
+});
