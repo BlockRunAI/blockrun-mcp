@@ -59,7 +59,13 @@ function commitBet(): void {
 export function roundToTick(price: number, tickSize: string, side: "buy" | "sell" = "buy"): number {
   const tick = parseFloat(tickSize);
   const decimals = Math.max(0, (tickSize.split(".")[1] ?? "").length);
-  const steps = side === "buy" ? Math.floor(price / tick) : Math.ceil(price / tick);
+  // The epsilon absorbs float-division noise on prices ALREADY on the grid:
+  // 0.58/0.001 is 579.9999…, which floor alone turns into 0.579 (a buy signed
+  // one tick below the stated limit), and 0.42/0.01 is 42.000…01, which ceil
+  // alone turns into 0.43 (a sell one tick above). 1e-9 is far below half a
+  // tick for every real tick size, so genuine off-grid prices still round in
+  // the conservative direction (issue #72 finding 7).
+  const steps = side === "buy" ? Math.floor(price / tick + 1e-9) : Math.ceil(price / tick - 1e-9);
   return Number((steps * tick).toFixed(decimals));
 }
 

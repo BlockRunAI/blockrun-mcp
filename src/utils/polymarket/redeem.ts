@@ -119,7 +119,26 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       return { text: `Nothing to redeem: ${owner} holds no outcome tokens for "${market?.question ?? conditionId}".`, isError: true };
     }
 
-    const negRisk = Boolean(market?.neg_risk);
+    // negRisk picks WHICH adapter redeems — the wrong one is the silent
+    // no-op this module was rewritten to kill. A missing field is not "false":
+    // if the market payload omits it (API shape drift), cross-check the order
+    // book, and refuse rather than guess if that's missing too. Guessing wrong
+    // is caught post-hoc by no_effect_detected, but only after burning a
+    // relayer transaction and confusing the caller (issue #72 finding 3).
+    let negRiskRaw: boolean | undefined = market?.neg_risk;
+    if (negRiskRaw === undefined) {
+      const book = (await clob.getOrderBook(tokens[0].token_id as string).catch(() => null)) as { neg_risk?: boolean } | null;
+      negRiskRaw = book?.neg_risk;
+    }
+    if (typeof negRiskRaw !== "boolean") {
+      return {
+        text: `Cannot determine whether "${market?.question ?? conditionId}" is a neg-risk market (neither the ` +
+          `market metadata nor the order book carries neg_risk) — refusing to guess, because the wrong collateral ` +
+          `adapter redeems 0. Retry shortly; if this persists, report it.`,
+        isError: true,
+      };
+    }
+    const negRisk = negRiskRaw;
     const held = tokens
       .map((t, i) => ({ outcome: t.outcome, winner: t.winner, shares: Number(balances[i]) / 10 ** PUSD_DECIMALS }))
       .filter((h) => h.shares > 0);
@@ -142,6 +161,18 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       };
     }
 
+    // The dry-run only WARNED about an unresolved market; the confirm path
+    // then happily submitted a batch that reverts on-chain (CTF requires
+    // payoutDenominator > 0). No fund risk, but a wasted relayer transaction
+    // and a confusing failure — refuse up front instead (issue #72 finding 6).
+    if (market?.closed === false) {
+      return {
+        text: `"${market?.question ?? conditionId}" is not closed/resolved yet — redeeming now would revert ` +
+          `on-chain. Wait for resolution, then re-run action:"redeem".`,
+        isError: true,
+      };
+    }
+
     const { target, data } = buildRedeemCall(negRisk, conditionId);
 
     // Balance BEFORE the tx so the success message can report the actual
@@ -151,7 +182,9 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
 
     let txHash: string | undefined;
     if (getSigType() === 3) {
-      const res = await sendWalletBatch([{ target, value: "0", data }], owner, "Redeem");
+      const res = await sendWalletBatch([{ target, value: "0", data }], owner, "Redeem", {
+        guidance: 're-run action:"positions" to see whether the position was consumed before retrying',
+      });
       txHash = res.transactionHash;
     } else {
       const account = getPolymarketAccount();

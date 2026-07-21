@@ -2,6 +2,62 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.9
+
+Closes the external-review backlog: all 8 findings from the Kimi K3 review
+(#72) and both unabsorbed pieces of @KillerQueen-Z's #59/#66 (#71).
+
+- **`fix(polymarket)` — the withdraw retry double-spend window is closed
+  (#72.1).** The relayer SDK's `wait()` polls 200s and returns `undefined` for
+  BOTH an on-chain failure and a timeout, while the signed batch stays
+  executable until its 300s deadline — and our error text said "re-run",
+  an instruction that could double-send a partial withdrawal. Now:
+  `sendWalletBatch` asks the relayer which case it is and says so (a failure
+  is retry-safe; a pending batch gets "Do NOT retry" + the remaining window);
+  every withdrawal batch is tracked in the state file while in flight, and
+  `action:"withdraw"` refuses to sign a second transfer until the previous one
+  resolves or its deadline passes (unreachable relayer counts as pending —
+  the conservative side). Per-operation guidance replaces the hardcoded
+  "re-run setup" advice everywhere (#72.5).
+- **`feat(polymarket)` — withdrawals sweep legacy USDC.e (#71).** Withdrawable
+  balance is now pUSD + USDC.e; any shortfall beyond the pUSD on hand is
+  wrapped through the collateral onramp first (`wrap(asset, to, amount)`
+  signature verified against the onramp's Sourcify exact-match source).
+  Sweep design from #59/#66, with the wrap preview in the dry-run and the
+  post-wrap balance re-read before bridging.
+- **`fix(polymarket)` — `amount_usd` parsing no longer truncates through float
+  noise.** `BigInt(Math.floor(usd * 1e6))` sent $19.989999 for a $19.99
+  request; amounts now round to the exact micro-dollar and over-precision /
+  non-positive values are rejected. (The #66 draft's absolute 1e-7 tolerance
+  sat below the float-noise floor and rejected honest amounts like $1234.56;
+  0.01 micro separates noise from genuine violations.)
+- **`fix(polymarket)` — redeem refuses to guess the adapter (#72.3).** A
+  missing `neg_risk` field now falls back to the order book and errors out if
+  both sources are silent, instead of silently treating "missing" as
+  "standard market" — the wrong adapter is the no-op redeem class. The
+  confirm path also now refuses unresolved markets up front (#72.6) instead
+  of submitting a batch that reverts on-chain.
+- **`fix(polymarket)` — setup verifies the deploy landed at the DERIVED
+  address (#72.4)** by reading contract code on-chain (3×750ms) before
+  recording `deployed:true`, so a relayer factory/salt divergence can never
+  point approvals and funding at a nonexistent wallet.
+- **`fix(polymarket)` — ClobClient cache key includes the deposit wallet
+  (#72.2)**, so a wallet change within the process lifetime can't keep
+  building orders against the old `funderAddress`.
+- **`fix(polymarket)` — `roundToTick` absorbs float-division noise (#72.7).**
+  `0.58/0.001 = 579.9999…` floored a buy to 0.579 (one tick under the stated
+  limit); on-grid prices now survive unchanged, off-grid still rounds
+  conservatively by side.
+- **`fix` — creds/state writes are atomic (#72.8)** (tmp + rename), so a
+  crash mid-write can't corrupt the credentials or deposit-wallet mapping
+  that reads then silently swallow to null.
+- **Bounded e2e scripts from #66 are in-tree (#71)**: `npm run
+  e2e:polymarket:{readonly,approvals,approve,withdraw,live}` — readonly and
+  approvals verified live against the local wallet today.
+- 250 tests (17 new: batch-state disambiguation, double-spend guard
+  lifecycle, sweep preview + calldata pinning, amount parsing, tick
+  rounding), typecheck, build green.
+
 ## 0.32.8
 
 Paid chat calls now stream. A non-streaming request to a slow reasoning model

@@ -34,6 +34,12 @@ export const PUSD_COLLATERAL = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 export const CTF_COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f";
 export const NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab";
 export const COLLATERAL_ONRAMP = "0x93070a847efEf7F70739046A929D47a521F5B8ee";
+// USDC.e — the legacy collateral CTF position ids are keyed to. Withdrawals
+// sweep any residue of it (historic direct-CTF redemptions paid out USDC.e)
+// through the onramp's wrap(asset, to, amount) — signature verified against the
+// Sourcify exact-match source of COLLATERAL_ONRAMP, 2026-07-21 — since the
+// bridge only accepts pUSD.
+export const USDCE_COLLATERAL = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 export const DEPOSIT_WALLET_FACTORY = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
 
 /**

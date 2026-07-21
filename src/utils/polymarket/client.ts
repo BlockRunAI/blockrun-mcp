@@ -178,7 +178,10 @@ export async function getClobClient(): Promise<ClobClient> {
   // bind creds to the deposit wallet via an ERC-7739-wrapped L1 ClobAuth is what
   // the CLOB rejects with "Invalid L1 Request headers" — issue #65 misdiagnosed
   // the fix as wrapping L1 auth; the real path keeps L1 auth as the EOA.
-  const cacheKey = `${sigType}:${account.address.toLowerCase()}`;
+  // The deposit wallet is part of the key: funderAddress is baked into the
+  // cached client, so a wallet change within the process lifetime (re-setup,
+  // state file rewritten) must not keep building orders against the old funder.
+  const cacheKey = `${sigType}:${account.address.toLowerCase()}:${(depositWallet ?? "").toLowerCase()}`;
   if (_clobClient && _clobClientKey === cacheKey) return _clobClient;
 
   let creds = loadL2Creds(account.address, 0);
