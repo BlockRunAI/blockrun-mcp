@@ -26,10 +26,41 @@ conclusion its own release notes disproved one paragraph earlier.
   exactly how it kept certifying itself healthy, while the same model on a
   realistic 1.5K-token prompt took **123.2s**. That is why the gateway's own probe
   script has a `--real` mode. Never health-check a free model with a 16-token ping.
-- **No tier churn.** All 37 hard-coded tier IDs were re-diffed against live
-  `GET /v1/models`: 0 missing, 0 dead. The catalogue side of 0.32.0 was correct;
-  only the free-tier reasoning was not.
-- 169 tests, typecheck, build and `verify:prices` (20/20 exact) green.
+- **No tier churn.** The tiers now hold 39 unique IDs. 37 were re-diffed against
+  live `GET /v1/models`: 0 missing, 0 dead. The other 2 are the deliberately
+  unlisted `gpt-oss` pair above, which by definition cannot be confirmed that way
+  and were confirmed by live probe on both chains instead. The catalogue side of
+  0.32.0 was correct; only the free-tier reasoning was not.
+- **`fix(chat)` — `mode:"free"` can no longer stall a tool call for eighty
+  minutes.** The fallback loop had no deadline of any kind and the SDK's default
+  request timeout is **600s** (not the 60s a comment in `wallet.ts` claimed — it
+  was wrong by 10x, now corrected). Free models fail by *crawling*, so one
+  degraded entry held the whole call for ten minutes before falling through, and
+  a degraded tier for eight times that — a worst case this release made 33%
+  longer by growing `free[]` from 6 entries to 8. The free path now builds its
+  client with a 60s per-model timeout (~5x margin over the slowest healthy
+  measurement) plus a 150s deadline on the **whole** loop, so adding a ninth free
+  model can never lengthen the worst case again. Paid tiers are untouched: a
+  multi-minute frontier completion is the job, not a fault. Exhausting the
+  deadline now returns "the free tier did not answer" instead of blaming
+  whichever model happened to be slowest.
+- **`test` — the invariant behind the `$0` reserve is now pinned.**
+  `estimateChatCost` returns `0` for `mode:"free"` purely because every `free[]`
+  entry happens to be `nvidia/*`. That was an unenforced rule on a hand-edited
+  array rewritten in three consecutive releases; one paid model landing in it
+  would switch the budget gate off silently with every test still green. Added
+  assertions for nvidia-only, non-empty and duplicate-free tiers, plus behavioural
+  coverage of the new deadline. Both were mutation-tested (injecting
+  `openai/gpt-5.6-sol` into `free[]`, and disabling the deadline check) to confirm
+  they fail when violated.
+- **Docs.** `README.md` still advertised Kimi K2.6, which 0.32.0 removed from the
+  catalogue. The root `VERSION` file had been stuck at 0.30.1 since that release;
+  it is read by nothing (`src/index.ts` takes the version from `package.json`) but
+  it is misleading to read, so it now tracks `package.json`.
+- 177 tests, typecheck and build green. `verify:prices` is 20/20 exact too, but
+  it probes the paid surf/pm/modal/search/phone/exa/rpc routes and contains no
+  chat route — it carries no signal about the free tier, and the model claims
+  above rest on the live probes rather than on it.
 
 ## 0.32.0
 
