@@ -2,6 +2,35 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.1
+
+A correction to 0.32.0, which dropped two working models from the `free` tier on a
+conclusion its own release notes disproved one paragraph earlier.
+
+- **`fix(models)` — `gpt-oss-120b` and `gpt-oss-20b` are back in `free`; they were
+  never retired.** 0.32.0 removed them as "delisted... the tier only ever worked
+  through aliasing", but the same entry states that `llama-4-maverick` "answers
+  `200 OK` while being served by `gpt-oss-120b`". A model cannot simultaneously be
+  the thing serving the alias and be dead. They are hidden from `GET /v1/models`,
+  which is a listing decision, not a health signal — and `gpt-oss-120b` is the
+  gateway's own `FREE_FALLBACK_MODEL`, with `gpt-oss-20b` as its last-resort rung,
+  making them the most load-bearing free models there are. Re-probed on **both**
+  chains with a realistic ~1.5K-token prompt: `gpt-oss-120b` **3.5s**,
+  `gpt-oss-20b` **3.7s**, both `200` with real completions. `gpt-oss-120b` is now
+  `free[0]` — it is marginally faster than the outgoing `deepseek-v4-flash` (3.8s)
+  and is what the gateway itself falls back to.
+- **`fix(models)` — `mistral-large-3-675b` stays excluded, but for the right
+  reason.** 0.32.0 recorded it as hanging: "no response, no error, connection held
+  open past 90s". It does not hang. It **crawls**, and the distinction is the whole
+  lesson: a toy ping (`"say OK"`, 8 `max_tokens`) comes back in **2s**, which is
+  exactly how it kept certifying itself healthy, while the same model on a
+  realistic 1.5K-token prompt took **123.2s**. That is why the gateway's own probe
+  script has a `--real` mode. Never health-check a free model with a 16-token ping.
+- **No tier churn.** All 37 hard-coded tier IDs were re-diffed against live
+  `GET /v1/models`: 0 missing, 0 dead. The catalogue side of 0.32.0 was correct;
+  only the free-tier reasoning was not.
+- 169 tests, typecheck, build and `verify:prices` (20/20 exact) green.
+
 ## 0.32.0
 
 Kimi K3 and the current high-end lineup, plus the tier lists rebuilt against the live catalogue instead of edited by hand. The interesting part is why nobody noticed they had rotted: **a retired model ID does not fail.** The gateway silently aliases it onto something else — `nvidia/llama-4-maverick` answers `200 OK` while being served by `gpt-oss-120b`, and `moonshot/kimi-k2.6` still quotes a price. Only a wholly unknown ID `400`s. So "it works" was never evidence a tier was correct, and 8 dead IDs had accumulated across 6 tiers.

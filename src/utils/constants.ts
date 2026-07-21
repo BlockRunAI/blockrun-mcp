@@ -50,24 +50,38 @@ export const BASE_RPC_URLS = [
 //   deepseek-v4-flash (1M context), mistral-nemotron, step-3.7-flash,
 //   seed-oss-36b, nemotron-nano-9b-v2, nemotron-nano-12b-v2-vl (vision),
 //   nemotron-3-nano-omni-30b-a3b-reasoning (vision).
-//   Listed but NOT serving — do NOT route to: mistral-large-3-675b (hangs).
+//   Also live but UNLISTED (hidden from GET /v1/models, still served): gpt-oss-120b
+//   — the gateway's own free fallback — and gpt-oss-20b.
+//   Listed but too slow to route to: mistral-large-3-675b (123s on a real prompt).
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "anthropic/claude-opus-4.7", "openai/gpt-5.2-pro"],
   cheap: ["deepseek/deepseek-v4-pro", "minimax/minimax-m3", "zai/glm-5", "nvidia/deepseek-v4-flash", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],
   reasoning: ["anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "openai/o3", "deepseek/deepseek-reasoner"],
-  // 2026-07-20 sweep: the previous list was 4/5 retired (llama-4-maverick,
-  // qwen3-coder-480b, gpt-oss-120b, gpt-oss-20b) and only "worked" via the
-  // server-side aliasing described above.
+  // 2026-07-20 sweep, CORRECTED 2026-07-21 (see below). Order matters: free[0]
+  // is what every mode:"free" call tries first, and a slow primary stalls the
+  // whole routing loop before it can fall through.
   //
-  // Every entry below was live-probed and returned a completion. Being IN the
-  // catalogue is not sufficient: nvidia/mistral-large-3-675b is listed at $0 but
-  // hangs — no response, no error, connection open past 90s (the NIM-hung mode
-  // seen in earlier sweeps) — so it is deliberately excluded. Order matters:
-  // free[0] is what every mode:"free" call tries first, and a hung primary
-  // stalls the whole routing loop before it can fall through.
-  free: ["nvidia/deepseek-v4-flash", "nvidia/mistral-nemotron", "nvidia/step-3.7-flash", "nvidia/seed-oss-36b", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2"],
+  // DELISTED IS NOT DEAD. The previous pass dropped gpt-oss-120b and gpt-oss-20b
+  // as "retired", reasoning that they only worked via server-side aliasing. That
+  // was wrong, and the same sweep contained the disproof: llama-4-maverick was
+  // observed "answering as gpt-oss-120b" — a model cannot be the alias TARGET and
+  // be dead. Both are merely hidden from GET /v1/models; gpt-oss-120b is the
+  // gateway's own FREE_FALLBACK_MODEL (and gpt-oss-20b its last-resort rung), so
+  // it is the single most load-bearing free model there is. Re-probed 2026-07-21
+  // on BOTH chains with a realistic ~1.5K-token prompt: gpt-oss-120b 3.5s,
+  // gpt-oss-20b 3.7s, both 200 with real completions. Absence from the public
+  // catalogue is a listing decision, not a health signal — check the behaviour.
+  //
+  // BEING LISTED IS NOT BEING ALIVE, EITHER — but state the failure accurately.
+  // nvidia/mistral-large-3-675b is listed at $0 and stays excluded, though not
+  // for the reason recorded before: it does NOT hang. It CRAWLS. A toy ping
+  // ("say OK", 8 max_tokens) returns in 2s, which is exactly how it kept
+  // re-certifying itself as healthy; the same model on a realistic 1.5K-token
+  // prompt took 123.2s. That is the trap the gateway's own probe script added a
+  // --real mode for. Never health-check a free model with a 16-token ping.
+  free: ["nvidia/gpt-oss-120b", "nvidia/deepseek-v4-flash", "nvidia/mistral-nemotron", "nvidia/step-3.7-flash", "nvidia/seed-oss-36b", "nvidia/gpt-oss-20b", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2"],
   coding: ["anthropic/claude-opus-4.8", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
 } as const;
