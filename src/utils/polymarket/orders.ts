@@ -145,6 +145,11 @@ export async function mapClobError(err: unknown): Promise<string> {
   const message = `${e?.message ?? String(err)}${dataText}`;
   const m = message.toLowerCase();
 
+  if (m.includes("setapprovalforall operator") && m.includes("not in the allowed list")) {
+    return `Polymarket's relayer rejected the ERC-1155 operator approval because this official collateral adapter ` +
+      `is missing from the relayer allowlist. No approval or redemption was sent. The relayer operator must add ` +
+      `the V2 CTF collateral-adapter addresses, then re-run action:"setup"; retrying locally cannot fix this. Raw: ${message}`;
+  }
   if (e?.status === 403 || (/(^|[^0-9.])403($|[^0-9.])/).test(m)) {
     const geo = await checkGeoblock();
     const where = geo.country ? ` (egress country: ${geo.country})` : "";

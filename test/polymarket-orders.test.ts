@@ -76,6 +76,15 @@ test("mapClobError: balance/allowance points at setup, NOT the Base wallet", asy
   assert.doesNotMatch(text, /blockrun_wallet|Base network/);
 });
 
+test("mapClobError: relayer adapter allowlist rejection identifies the required server-side change", async () => {
+  const text = await mapClobError({
+    message: "call blocked: setApprovalForAll operator 0xada100874d00e3331d00f2007a9c336a65009718 is not in the allowed list",
+    status: 400,
+  });
+  assert.match(text, /relayer.*allowlist/i);
+  assert.match(text, /No approval or redemption was sent/);
+});
+
 test("mapClobError: EOA maker rejection points at the deposit-wallet flow", async () => {
   const text = await mapClobError({
     message: "maker address not allowed, please use the deposit wallet flow",

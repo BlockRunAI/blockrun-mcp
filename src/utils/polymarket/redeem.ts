@@ -6,36 +6,60 @@
 //     (redeemPositions credits msg.sender, i.e. the deposit wallet).
 //   - EOA mode: a direct transaction from the EOA (needs POL gas).
 //
-// Target contracts:
-//   - standard binary markets → ConditionalTokens.redeemPositions(collateral,
-//     0x0, conditionId, [1, 2])
-//   - negRisk markets → NegRiskAdapter.redeemPositions(conditionId, [yesAmt,
-//     noAmt]) (adapter must be CTF-approved — done in setup)
-//
-// Collateral note: V2-era conditions settle in pUSD; conditions prepared
-// before the 2026-04-28 cutover may use legacy USDC.e collateral, in which
-// case the standard redeem with pUSD reverts — the error message says so and
-// the relayer batch simply fails without side effects.
+// Target contracts: CTF positions remain backed by legacy USDC.e / NegRisk
+// wrapped collateral, while user balances are pUSD. The V2 collateral adapters
+// are therefore the only valid public redeem entrypoints: they pull and redeem
+// the real ERC-1155 positions, then wrap the resulting USDC.e into pUSD.
 import { createWalletClient, encodeFunctionData, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
-import { getClobClient, getPolymarketAccount } from "./client.js";
+import { getPolymarketAccount } from "./client.js";
 import {
+  CTF_COLLATERAL_ADAPTER,
   CONDITIONAL_TOKENS,
   ERC1155_ABI,
   getSigType,
-  NEG_RISK_ADAPTER,
-  NEG_RISK_ADAPTER_ABI,
-  POLYGON_RPC_URLS,
-  PUSD_COLLATERAL,
+  NEG_RISK_CTF_COLLATERAL_ADAPTER,
+  POLYGON_WRITE_RPC_URL,
   PUSD_DECIMALS,
 } from "./constants.js";
 import type { ToolResult } from "./orders.js";
 import { mapClobError } from "./orders.js";
-import { getFundsAddress } from "./positions.js";
+import { fetchPositions, getFundsAddress, type DataApiPosition } from "./positions.js";
 import { sendWalletBatch } from "./relayer.js";
 import { getPublicClient, getPusdBalance } from "./setup.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
-interface ClobMarketToken { token_id?: string; outcome?: string; winner?: boolean }
+export function heldOutcomeTokens(positions: DataApiPosition[], conditionId: string): DataApiPosition[] {
+  return positions.filter((position) =>
+    position.conditionId?.toLowerCase() === conditionId.toLowerCase() && Boolean(position.asset),
+  );
+}
+
+/**
+ * Both official V2 collateral adapters intentionally retain the CTF
+ * redeemPositions ABI. The collateral/parent/index-set values are ignored by
+ * the adapter; it derives the real legacy position IDs from conditionId.
+ */
+export function buildRedeemCall(negRisk: boolean, conditionId: Hex): { target: Hex; data: Hex } {
+  return {
+    target: (negRisk ? NEG_RISK_CTF_COLLATERAL_ADAPTER : CTF_COLLATERAL_ADAPTER) as Hex,
+    data: encodeFunctionData({
+      abi: ERC1155_ABI,
+      functionName: "redeemPositions",
+      args: [
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+        conditionId,
+        [],
+      ],
+    }),
+  };
+}
+
+/** A receipt alone is insufficient: a wrong collateral path can be a no-op. */
+export function didRedeemAnyHeldPosition(before: readonly bigint[], after: readonly bigint[]): boolean {
+  return before.some((balance, index) => balance > 0n && (after[index] ?? balance) < balance);
+}
 
 export async function redeemPosition(input: { condition_id?: string; confirm?: boolean }): Promise<ToolResult> {
   if (!input.condition_id) {
@@ -51,16 +75,21 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
   }
 
   try {
-    // Market metadata (question, outcome tokens, negRisk) via the CLOB.
-    const clob = await getClobClient();
-    const market = (await clob.getMarket(conditionId)) as {
-      question?: string;
-      neg_risk?: boolean;
-      closed?: boolean;
-      tokens?: ClobMarketToken[];
-    };
-    const tokens = (market?.tokens ?? []).filter((t) => t.token_id);
-    if (!tokens.length) return { text: `No tokens found for condition ${conditionId}.`, isError: true };
+    // Redeem only needs the caller's held token IDs and neg-risk flag. The
+    // Data API supplies both; CLOB market lookup is deliberately avoided here
+    // because some supported egress routes return 404 for market metadata.
+    const heldPositions = heldOutcomeTokens(await fetchPositions(owner), conditionId);
+    if (!heldPositions.length) {
+      return {
+        text: `Could not find held outcome tokens for condition ${conditionId}. ` +
+          `Re-run action:"positions" and pass a condition_id that belongs to this wallet.`,
+        isError: true,
+      };
+    }
+    const tokens = heldPositions.map((position) => ({
+      token_id: position.asset!, outcome: position.outcome, winner: position.redeemable,
+    }));
+    const question = heldPositions[0]?.title;
 
     // Exact on-chain balances per outcome token — the redeem amounts.
     const pc = getPublicClient();
@@ -76,10 +105,10 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       );
     }
     if (balances.every((b) => b === 0n)) {
-      return { text: `Nothing to redeem: ${owner} holds no outcome tokens for "${market?.question ?? conditionId}".`, isError: true };
+      return { text: `Nothing to redeem: ${owner} holds no outcome tokens for "${question ?? conditionId}".`, isError: true };
     }
 
-    const negRisk = Boolean(market?.neg_risk);
+    const negRisk = heldPositions.some((position) => position.negativeRisk === true);
     const held = tokens
       .map((t, i) => ({ outcome: t.outcome, winner: t.winner, shares: Number(balances[i]) / 10 ** PUSD_DECIMALS }))
       .filter((h) => h.shares > 0);
@@ -91,7 +120,7 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       return {
         text: [
           `DRY RUN — nothing redeemed.`,
-          `Market: ${market?.question ?? conditionId}${market?.closed === false ? " ⚠️ (not closed yet — redeem will revert until resolution)" : ""}`,
+          `Market: ${question ?? conditionId}`,
           `Holdings:`,
           heldText,
           ``,
@@ -102,18 +131,7 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       };
     }
 
-    const data = negRisk
-      ? encodeFunctionData({
-          abi: NEG_RISK_ADAPTER_ABI,
-          functionName: "redeemPositions",
-          args: [conditionId, balances],
-        })
-      : encodeFunctionData({
-          abi: ERC1155_ABI,
-          functionName: "redeemPositions",
-          args: [PUSD_COLLATERAL as Hex, "0x0000000000000000000000000000000000000000000000000000000000000000", conditionId, [1n, 2n]],
-        });
-    const target = (negRisk ? NEG_RISK_ADAPTER : CONDITIONAL_TOKENS) as Hex;
+    const { target, data } = buildRedeemCall(negRisk, conditionId);
 
     let txHash: string | undefined;
     if (getSigType() === 3) {
@@ -121,15 +139,50 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       txHash = res.transactionHash;
     } else {
       const account = getPolymarketAccount();
-      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       txHash = await wallet.sendTransaction({ to: target, data, chain: polygon, account });
-      await pc.waitForTransactionReceipt({ hash: txHash as Hex });
+      assertTransactionSucceeded(await pc.waitForTransactionReceipt({ hash: txHash as Hex }), "Redeem transaction");
     }
 
-    const balanceAfter = await getPusdBalance(owner).catch(() => null);
+    // A receipt can arrive before every public RPC reflects its state. Retry
+    // the read briefly before treating this as an indeterminate verification.
+    let balanceAfter = await getPusdBalance(owner).catch(() => null);
+    let balancesAfter: bigint[] | null = null;
+    for (let attempt = 0; attempt < 3 && balancesAfter === null; attempt++) {
+      balancesAfter = await Promise.all(tokens.map((t) => pc.readContract({
+        address: CONDITIONAL_TOKENS as Hex,
+        abi: ERC1155_ABI,
+        functionName: "balanceOf",
+        args: [owner, BigInt(t.token_id as string)],
+      }))).catch(() => null);
+      if (balancesAfter === null && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    if (balanceAfter === null) balanceAfter = await getPusdBalance(owner).catch(() => null);
+    if (balancesAfter === null) {
+      return {
+        text: [
+          `⚠️ Redeem transaction confirmed, but its token effect could not be verified because the Polygon RPC read failed.`,
+          `Do not retry blindly; inspect the transaction and re-run action:"positions" after the RPC recovers.`,
+          ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
+        ].join("\n"),
+        structured: { status: "confirmed_but_unverified", conditionId, negRisk, transactionHash: txHash, pusdBalance: balanceAfter },
+        isError: true,
+      };
+    }
+    if (!didRedeemAnyHeldPosition(balances, balancesAfter)) {
+      return {
+        text: [
+          `⚠️ Redeem transaction confirmed, but held ERC-1155 outcome tokens did not decrease.`,
+          `No payout is being reported. Re-run action:"positions"; this indicates an unexpected collateral route or stale chain state.`,
+          ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
+        ].join("\n"),
+        structured: { status: "no_effect_detected", conditionId, negRisk, transactionHash: txHash, pusdBalance: balanceAfter },
+        isError: true,
+      };
+    }
     return {
       text: [
-        `✅ Redeemed "${market?.question ?? conditionId}".`,
+        `✅ Redeemed "${question ?? conditionId}".`,
         heldText,
         ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
         ...(balanceAfter !== null ? [`  Funds wallet pUSD balance: $${balanceAfter.toFixed(2)}`] : []),
@@ -138,8 +191,6 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
     };
   } catch (err) {
     const base = await mapClobError(err);
-    const legacyHint = ` If this market predates the 2026-04-28 V2 cutover it may settle in legacy ` +
-      `USDC.e collateral, which this tool does not auto-detect yet — redeem it once via the Polymarket UI.`;
-    return { text: `${base}${/revert|execution reverted|failed/i.test(base) ? legacyHint : ""}`, isError: true };
+    return { text: base, isError: true };
   }
 }

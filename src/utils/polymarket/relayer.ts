@@ -13,12 +13,13 @@
 import { RelayClient, type DepositWalletCall } from "@polymarket/builder-relayer-client";
 import { BuilderConfig } from "@polymarket/builder-signing-sdk";
 import { ClobClient } from "@polymarket/clob-client-v2";
-import { createWalletClient, http, type Hex } from "viem";
+import { createPublicClient, createWalletClient, fallback, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
 import { getPolymarketAccount } from "./client.js";
-import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
+import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_READ_RPC_URLS, POLYGON_WRITE_RPC_URL, RELAYER_URL } from "./constants.js";
 import { loadBuilderCreds, loadL2Creds, saveBuilderCreds, saveL2Creds } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
 export type { DepositWalletCall };
 
@@ -58,7 +59,7 @@ async function getOrCreateBuilderCreds(): Promise<{ key: string; secret: string;
     if (!l2) throw new Error("failed to derive CLOB credentials for builder-key creation");
   }
 
-  const wc = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+  const wc = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
   const clob = new ClobClient({
     host: CLOB_HOST,
     chain: POLYGON_CHAIN_ID,
@@ -84,7 +85,7 @@ export async function getRelayClient(): Promise<RelayClient> {
   const walletClient = createWalletClient({
     account: getPolymarketAccount(),
     chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
+    transport: http(POLYGON_WRITE_RPC_URL),
   });
   const builderCreds = await getOrCreateBuilderCreds();
   const builderConfig = new BuilderConfig({ localBuilderCreds: builderCreds });
@@ -108,7 +109,7 @@ export async function deriveDepositWalletNoCreds(): Promise<Hex> {
   const walletClient = createWalletClient({
     account: getPolymarketAccount(),
     chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
+    transport: http(POLYGON_WRITE_RPC_URL),
   });
   const client = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient);
   const addr = await client.deriveDepositWalletAddress();
@@ -153,6 +154,13 @@ export async function sendWalletBatch(
     throw new Error(
       `${description}: relayer batch did not confirm (tx ${response.transactionID}). ` +
       `Re-run action:"setup" to check state and retry.`,
+    );
+  }
+  if (confirmed.transactionHash) {
+    const pc = createPublicClient({ chain: polygon, transport: fallback(POLYGON_READ_RPC_URLS.map((url) => http(url))) });
+    assertTransactionSucceeded(
+      await pc.waitForTransactionReceipt({ hash: confirmed.transactionHash as Hex }),
+      description,
     );
   }
   return { transactionHash: confirmed.transactionHash };

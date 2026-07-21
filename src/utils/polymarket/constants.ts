@@ -22,6 +22,11 @@ export const CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 // pUSD — Polymarket's 1:1 collateral wrapper (labelled CollateralToken proxy).
 export const PUSD_COLLATERAL = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 export const COLLATERAL_ONRAMP = "0x93070a847efEf7F70739046A929D47a521F5B8ee";
+// Legacy collateral used by the CTF position IDs. The V2 adapters unwrap/wrap
+// this asset internally so callers with pUSD must use the adapters for CTF ops.
+export const USDCE_COLLATERAL = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+export const CTF_COLLATERAL_ADAPTER = "0xADa100874d00e3331D00F2007a9c336a65009718";
+export const NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xAdA200001000ef00D07553cEE7006808F895c6F1";
 export const DEPOSIT_WALLET_FACTORY = "0x00000000000Fb5C9ADea0298D729A0CB3823Cc07";
 
 /**
@@ -78,15 +83,19 @@ export const GEOBLOCK_URL =
   process.env.POLYMARKET_GEOBLOCK_URL || "https://polymarket.com/api/geoblock";
 export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via the Polymarket bridge UI/API
 
-// Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
-// Used only for read-only approval/balance checks (viem public client).
-// 1rpc first — polygon-rpc.com was observed lagging several blocks behind, which
-// made freshly-confirmed deploys/approvals read as still-pending.
-export const POLYGON_RPC_URLS = [
+// Public Polygon RPCs used only by the read-only viem public client. Keep this
+// list separate from the write transport: reordering a read fallback must never
+// silently change where EOA transactions are broadcast. All endpoints are
+// health-checked in the integration preflight.
+export const POLYGON_READ_RPC_URLS = [
   "https://1rpc.io/matic",
-  "https://polygon.llamarpc.com",
-  "https://polygon-rpc.com",
+  "https://polygon-bor-rpc.publicnode.com",
+  "https://polygon.drpc.org",
 ];
+
+// The explicit EOA broadcast endpoint. Override only when an operator has
+// reviewed that node's transaction propagation policy.
+export const POLYGON_WRITE_RPC_URL = process.env.POLYMARKET_WRITE_RPC_URL || "https://1rpc.io/matic";
 
 // --- Safety knobs ---
 /**

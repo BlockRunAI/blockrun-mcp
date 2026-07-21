@@ -26,14 +26,17 @@ import { checkGeoblock, getClobClient, getPolymarketAccount } from "./client.js"
 import {
   assertContractConfig,
   CONDITIONAL_TOKENS,
+  CTF_COLLATERAL_ADAPTER,
   CTF_EXCHANGE_V2,
   ERC1155_ABI,
   ERC20_ABI,
   getBoundedApprovalsUsd,
   getSigType,
   NEG_RISK_ADAPTER,
+  NEG_RISK_CTF_COLLATERAL_ADAPTER,
   NEG_RISK_CTF_EXCHANGE_V2,
-  POLYGON_RPC_URLS,
+  POLYGON_READ_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
   PUSD_COLLATERAL,
   PUSD_DECIMALS,
 } from "./constants.js";
@@ -48,6 +51,7 @@ import {
   sendWalletBatch,
   type DepositWalletCall,
 } from "./relayer.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
 let _publicClient: PublicClient | null = null;
 
@@ -55,7 +59,7 @@ export function getPublicClient(): PublicClient {
   if (!_publicClient) {
     _publicClient = createPublicClient({
       chain: polygon,
-      transport: fallback(POLYGON_RPC_URLS.map((u) => http(u))),
+      transport: fallback(POLYGON_READ_RPC_URLS.map((u) => http(u))),
     });
   }
   return _publicClient;
@@ -83,7 +87,8 @@ function pusdApprovalTarget(): bigint {
 /**
  * The approval set Polymarket V2 trading needs from the funds-holding wallet:
  * pUSD spend for buys (both exchanges), CTF operator for sells (both exchanges)
- * plus the NegRisk adapter (negRisk redeem/convert path).
+ * plus both V2 collateral adapters (the only correct pUSD-era redeem paths)
+ * and the legacy NegRisk adapter (convert path).
  */
 async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
   const pc = getPublicClient();
@@ -94,6 +99,8 @@ async function readApprovals(owner: Hex): Promise<ApprovalItem[]> {
   const erc1155Operators: Array<[string, Hex]> = [
     ["CTF → CTF Exchange V2", CTF_EXCHANGE_V2 as Hex],
     ["CTF → NegRisk Exchange V2", NEG_RISK_CTF_EXCHANGE_V2 as Hex],
+    ["CTF → CTF Collateral Adapter", CTF_COLLATERAL_ADAPTER as Hex],
+    ["CTF → NegRisk Collateral Adapter", NEG_RISK_CTF_COLLATERAL_ADAPTER as Hex],
     ["CTF → NegRisk Adapter", NEG_RISK_ADAPTER as Hex],
   ];
 
@@ -324,7 +331,7 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
     if (pol <= 0) {
       approvalsPending = true;
     } else {
-      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       const erc20Amount = pusdApprovalTarget(); // honor POLYMARKET_BOUNDED_APPROVALS in EOA mode too
       for (const item of missing) {
         const hash =
@@ -345,7 +352,7 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
                 chain: polygon,
                 account,
               });
-        await pc.waitForTransactionReceipt({ hash });
+        assertTransactionSucceeded(await pc.waitForTransactionReceipt({ hash }), `Approval for ${item.label}`);
         approvalTxHashes.push(hash);
       }
       approvalsPending = false;

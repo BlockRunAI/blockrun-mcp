@@ -30,7 +30,7 @@ import {
   getClobProxy,
   getSigType,
   POLYGON_CHAIN_ID,
-  POLYGON_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
 } from "./constants.js";
 import { loadDepositWalletForSigner, loadL2Creds, saveL2Creds } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
@@ -146,7 +146,7 @@ function buildWalletClient(reportAddress?: Hex): WalletClient {
   return createWalletClient({
     account,
     chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
+    transport: http(POLYGON_WRITE_RPC_URL),
   });
 }
 
