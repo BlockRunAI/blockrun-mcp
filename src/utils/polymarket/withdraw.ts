@@ -110,7 +110,16 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
       txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
-      await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
+      // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
+      // Discarding the receipt meant a REVERTED pUSD transfer still printed
+      // "✅ Withdrawal submitted … the bridge delivers USDC to Base" with a link
+      // to the failed tx and no isError, so the user waited for money that was
+      // never sent and blamed the bridge. redeem.ts:148 and setup.ts:379 both
+      // assert status; this path was the one that did not.
+      const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
+      if (receipt.status !== "success") {
+        throw new Error(`execution reverted: pUSD transfer ${txHash} reverted on-chain — no funds left the deposit wallet`);
+      }
     }
 
     return {
