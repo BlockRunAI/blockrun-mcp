@@ -2,6 +2,35 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.6
+
+Redeem now proves the position was actually consumed, not just that a
+transaction landed. Verification logic from @KillerQueen-Z's #66, integrated
+with the payout check already on `main` rather than replacing it.
+
+- **`fix(polymarket)` — a redeem is only proven by answering TWO questions.**
+  `main` verified the pUSD delta ("did I get paid") and never checked the
+  ERC-1155 balances ("did my tokens burn"). Those are independent: the
+  wrong-collateral no-op that started this whole class burns nothing, reverts
+  nothing, and returns a transaction hash. Both are now checked, and the three
+  outcomes are distinct in `structured.status`:
+  - `redeemed` — tokens burned, payout observed
+  - `no_effect_detected` — we checked, and nothing we held was consumed
+  - `confirmed_but_unverified` — the tx landed but the RPC read failed after 3
+    attempts, so we cannot say either way
+  Collapsing the last two is what made the original bug invisible; they need
+  different actions from the caller, so they are different statuses.
+- **Post-transaction reads retry (3 attempts, 750ms).** A receipt can land
+  before every public RPC reflects it, and telling a user "your tokens did not
+  burn" off a lagging node is a false alarm on a money operation.
+- **`fix(polymarket)` — one `assertTransactionSucceeded` helper.** viem resolves
+  `waitForTransactionReceipt` for reverted transactions too, so awaiting it
+  proves the tx was MINED, not that it did anything. The check was open-coded in
+  three places with three different error strings, and withdraw's copy was
+  missing entirely until 0.32.3 — a reverted pUSD transfer printed
+  "✅ Withdrawal submitted". Now one helper the next money path cannot forget.
+- 217 tests, typecheck, build and `verify:prices` (28/28) green.
+
 ## 0.32.5
 
 - **`fix(polymarket)` — reads and writes no longer share one RPC list.** There was

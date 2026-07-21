@@ -7,7 +7,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decodeFunctionData, type Hex } from "viem";
-import { buildRedeemCall } from "../src/utils/polymarket/redeem.js";
+import { buildRedeemCall, didRedeemAnyHeldPosition } from "../src/utils/polymarket/redeem.js";
+import { assertTransactionSucceeded } from "../src/utils/polymarket/transactions.js";
 import {
   CONDITIONAL_TOKENS,
   CTF_COLLATERAL_ADAPTER,
@@ -48,4 +49,42 @@ test("redeem calldata is the CTF-mirror redeemPositions with the conditionId", (
     assert.equal(conditionId, CONDITION_ID);
     assert.deepEqual([...indexSets], [1n, 2n]);
   }
+});
+
+// A transaction hash is not proof of redemption. Redeeming through the wrong
+// collateral path burns a positionId nobody holds, which SUCCEEDS on-chain
+// having done nothing — CTF redeemPositions never reverts on a zero balance.
+// That is the "REDEEM size=0" class. Only a DECREASE in a balance that was
+// non-zero before proves a position was actually consumed.
+test("didRedeemAnyHeldPosition: a real burn counts", () => {
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 0n], [0n, 0n]), true);
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 500n], [1_000_000n, 0n]), true, "any held position decreasing counts");
+});
+
+test("didRedeemAnyHeldPosition: an unchanged balance is NOT a redemption", () => {
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 0n], [1_000_000n, 0n]), false);
+});
+
+test("didRedeemAnyHeldPosition: holding nothing can never look redeemed", () => {
+  assert.equal(didRedeemAnyHeldPosition([0n, 0n], [0n, 0n]), false);
+  // A balance going UP is not a redemption either.
+  assert.equal(didRedeemAnyHeldPosition([0n, 0n], [5n, 5n]), false);
+});
+
+// Conservative on a short read: a missing `after` entry must read as unchanged,
+// never as burned, so a truncated RPC response cannot fake success.
+test("didRedeemAnyHeldPosition: a truncated after-array cannot fake success", () => {
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 1_000_000n], []), false);
+  assert.equal(didRedeemAnyHeldPosition([1_000_000n, 1_000_000n], [1_000_000n]), false);
+});
+
+// viem resolves waitForTransactionReceipt for reverted transactions too, so
+// awaiting it proves the tx was MINED, not that it did anything.
+test("assertTransactionSucceeded throws on a reverted receipt", () => {
+  assert.throws(() => assertTransactionSucceeded({ status: "reverted" }, "redeem transaction", "0xabc"), /reverted on-chain/);
+  assert.throws(() => assertTransactionSucceeded({}, "redeem transaction"), /reverted on-chain/);
+});
+
+test("assertTransactionSucceeded passes a successful receipt", () => {
+  assert.doesNotThrow(() => assertTransactionSucceeded({ status: "success" }, "redeem transaction"));
 });
