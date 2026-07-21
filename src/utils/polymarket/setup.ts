@@ -48,6 +48,7 @@ import {
   sendWalletBatch,
   type DepositWalletCall,
 } from "./relayer.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
 let _publicClient: PublicClient | null = null;
 
@@ -375,10 +376,11 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
                 chain: polygon,
                 account,
               });
-        const receipt = await pc.waitForTransactionReceipt({ hash });
-        if (receipt.status !== "success") {
-          throw new Error(`execution reverted: approval transaction ${hash} (${item.label}) reverted on-chain`);
-        }
+        assertTransactionSucceeded(
+          await pc.waitForTransactionReceipt({ hash }),
+          `approval transaction (${item.label})`,
+          hash,
+        );
         approvalTxHashes.push(hash);
       }
       approvalsPending = false;

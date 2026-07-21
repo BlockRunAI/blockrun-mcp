@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.32.5",
+  "version": "0.32.6",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, and crypto data. Paid via x402 micropayments.",
   "type": "module",

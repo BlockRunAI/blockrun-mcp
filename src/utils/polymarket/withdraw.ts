@@ -26,6 +26,7 @@ import {
   PUSD_DECIMALS,
 } from "./constants.js";
 import { getPolymarketAccount } from "./client.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 import type { ToolResult } from "./orders.js";
 import { mapClobError } from "./orders.js";
 import { getFundsAddress } from "./positions.js";
@@ -116,10 +117,11 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       // to the failed tx and no isError, so the user waited for money that was
       // never sent and blamed the bridge. redeem.ts:148 and setup.ts:379 both
       // assert status; this path was the one that did not.
-      const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
-      if (receipt.status !== "success") {
-        throw new Error(`execution reverted: pUSD transfer ${txHash} reverted on-chain — no funds left the deposit wallet`);
-      }
+      assertTransactionSucceeded(
+        await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex }),
+        "pUSD transfer",
+        txHash,
+      );
     }
 
     return {

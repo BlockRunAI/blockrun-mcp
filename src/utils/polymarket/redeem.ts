@@ -38,6 +38,7 @@ import { mapClobError } from "./orders.js";
 import { getFundsAddress } from "./positions.js";
 import { sendWalletBatch } from "./relayer.js";
 import { getPublicClient, getPusdBalance } from "./setup.js";
+import { assertTransactionSucceeded } from "./transactions.js";
 
 interface ClobMarketToken { token_id?: string; outcome?: string; winner?: boolean }
 
@@ -57,6 +58,23 @@ export function buildRedeemCall(negRisk: boolean, conditionId: Hex): { target: H
       args: [PUSD_COLLATERAL as Hex, "0x0000000000000000000000000000000000000000000000000000000000000000", conditionId, [1n, 2n]],
     }),
   };
+}
+
+/**
+ * Did the redeem actually consume something we held?
+ *
+ * A transaction hash is not proof: redeeming through the wrong collateral path
+ * burns a positionId nobody holds, which SUCCEEDS on-chain having done nothing
+ * (CTF redeemPositions never reverts on a zero balance). Only a DECREASE in a
+ * balance that was non-zero before proves the position was consumed.
+ *
+ * Conservative on length mismatch: a missing `after` entry reads as unchanged,
+ * i.e. "not redeemed", so a truncated read can never fake success.
+ *
+ * Pure and exported for tests. Design from @KillerQueen-Z's #66.
+ */
+export function didRedeemAnyHeldPosition(before: readonly bigint[], after: readonly bigint[]): boolean {
+  return before.some((balance, index) => balance > 0n && (after[index] ?? balance) < balance);
 }
 
 export async function redeemPosition(input: { condition_id?: string; confirm?: boolean }): Promise<ToolResult> {
@@ -139,15 +157,73 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       txHash = await wallet.sendTransaction({ to: target, data, chain: polygon, account });
-      const receipt = await pc.waitForTransactionReceipt({ hash: txHash as Hex });
-      if (receipt.status !== "success") {
-        throw new Error(`execution reverted: redeem transaction ${txHash} reverted on-chain`);
-      }
+      assertTransactionSucceeded(
+        await pc.waitForTransactionReceipt({ hash: txHash as Hex }),
+        "redeem transaction",
+        txHash,
+      );
+    }
+
+    // Two INDEPENDENT questions, and a redeem is only proven by answering both:
+    //   1. did my outcome tokens actually burn?   (ERC-1155 balances, below)
+    //   2. did I actually get paid?               (pUSD delta, further down)
+    // Until 0.32.6 only (2) was checked. A receipt plus a pUSD balance that
+    // happens to look right is not proof the position was consumed — the
+    // wrong-collateral no-op that started all of this burns nothing and
+    // reverts nothing. Token-effect verification per @KillerQueen-Z's #66.
+    //
+    // Retry the read: a receipt can land before every public RPC reflects its
+    // state, and reporting "your tokens did not burn" off a lagging node is a
+    // false alarm on a money operation.
+    let balancesAfter: bigint[] | null = null;
+    for (let attempt = 0; attempt < 3 && balancesAfter === null; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
+      balancesAfter = await Promise.all(tokens.map((t) => pc.readContract({
+        address: CONDITIONAL_TOKENS as Hex,
+        abi: ERC1155_ABI,
+        functionName: "balanceOf",
+        args: [owner, BigInt(t.token_id as string)],
+      }))).catch(() => null);
     }
 
     const balanceAfter = await getPusdBalance(owner).catch(() => null);
     const paidOut = balanceBefore !== null && balanceAfter !== null ? balanceAfter - balanceBefore : null;
     const heldWinner = held.some((h) => h.winner);
+
+    // "We could not check" and "we checked and nothing burned" are different
+    // facts that need different actions from the caller, so they get different
+    // statuses. Collapsing them is what made the original bug invisible.
+    if (balancesAfter === null) {
+      return {
+        text: [
+          `⚠️ Redeem transaction confirmed, but its token effect could NOT be verified — the Polygon RPC read failed after 3 attempts.`,
+          `This is "the transaction landed", not "you were paid". Do not retry blindly:`,
+          `inspect the transaction, then re-run action:"positions" once the RPC recovers.`,
+          ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
+        ].join("\n"),
+        structured: {
+          status: "confirmed_but_unverified", conditionId, negRisk, transactionHash: txHash,
+          paidOutUsd: paidOut, pusdBalance: balanceAfter, tokensBurned: null, payoutVerified: paidOut !== null,
+        },
+        isError: true,
+      };
+    }
+    if (!didRedeemAnyHeldPosition(balances, balancesAfter)) {
+      return {
+        text: [
+          `⚠️ Redeem transaction confirmed, but NO held outcome tokens were consumed.`,
+          `Nothing was redeemed. Your outcome tokens are NOT lost — this points at an`,
+          `unexpected collateral route or a missing CTF operator approval for the`,
+          `collateral adapter. Re-run action:"setup" to check approvals, then retry.`,
+          ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
+        ].join("\n"),
+        structured: {
+          status: "no_effect_detected", conditionId, negRisk, transactionHash: txHash,
+          paidOutUsd: paidOut, pusdBalance: balanceAfter, tokensBurned: false, payoutVerified: paidOut !== null,
+        },
+        isError: true,
+      };
+    }
     if (paidOut !== null && paidOut <= 0 && heldWinner) {
       return {
         text: [
@@ -176,7 +252,10 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
         ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
         ...(balanceAfter !== null ? [`  Funds wallet pUSD balance: $${balanceAfter.toFixed(2)}`] : []),
       ].join("\n"),
-      structured: { conditionId, negRisk, transactionHash: txHash, paidOutUsd: paidOut, pusdBalance: balanceAfter, payoutVerified: paidOut !== null },
+      structured: {
+        status: "redeemed", conditionId, negRisk, transactionHash: txHash,
+        paidOutUsd: paidOut, pusdBalance: balanceAfter, tokensBurned: true, payoutVerified: paidOut !== null,
+      },
     };
   } catch (err) {
     const base = await mapClobError(err);
