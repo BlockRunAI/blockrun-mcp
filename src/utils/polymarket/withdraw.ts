@@ -21,7 +21,7 @@ import {
   ERC20_ABI,
   getBuilderCode,
   getSigType,
-  POLYGON_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
   PUSD_COLLATERAL,
   PUSD_DECIMALS,
 } from "./constants.js";
@@ -108,7 +108,7 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       txHash = res.transactionHash;
     } else {
       const account = getPolymarketAccount();
-      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
       // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
       // Discarding the receipt meant a REVERTED pUSD transfer still printed
