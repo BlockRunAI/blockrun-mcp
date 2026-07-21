@@ -69,3 +69,46 @@ export function isBlockedFetchHost(hostname: string): boolean {
 
   return false;
 }
+
+/**
+ * Resolve `hostname` and block it if ANY address it maps to is private.
+ *
+ * isBlockedFetchHost only ever compared literals, and this file used to concede
+ * that "a public name resolving to a private IP would still pass ... but it
+ * blocks the realistic vectors". That was wrong: the realistic vector is a
+ * wildcard DNS service. `127.0.0.1.nip.io` is a public name that resolves to
+ * 127.0.0.1, and was verified end-to-end reading a local server and base64ing
+ * the body into the data URI sent onward to the gateway. `169.254.169.254.nip.io`
+ * reaches cloud metadata the same way. No redirect required, so the per-hop
+ * literal check never saw anything suspicious.
+ *
+ * Checks EVERY returned address (all:true), so a name with one public and one
+ * private A record is still refused, and the deny decision does not depend on
+ * which record the OS happens to pick when the socket is opened.
+ *
+ * This is resolve-then-check, so a name that flips to a private address between
+ * this call and connect() (true DNS rebinding) is still theoretically possible;
+ * closing that needs socket-level pinning. It removes the whole trivially
+ * exploitable class, which is what shipped today.
+ */
+export async function isBlockedFetchHostResolved(hostname: string): Promise<boolean> {
+  if (isBlockedFetchHost(hostname)) return true;
+
+  let host = hostname.trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  host = host.replace(/\.+$/, "");
+  // A literal IP has nothing to resolve; isBlockedFetchHost already ruled on it.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) return false;
+
+  try {
+    const { lookup } = await import("node:dns/promises");
+    const addrs = await lookup(host, { all: true });
+    // No addresses => nothing safe to talk to; fail closed.
+    if (!addrs.length) return true;
+    return addrs.some((a) => isBlockedFetchHost(a.address));
+  } catch {
+    // NXDOMAIN or resolver failure: nothing to fetch anyway, so fail closed
+    // rather than letting an unresolvable name through to fetch().
+    return true;
+  }
+}
