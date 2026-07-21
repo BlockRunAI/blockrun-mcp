@@ -201,7 +201,13 @@ Run blockrun_models to see all available models with pricing.`,
       // Fresh per-call client so withSettledCost's getSpending() delta isolates
       // THIS call's cost (the shared singleton's cumulative counter double-counts
       // concurrent calls — see buildClient).
-      const llm = buildClient();
+      // Built lazily below for the free path: mode:"free" with no model and no
+      // messages is the only shape that reaches the routing loop, and it uses
+      // freeClient instead — so an eager buildClient() here was constructed and
+      // thrown away on every free call. On Solana that is not free: buildClient()
+      // -> buildSolanaClient() -> loadSolanaWallet() scans the home directory.
+      let _llm: ApiClient | undefined;
+      const llm = (): ApiClient => (_llm ??= buildClient());
 
       // OpenAI-compatible response shaping, forwarded to every call path below.
       const responseFormat = response_format ? ({ type: response_format } as const) : undefined;
@@ -278,7 +284,7 @@ Run blockrun_models to see all available models with pricing.`,
           // forwards `messages` verbatim and accepts image_url content arrays
           // for vision-capable models — so a multimodal array is runtime-valid.
           // (claude-* with history is already handled by the native branch above.)
-          const { result, settledUsd } = await withSettledCost(llm, () => llm.chatCompletion(targetModel, fullMessages as unknown as Parameters<typeof llm.chatCompletion>[1], {
+          const { result, settledUsd } = await withSettledCost(llm(), () => llm().chatCompletion(targetModel, fullMessages as unknown as Parameters<ReturnType<typeof llm>["chatCompletion"]>[1], {
             maxTokens: max_tokens,
             temperature,
             responseFormat,
@@ -299,7 +305,7 @@ Run blockrun_models to see all available models with pricing.`,
       // If specific model provided, use it directly
       if (model) {
         try {
-          const { result: response, settledUsd } = await withSettledCost(llm, () => llm.chat(model, message, {
+          const { result: response, settledUsd } = await withSettledCost(llm(), () => llm().chat(model, message, {
             system,
             maxTokens: max_tokens,
             temperature,
@@ -325,7 +331,7 @@ Run blockrun_models to see all available models with pricing.`,
       // models fail by crawling and there are eight of them to fall through.
       // See FREE_MODEL_TIMEOUT_MS for the measurements behind the numbers.
       const freeClient = routingMode === "free" ? buildClientWithTimeout(FREE_MODEL_TIMEOUT_MS) : null;
-      const routingClient = freeClient ?? llm;
+      const routingClient = freeClient ?? llm();
       const loopStartedAt = Date.now();
 
       let lastError: unknown = null;
