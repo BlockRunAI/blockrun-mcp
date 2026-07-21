@@ -2,6 +2,29 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.7
+
+Setup's approval report now shows the post-transaction chain state, not the
+pre-transaction snapshot. Found live: a `setup confirm:true` that successfully
+granted 4 approvals returned every one of them as `granted:false`.
+
+- **`fix(polymarket)` — setup re-reads approvals after the batch lands.** Both
+  modes (deposit-wallet batch and per-tx EOA) built their report from the
+  approvals snapshot taken BEFORE signing, then flipped `approvalsPending` to
+  false without a single re-read. So the response contradicted itself
+  (`approvalsPending:false` + `granted:false`), and the inverse failure — a
+  batch tx that lands but leaves an approval missing — was reported as success.
+  Same 0.32.6 principle, applied to setup: a transaction landing proves it was
+  mined, not that it did anything. `verifyApprovalsLanded` re-reads on-chain
+  (3 attempts, 750ms, matching redeem's post-transaction reads) and only a
+  fresh read showing every approval granted counts; an empty read can never
+  fake success, and `approvalsDone` is persisted only after verification. When
+  the tx landed but the chain doesn't confirm, the report says so explicitly
+  (`approvalsUnverified:true` + a ⚠️ line) instead of ✅.
+- `structured` now carries `approvalsTxHash` (deposit-wallet) /
+  `approvalTxHashes` (EOA), so callers can link the batch without parsing text.
+- 223 tests, typecheck and build green.
+
 ## 0.32.6
 
 Redeem now proves the position was actually consumed, not just that a
