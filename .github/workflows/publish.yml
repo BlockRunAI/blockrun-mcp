@@ -128,6 +128,14 @@ jobs:
             TITLE="$TAG — $HEADLINE"
           fi
 
+          # Annotated tags need a committer identity, and the runner has none:
+          # `git tag -a` died with "fatal: empty ident name", failing the job
+          # AFTER npm and the MCP registry had already published — 0.32.3 shipped
+          # with no tag and no release and had to be repaired by hand. This is
+          # exactly the drift the step exists to prevent.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           # Ask the REMOTE, not the local clone: actions/checkout fetches no tags
           # by default, so `git rev-parse "$TAG"` always missed and the push ran
           # unconditionally. An annotated tag already on origin is then rejected
@@ -140,7 +148,9 @@ jobs:
             git push origin "$TAG"
           fi
 
-          # Pin the release to the tag's commit explicitly rather than letting
-          # GitHub default to the branch head.
-          gh release create "$TAG" --title "$TITLE" --notes-file /tmp/notes.md --latest --target "$(git rev-parse HEAD)"
+          # No --target: GitHub rejects target_commitish for a tag that already
+          # exists ("Release.target_commitish is invalid"), and by this point the
+          # tag always exists — we either just pushed it or found it on origin.
+          # The release inherits the tag's commit, which is what we wanted anyway.
+          gh release create "$TAG" --title "$TITLE" --notes-file /tmp/notes.md --latest
           echo "Released $TAG"
