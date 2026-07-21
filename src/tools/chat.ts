@@ -4,11 +4,55 @@ import { z } from "zod";
 import { buildClient, buildClientWithTimeout, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
-import { MODEL_TIERS, FREE_MODEL_TIMEOUT_MS, FREE_TIER_DEADLINE_MS, type RoutingMode } from "../utils/constants.js";
+import { MODEL_TIERS, FREE_MODEL_TIMEOUT_MS, FREE_TIER_DEADLINE_MS, FREE_TIER_MAX_PROMPT_BYTES, type RoutingMode } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
+
+/**
+ * Byte size of everything we are about to send as prompt. Used only to decide
+ * whether the free path will silently drop part of it.
+ */
+export function promptByteSize(
+  message: string,
+  system?: string,
+  messages?: Array<{ content: unknown }>,
+): number {
+  let bytes = Buffer.byteLength(message, "utf8");
+  if (system) bytes += Buffer.byteLength(system, "utf8");
+  for (const m of messages ?? []) {
+    bytes += Buffer.byteLength(
+      typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""),
+      "utf8",
+    );
+  }
+  return bytes;
+}
+
+/**
+ * The free NVIDIA path truncates at 128 KiB and still answers 200 with a
+ * confident, well-formed reply — see FREE_TIER_MAX_PROMPT_BYTES for the
+ * measurements. Nothing in the response says the input was cut, so an agent
+ * summarising a large document over mode:"free" would present an answer about
+ * the first 128 KiB as an answer about the whole thing.
+ *
+ * Silent truncation is the worst failure shape available here: unlike an error,
+ * it is indistinguishable from success. We cannot stop the gateway doing it, so
+ * the tool says so out loud. Returns null when nothing was lost.
+ */
+export function freeTierTruncationNote(promptBytes: number, model: string): string | null {
+  if (!model.startsWith("nvidia/")) return null; // paid models scale past this
+  if (promptBytes <= FREE_TIER_MAX_PROMPT_BYTES) return null;
+  const keptPct = Math.round((FREE_TIER_MAX_PROMPT_BYTES / promptBytes) * 100);
+  return (
+    `\n\n⚠️ TRUNCATED: the prompt was ${Math.round(promptBytes / 1024)} KiB, but the free ` +
+    `NVIDIA path silently caps input at ${FREE_TIER_MAX_PROMPT_BYTES / 1024} KiB. Roughly ` +
+    `${100 - keptPct}% of it never reached the model, so the answer above covers only the ` +
+    `first ~${keptPct}%. Paid models do not truncate — pass an explicit model (or a paid ` +
+    `mode) to send the whole prompt.`
+  );
+}
 
 /**
  * Conservative per-call RESERVE for the budget pre-check (the gate). We don't
@@ -151,6 +195,10 @@ Run blockrun_models to see all available models with pricing.`,
       // OpenAI-compatible response shaping, forwarded to every call path below.
       const responseFormat = response_format ? ({ type: response_format } as const) : undefined;
 
+      // Measured once and checked against whichever model each path settles on:
+      // the free NVIDIA path drops everything past 128 KiB without saying so.
+      const promptBytes = promptByteSize(message, system, messages);
+
       // Budget gate: global + per-agent enforcement. The tier/model is resolved
       // AFTER the gate, so reserve the worst case it could settle at.
       const estimatedCost = estimateChatCost(max_tokens, mode, model, thinking?.budget_tokens);
@@ -227,9 +275,10 @@ Run blockrun_models to see all available models with pricing.`,
           }));
           const reply = result.choices?.[0]?.message?.content || "";
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+          const note = freeTierTruncationNote(promptBytes, targetModel);
           return {
-            content: [{ type: "text", text: `[${targetModel} | ${fullMessages.length} msgs]\n\n${reply}` }],
-            structuredContent: { model_used: targetModel, response: reply, message_count: fullMessages.length },
+            content: [{ type: "text", text: `[${targetModel} | ${fullMessages.length} msgs]\n\n${reply}${note ?? ""}` }],
+            structuredContent: { model_used: targetModel, response: reply, message_count: fullMessages.length, ...(note ? { truncated: true } : {}) },
           };
         } catch (error) {
           return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
@@ -247,7 +296,7 @@ Run blockrun_models to see all available models with pricing.`,
             stop,
           }));
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
-          return { content: [{ type: "text", text: response }] };
+          return { content: [{ type: "text", text: `${response}${freeTierTruncationNote(promptBytes, model) ?? ""}` }] };
         } catch (error) {
           return {
             content: [{ type: "text", text: formatError(extractErrorMessage(error)) }],
@@ -286,9 +335,10 @@ Run blockrun_models to see all available models with pricing.`,
             stop,
           }));
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+          const note = freeTierTruncationNote(promptBytes, m);
           return {
-            content: [{ type: "text", text: `[${m}]\n\n${response}` }],
-            structuredContent: { model_used: m, response },
+            content: [{ type: "text", text: `[${m}]\n\n${response}${note ?? ""}` }],
+            structuredContent: { model_used: m, response, ...(note ? { truncated: true } : {}) },
           };
         } catch (error) {
           lastError = error;
