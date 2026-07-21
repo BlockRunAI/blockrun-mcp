@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost } from "../src/tools/chat.js";
 import { handleAnthropicNative } from "../src/tools/chat-anthropic.js";
+import { MODEL_TIERS } from "../src/utils/constants.js";
 import type { BudgetState } from "../src/types.js";
 
 function newBudget(limit: number | null = null): BudgetState {
@@ -101,4 +102,37 @@ test("handleAnthropicNative adds no JSON instruction for plain text", async () =
     estimatedCost: 0.01,
   });
   assert.doesNotMatch(String(captured.system ?? ""), /respond with only valid json/i);
+});
+
+// estimateChatCost reserves $0 for mode:"free" with no model to override it. That
+// is only sound because every free[] entry is an nvidia/* model the gateway serves
+// at $0 — an unenforced invariant on a hand-edited array that has now been
+// rewritten in three consecutive releases (0.31.x, 0.32.0, 0.32.1). One paid model
+// landing in free[] silently switches the budget gate off for mode:"free", and
+// every other test here still passes. Pin it.
+test("every MODEL_TIERS.free entry is an nvidia/* model (keeps the $0 reserve honest)", () => {
+  assert.ok(MODEL_TIERS.free.length > 0, "free tier must not be empty");
+  for (const m of MODEL_TIERS.free) {
+    assert.ok(
+      m.startsWith("nvidia/"),
+      `${m} is in the free tier but is not nvidia/* — estimateChatCost would reserve $0 for a paid model`,
+    );
+  }
+});
+
+// A tier that empties out resolves MODEL_TIERS[mode][0] to undefined, which sends
+// the caller to the hard-coded balanced fallback while still being charged as the
+// mode they asked for. Cheap to catch here.
+test("no MODEL_TIERS tier is empty", () => {
+  for (const [tier, models] of Object.entries(MODEL_TIERS)) {
+    assert.ok(models.length > 0, `tier ${tier} is empty`);
+  }
+});
+
+// Duplicate IDs inside one tier mean the routing loop retries the same failing
+// model instead of falling through to a different one.
+test("no MODEL_TIERS tier repeats a model id", () => {
+  for (const [tier, models] of Object.entries(MODEL_TIERS)) {
+    assert.equal(new Set(models).size, models.length, `tier ${tier} contains a duplicate id`);
+  }
 });
