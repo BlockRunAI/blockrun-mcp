@@ -2,6 +2,59 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.4
+
+The second half of the 0.32.3 audit: the structural gap behind five of its
+pricing bugs, plus the remaining "reported as fact, never verified" defects.
+
+- **`fix(verify-prices)` — the gate now covers PARAMETERIZED routes.** Every
+  pricing defect the audit found was on a route whose price depends on an
+  *argument*, and `verify:prices` covered the flat routes exactly (20/20) and
+  none of those. That was the single structural finding behind five separate
+  bugs. It now probes image sizes per model, exa per-URL counts, and chat with a
+  100k-character prompt — **28 routes, 0 under-reserving**. Probes may declare
+  `allowOver` where a conservative reserve is the design (chat cannot know which
+  model a tier settles on), but under-reserving still fails the release.
+- **`fix(image)` — a 2048 render was billed at the 4096 price.** The large-size
+  tier was a single `>1024` rule for every model. Probed live, `nano-banana-pro`
+  charges **$0.107001 at both 1024 and 2048** and only steps to **$0.159500 at
+  4096** — so a 2048 render over-reserved by 49% *and*, on the Base path where
+  the estimate is written to the ledger verbatim, over-**booked** it permanently.
+  Thresholds are now per-model.
+- **`fix(polymarket)` — two "stated as fact, never checked" reports.** An RPC
+  failure was coerced to `$0.00` and printed as "your Base wallet holds $0.00
+  USDC — top up first" to a user holding $200; it now refuses to fund blind. And
+  any non-403 from the CLOB — 502, 404, 429 from a misconfigured host — rendered
+  as "✅ Region: order placement permitted" + "🎯 Ready to trade", cached 10
+  minutes, so the user funded before the first buy failed; only 400/401/422 (what
+  a *working* CLOB returns for an empty body) now count as permitted.
+- **`fix(polymarket)` — a redeem with an unreadable balance no longer looks
+  paid.** When the pUSD read failed, `paidOut` went null, which also made the
+  "paid $0 while holding a winner" guard unreachable — and the success message
+  simply omitted the payout line, rendering identically to a verified payout.
+  That is the size=0 silent-loss shape this module was rewritten to kill. It now
+  says the payout is UNVERIFIED and exposes `payoutVerified` in structured output.
+- **`fix(realface)` — a failed portrait lookup claimed "none enrolled".** The
+  RealFace half surfaced its own failure; the Virtual Portrait half collapsed to
+  an empty list and prompted a duplicate $0.01 enroll of an asset that already
+  existed.
+- **`fix(polymarket)` — two of three Polygon RPCs were dead.** Probed with a real
+  `eth_call`: llamarpc fails DNS, polygon-rpc.com returns 401 "tenant disabled",
+  and 1rpc is rate-limited. `fallback()` depth was effectively 1 while ~9 reads x
+  4 retries piled onto one throttled endpoint. Now publicnode + drpc + 1rpc, all
+  verified live. The comment claiming the list is "read-only" is also gone —
+  `POLYGON_RPC_URLS[0]` is the sole un-fallbacked transport for every *signing*
+  client, so reordering it is a write-path change.
+- **`fix(chat)` — `mode:"free"` built two clients and used one.** The eager
+  `buildClient()` was dead on the only shape that reaches the routing loop; on
+  Solana it re-ran `loadSolanaWallet()`'s home-directory scan every call.
+- **`docs` — tool descriptions quoted pre-fee bases.** The description is the
+  only pricing an LLM sees at call time, and it disagreed with both the reserve
+  logic and the skills (which commit `ff32cb4` had already corrected). Exa and
+  DefiLlama rows now quote the charged price. README's Surf endpoint count was
+  84; code and the skill catalog both say 83.
+- 207 tests, typecheck, build and `verify:prices` (28/28) green.
+
 ## 0.32.3
 
 A multi-agent audit of 0.32.2 across nine angles, every finding put through two
