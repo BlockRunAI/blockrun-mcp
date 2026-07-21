@@ -2,6 +2,66 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.1
+
+A correction to 0.32.0, which dropped two working models from the `free` tier on a
+conclusion its own release notes disproved one paragraph earlier.
+
+- **`fix(models)` — `gpt-oss-120b` and `gpt-oss-20b` are back in `free`; they were
+  never retired.** 0.32.0 removed them as "delisted... the tier only ever worked
+  through aliasing", but the same entry states that `llama-4-maverick` "answers
+  `200 OK` while being served by `gpt-oss-120b`". A model cannot simultaneously be
+  the thing serving the alias and be dead. They are hidden from `GET /v1/models`,
+  which is a listing decision, not a health signal — and `gpt-oss-120b` is the
+  gateway's own `FREE_FALLBACK_MODEL`, with `gpt-oss-20b` as its last-resort rung,
+  making them the most load-bearing free models there are. Re-probed on **both**
+  chains with a realistic ~1.5K-token prompt: `gpt-oss-120b` **3.5s**,
+  `gpt-oss-20b` **3.7s**, both `200` with real completions. `gpt-oss-120b` is now
+  `free[0]` — it is marginally faster than the outgoing `deepseek-v4-flash` (3.8s)
+  and is what the gateway itself falls back to.
+- **`fix(models)` — `mistral-large-3-675b` stays excluded, but for the right
+  reason.** 0.32.0 recorded it as hanging: "no response, no error, connection held
+  open past 90s". It does not hang. It **crawls**, and the distinction is the whole
+  lesson: a toy ping (`"say OK"`, 8 `max_tokens`) comes back in **2s**, which is
+  exactly how it kept certifying itself healthy, while the same model on a
+  realistic 1.5K-token prompt took **123.2s**. That is why the gateway's own probe
+  script has a `--real` mode. Never health-check a free model with a 16-token ping.
+- **No tier churn.** The tiers now hold 39 unique IDs. 37 were re-diffed against
+  live `GET /v1/models`: 0 missing, 0 dead. The other 2 are the deliberately
+  unlisted `gpt-oss` pair above, which by definition cannot be confirmed that way
+  and were confirmed by live probe on both chains instead. The catalogue side of
+  0.32.0 was correct; only the free-tier reasoning was not.
+- **`fix(chat)` — `mode:"free"` can no longer stall a tool call for eighty
+  minutes.** The fallback loop had no deadline of any kind and the SDK's default
+  request timeout is **600s** (not the 60s a comment in `wallet.ts` claimed — it
+  was wrong by 10x, now corrected). Free models fail by *crawling*, so one
+  degraded entry held the whole call for ten minutes before falling through, and
+  a degraded tier for eight times that — a worst case this release made 33%
+  longer by growing `free[]` from 6 entries to 8. The free path now builds its
+  client with a 60s per-model timeout (~5x margin over the slowest healthy
+  measurement) plus a 150s deadline on the **whole** loop, so adding a ninth free
+  model can never lengthen the worst case again. Paid tiers are untouched: a
+  multi-minute frontier completion is the job, not a fault. Exhausting the
+  deadline now returns "the free tier did not answer" instead of blaming
+  whichever model happened to be slowest.
+- **`test` — the invariant behind the `$0` reserve is now pinned.**
+  `estimateChatCost` returns `0` for `mode:"free"` purely because every `free[]`
+  entry happens to be `nvidia/*`. That was an unenforced rule on a hand-edited
+  array rewritten in three consecutive releases; one paid model landing in it
+  would switch the budget gate off silently with every test still green. Added
+  assertions for nvidia-only, non-empty and duplicate-free tiers, plus behavioural
+  coverage of the new deadline. Both were mutation-tested (injecting
+  `openai/gpt-5.6-sol` into `free[]`, and disabling the deadline check) to confirm
+  they fail when violated.
+- **Docs.** `README.md` still advertised Kimi K2.6, which 0.32.0 removed from the
+  catalogue. The root `VERSION` file had been stuck at 0.30.1 since that release;
+  it is read by nothing (`src/index.ts` takes the version from `package.json`) but
+  it is misleading to read, so it now tracks `package.json`.
+- 177 tests, typecheck and build green. `verify:prices` is 20/20 exact too, but
+  it probes the paid surf/pm/modal/search/phone/exa/rpc routes and contains no
+  chat route — it carries no signal about the free tier, and the model claims
+  above rest on the live probes rather than on it.
+
 ## 0.32.0
 
 Kimi K3 and the current high-end lineup, plus the tier lists rebuilt against the live catalogue instead of edited by hand. The interesting part is why nobody noticed they had rotted: **a retired model ID does not fail.** The gateway silently aliases it onto something else — `nvidia/llama-4-maverick` answers `200 OK` while being served by `gpt-oss-120b`, and `moonshot/kimi-k2.6` still quotes a price. Only a wholly unknown ID `400`s. So "it works" was never evidence a tier was correct, and 8 dead IDs had accumulated across 6 tiers.
