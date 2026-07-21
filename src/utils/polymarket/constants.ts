@@ -94,13 +94,25 @@ export const GEOBLOCK_URL =
 export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via the Polymarket bridge UI/API
 
 // Public Polygon RPCs with fallback, mirroring BASE_RPC_URLS in ../constants.ts.
-// Used only for read-only approval/balance checks (viem public client).
-// 1rpc first — polygon-rpc.com was observed lagging several blocks behind, which
-// made freshly-confirmed deploys/approvals read as still-pending.
+// Probed 2026-07-21 with a real eth_call (not just eth_blockNumber):
+//   polygon-bor-rpc.publicnode.com  200 OK
+//   polygon.drpc.org                200 OK
+//   1rpc.io/matic                   200 OK once, then -32001 "usage limit" — rate-limited
+//   polygon.llamarpc.com            DNS/fetch failure
+//   polygon-rpc.com                 401 "tenant disabled"
+//   rpc.ankr.com/polygon            -32000 "Unauthorized: you must authenticate"
+// Two of the three entries here were dead, so fallback() depth was effectively 1
+// while ~9 reads x 4 retries piled onto a single rate-limited endpoint. Dead
+// entries are not free: each costs retryCount x timeout before the chain moves on.
+//
+// NOTE: this list is NOT read-only. POLYGON_RPC_URLS[0] is also the sole,
+// un-fallbacked transport for every SIGNING wallet client (withdraw.ts,
+// redeem.ts, relayer.ts, setup.ts), so entry 0 broadcasts every money
+// transaction. Reordering it is a write-path change — treat it as one.
 export const POLYGON_RPC_URLS = [
+  "https://polygon-bor-rpc.publicnode.com",
+  "https://polygon.drpc.org",
   "https://1rpc.io/matic",
-  "https://polygon.llamarpc.com",
-  "https://polygon-rpc.com",
 ];
 
 // --- Safety knobs ---
