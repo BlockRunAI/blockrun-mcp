@@ -2,6 +2,67 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.3
+
+A multi-agent audit of 0.32.2 across nine angles, every finding put through two
+independent skeptics. It caught nine real defects — including one in 0.32.2's own
+headline fix. The nastiest is not a money bug: **an optional dependency could kill
+the entire server.**
+
+- **`fix(server)` — a missing `sharp` took down all 19 tools.** `sharp` is an
+  `optionalDependency`, but `inline-image.ts` imported it at the top level, so ESM
+  resolution failed before `main()` ran. Reproduced: with sharp absent,
+  `node dist/index.js --version` exits **1** with `ERR_MODULE_NOT_FOUND` and empty
+  stdout — for a preview feature that is **off by default**, on profiles that never
+  register `blockrun_image`. A fresh `npx -y @blockrun/mcp@latest` hits it on musl,
+  unusual arch, offline CI or `--no-optional`. No dev machine ever saw it, because
+  every dev machine has sharp built. `qr.ts` documents this exact hazard and loads
+  lazily; this module now does too. Verified after the fix: `--version` returns
+  `0.32.3` and `tools/list` returns all 19 tools with sharp removed.
+- **`fix(chat)` — 0.32.2's truncation cap was measured in BYTES; the gateway caps
+  CHARACTERS.** The original sweep only probed ASCII, where the two are the same
+  number. CJK separates them: **131,000 CJK characters (393,000 bytes) pass through
+  whole** (`prompt_tokens 131,065`), and both alphabets cap at ~131,072 characters.
+  Because UTF-8 length is always >= string length, the byte check could only
+  **over**-fire — it never missed a real truncation, it invented ones, bolting
+  "⚠️ TRUNCATED … only the first ~87%" onto complete, correct answers for any
+  non-ASCII prompt and advising the caller to switch to a **paid** model. It pushed
+  agents off a working $0 path into real USDC spend on a false premise, which is
+  worse than the silence it was meant to fix. The test that pinned the wrong
+  behaviour is now inverted.
+- **`fix(security)` — SSRF guard was literal-only; wildcard DNS walked through it.**
+  `127.0.0.1.nip.io` is a public name that resolves to loopback, and was verified
+  end-to-end reading a local server and base64ing the body into the data URI sent
+  onward to the gateway; `169.254.169.254.nip.io` reaches cloud metadata the same
+  way. No redirect needed, so the per-hop literal check saw nothing suspicious.
+  Hostnames are now resolved and **every** returned address is checked, failing
+  closed on NXDOMAIN.
+- **`fix(budget)` — two reserve bypasses.** `blockrun_exa` matched the raw path, so
+  `contents?x=1` missed the per-URL branch: 100 URLs reserved **$0.012** and settled
+  **$0.202** (17x), booked wrong permanently. And `estimateChatCost` ignored input
+  entirely — a 100k-word prompt settled **$0.2557** against a **$0.0225** reserve
+  (11.4x), with break-even at ~15 KB, an ordinary pasted file. Both now priced.
+- **`fix(wallet)` — running `blockrun_wallet` flipped the chain Base → Solana.**
+  `ensureBothWallets()` (the *default* status action) writes `.solana-session`, and
+  chain autodetect keys off that file existing. Afterwards every paid tool signs
+  from a zero-balance Solana wallet or refuses "Base-only" — including
+  `action:"deposit"`, so the funding path itself became unreachable. Reproduced in a
+  clean HOME; the chain is now pinned across provisioning.
+- **`fix(polymarket)` — a reverted pUSD transfer reported success.** viem does not
+  throw on revert; the receipt was discarded, so a failed withdrawal still printed
+  "✅ Withdrawal submitted … the bridge delivers USDC to Base". `redeem.ts` and
+  `setup.ts` both assert `receipt.status`; this path now does too.
+- **`fix(ci)` — the 0.32.2 tag/release automation had two holes.** The step had no
+  version-changed guard, so a `publish.yml`-only push or `workflow_dispatch` would
+  tag HEAD and title the release from an unrelated commit. And `actions/checkout`
+  fetches no tags, so the "tag exists" check always missed and the push ran
+  unconditionally — failing the job *after* npm had already published. Now gated on
+  the version diff and checked against `git ls-remote`.
+- **`docs` — the README advertised $0.0075 for `blockrun_markets`/`blockrun_surf`;
+  both charge $0.0095.** A 27% understatement of real money in the most-read file,
+  and "$5 covers ~5,000 market queries" was 9.5x off (~525). Five lines corrected.
+- 204 tests, typecheck, build and `verify:prices` (20/20 exact) green.
+
 ## 0.32.2
 
 The free tier throws away everything past 128 KiB and returns `200` as if it
