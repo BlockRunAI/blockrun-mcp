@@ -2,6 +2,29 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.5
+
+- **`fix(polymarket)` — reads and writes no longer share one RPC list.** There was
+  a single `POLYGON_RPC_URLS`, and entry 0 doubled as the sole un-fallbacked
+  transport for every SIGNING wallet client (withdraw, redeem, relayer, setup).
+  So reordering what read like a read-only fallback list silently changed which
+  endpoint broadcasts every money transaction — a write-path change disguised as
+  a comment tweak, and one nobody would review as such. 0.32.4 documented the
+  hazard; this fixes it. `POLYGON_READ_RPC_URLS` keeps its `fallback()` chain;
+  `POLYGON_WRITE_RPC_URL` is a single endpoint, overridable with
+  `POLYMARKET_WRITE_RPC_URL`.
+
+  The write default is **publicnode, not 1rpc** — 1rpc answers once and then
+  returns `-32001 "usage limit"` (measured 2026-07-21), which is the last thing
+  you want broadcasting a withdrawal. And the write side is deliberately a single
+  endpoint rather than a fallback chain: viem's `fallback()` would re-send a
+  signed transaction to the next provider on a timeout, and a transaction the
+  first provider actually mined must not be broadcast twice. Failing loudly on
+  one endpoint is correct; silently retrying a money movement is not.
+
+  Credit to @KillerQueen-Z, who proposed splitting these in #66.
+- 211 tests, typecheck, build and `verify:prices` (28/28) green.
+
 ## 0.32.4
 
 The second half of the 0.32.3 audit: the structural gap behind five of its

@@ -16,7 +16,7 @@ import { ClobClient } from "@polymarket/clob-client-v2";
 import { createWalletClient, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
 import { getPolymarketAccount } from "./client.js";
-import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_RPC_URLS, RELAYER_URL } from "./constants.js";
+import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_WRITE_RPC_URL, RELAYER_URL } from "./constants.js";
 import { loadBuilderCreds, loadL2Creds, saveBuilderCreds, saveL2Creds } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
 
@@ -47,7 +47,7 @@ async function getOrCreateBuilderCreds(): Promise<{ key: string; secret: string;
     if (!l2) throw new Error("failed to derive CLOB credentials for builder-key creation");
   }
 
-  const wc = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+  const wc = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
   const clob = new ClobClient({
     host: CLOB_HOST,
     chain: POLYGON_CHAIN_ID,
@@ -73,7 +73,7 @@ export async function getRelayClient(): Promise<RelayClient> {
   const walletClient = createWalletClient({
     account: getPolymarketAccount(),
     chain: polygon,
-    transport: http(POLYGON_RPC_URLS[0]),
+    transport: http(POLYGON_WRITE_RPC_URL),
   });
   const builderCreds = await getOrCreateBuilderCreds();
   const builderConfig = new BuilderConfig({ localBuilderCreds: builderCreds });

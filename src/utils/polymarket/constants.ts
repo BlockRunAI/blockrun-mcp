@@ -105,15 +105,36 @@ export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via th
 // while ~9 reads x 4 retries piled onto a single rate-limited endpoint. Dead
 // entries are not free: each costs retryCount x timeout before the chain moves on.
 //
-// NOTE: this list is NOT read-only. POLYGON_RPC_URLS[0] is also the sole,
-// un-fallbacked transport for every SIGNING wallet client (withdraw.ts,
-// redeem.ts, relayer.ts, setup.ts), so entry 0 broadcasts every money
-// transaction. Reordering it is a write-path change — treat it as one.
-export const POLYGON_RPC_URLS = [
+// READS ONLY. Used by the viem public client, which fans out across all of them
+// via fallback().
+export const POLYGON_READ_RPC_URLS = [
   "https://polygon-bor-rpc.publicnode.com",
   "https://polygon.drpc.org",
   "https://1rpc.io/matic",
 ];
+
+/**
+ * WRITES. Separate on purpose.
+ *
+ * There used to be one list, and entry 0 doubled as the sole un-fallbacked
+ * transport for every SIGNING wallet client (withdraw, redeem, relayer, setup).
+ * So reordering what looked like a read-only fallback list silently changed
+ * which endpoint broadcasts every money transaction — a write-path change
+ * disguised as a comment tweak, and one nobody would review as such.
+ * (Splitting these was @KillerQueen-Z's idea in #66; the default below is not.)
+ *
+ * publicnode, not 1rpc: 1rpc answers once and then returns
+ * -32001 "usage limit" (measured 2026-07-21), which is the last thing you want
+ * broadcasting a withdrawal. Override per-deployment with POLYMARKET_WRITE_RPC_URL.
+ *
+ * Deliberately a single endpoint rather than a fallback list: viem's fallback()
+ * would re-send a signed transaction to the next provider on a timeout, and a
+ * transaction that was actually mined by the first provider must not be
+ * broadcast again. Failing loudly on one endpoint is correct here; silently
+ * retrying a money movement is not.
+ */
+export const POLYGON_WRITE_RPC_URL =
+  process.env.POLYMARKET_WRITE_RPC_URL || "https://polygon-bor-rpc.publicnode.com";
 
 // --- Safety knobs ---
 /**

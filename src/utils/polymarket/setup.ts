@@ -35,7 +35,8 @@ import {
   NEG_RISK_ADAPTER,
   NEG_RISK_CTF_COLLATERAL_ADAPTER,
   NEG_RISK_CTF_EXCHANGE_V2,
-  POLYGON_RPC_URLS,
+  POLYGON_READ_RPC_URLS,
+  POLYGON_WRITE_RPC_URL,
   PUSD_COLLATERAL,
   PUSD_DECIMALS,
 } from "./constants.js";
@@ -55,7 +56,7 @@ export function getPublicClient(): PublicClient {
     _publicClient = createPublicClient({
       chain: polygon,
       transport: fallback(
-        POLYGON_RPC_URLS.map((u) => http(u, { retryCount: 2, timeout: 8_000 })),
+        POLYGON_READ_RPC_URLS.map((u) => http(u, { retryCount: 2, timeout: 8_000 })),
         { retryCount: 2 },
       ),
     });
@@ -353,7 +354,7 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
     if (pol <= 0) {
       approvalsPending = true;
     } else {
-      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_RPC_URLS[0]) });
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
       const erc20Amount = pusdApprovalTarget(); // honor POLYMARKET_BOUNDED_APPROVALS in EOA mode too
       for (const item of missing) {
         const hash =
