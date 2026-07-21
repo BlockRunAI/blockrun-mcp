@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { buildClient, buildClientWithTimeout, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
+import { streamChatText, supportsStreaming, type StreamChatMessage } from "../utils/chat-stream.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { MODEL_TIERS, FREE_MODEL_TIMEOUT_MS, FREE_TIER_DEADLINE_MS, FREE_TIER_MAX_PROMPT_CHARS, type RoutingMode } from "../utils/constants.js";
@@ -284,13 +285,31 @@ Run blockrun_models to see all available models with pricing.`,
           // forwards `messages` verbatim and accepts image_url content arrays
           // for vision-capable models — so a multimodal array is runtime-valid.
           // (claude-* with history is already handled by the native branch above.)
-          const { result, settledUsd } = await withSettledCost(llm(), () => llm().chatCompletion(targetModel, fullMessages as unknown as Parameters<ReturnType<typeof llm>["chatCompletion"]>[1], {
-            maxTokens: max_tokens,
-            temperature,
-            responseFormat,
-            stop,
-          }));
-          const reply = result.choices?.[0]?.message?.content || "";
+          //
+          // Paid calls STREAM and assemble (see utils/chat-stream.ts): a slow
+          // reasoning model generating for minutes over a non-streaming request
+          // moves zero bytes, and the edge in front of the gateway 524s the idle
+          // connection AFTER the x402 payment settled — charged, no reply
+          // (observed live with moonshot/kimi-k3, 2026-07-21). Solana clients
+          // have no streaming API and keep the old path.
+          const { result: reply, settledUsd } = await withSettledCost(llm(), async () => {
+            const client = llm();
+            if (supportsStreaming(client)) {
+              return streamChatText(client, targetModel, fullMessages as unknown as StreamChatMessage[], {
+                maxTokens: max_tokens,
+                temperature,
+                responseFormat,
+                stop,
+              });
+            }
+            const r = await client.chatCompletion(targetModel, fullMessages as unknown as Parameters<ReturnType<typeof llm>["chatCompletion"]>[1], {
+              maxTokens: max_tokens,
+              temperature,
+              responseFormat,
+              stop,
+            });
+            return r.choices?.[0]?.message?.content || "";
+          });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, targetModel);
           return {
@@ -302,16 +321,26 @@ Run blockrun_models to see all available models with pricing.`,
         }
       }
 
-      // If specific model provided, use it directly
+      // If specific model provided, use it directly — streamed when the client
+      // supports it (same 524 rationale as the multi-turn path above).
       if (model) {
         try {
-          const { result: response, settledUsd } = await withSettledCost(llm(), () => llm().chat(model, message, {
-            system,
-            maxTokens: max_tokens,
-            temperature,
-            responseFormat,
-            stop,
-          }));
+          const { result: response, settledUsd } = await withSettledCost(llm(), async () => {
+            const client = llm();
+            if (supportsStreaming(client)) {
+              return streamChatText(client, model, [
+                ...(system ? [{ role: "system" as const, content: system }] : []),
+                { role: "user" as const, content: message },
+              ], { maxTokens: max_tokens, temperature, responseFormat, stop });
+            }
+            return client.chat(model, message, {
+              system,
+              maxTokens: max_tokens,
+              temperature,
+              responseFormat,
+              stop,
+            });
+          });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return { content: [{ type: "text", text: `${response}${freeTierTruncationNote(promptChars, model) ?? ""}` }] };
         } catch (error) {
@@ -344,13 +373,25 @@ Run blockrun_models to see all available models with pricing.`,
           break;
         }
         try {
-          const { result: response, settledUsd } = await withSettledCost(routingClient, () => routingClient.chat(m, message, {
-            system,
-            maxTokens: max_tokens,
-            temperature,
-            responseFormat,
-            stop,
-          }));
+          // Paid tiers stream (frontier primaries can generate for minutes —
+          // same 524 class as the explicit-model path). The free tier stays on
+          // the non-streaming client whose short timeout the deadline loop
+          // depends on to fail fast through its eight candidates.
+          const { result: response, settledUsd } = await withSettledCost(routingClient, async () => {
+            if (!freeClient && supportsStreaming(routingClient)) {
+              return streamChatText(routingClient, m, [
+                ...(system ? [{ role: "system" as const, content: system }] : []),
+                { role: "user" as const, content: message },
+              ], { maxTokens: max_tokens, temperature, responseFormat, stop });
+            }
+            return routingClient.chat(m, message, {
+              system,
+              maxTokens: max_tokens,
+              temperature,
+              responseFormat,
+              stop,
+            });
+          });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, m);
           return {
