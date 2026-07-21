@@ -140,13 +140,32 @@ const IMAGE_MODELS = [
   "xai/grok-imagine-image-pro",
 ] as const;
 
-// The large-size tier applies only when a dimension genuinely exceeds 1024.
-// A plain `size !== "1024x1024"` inequality billed SMALLER renders (512x512) and
-// harmless typos ("1024X1024", trailing space) at the large-tier price.
-function isLargerThanBase(size: string): boolean {
+// Where each model's large tier actually starts, in max(width,height).
+//
+// This was a single >1024 rule for every model, which was wrong for
+// nano-banana-pro: probed live, it charges $0.107001 at BOTH 1024x1024 and
+// 2048x2048 and only steps to $0.159500 at 4096x4096. A 2048 render therefore
+// reserved AND booked the 4096 price — 49% over — and on the Base path the
+// estimate is written to the ledger verbatim as settled spend, so the
+// overstatement was permanent, not just a tight gate.
+//
+// gpt-image-* does step above 1024 (its larger sizes are 1536x1024 etc.), so
+// its threshold is unchanged.
+const LARGE_SIZE_THRESHOLD: Record<string, number> = {
+  "openai/gpt-image-1": 1024,
+  "openai/gpt-image-2": 1024,
+  "google/nano-banana-pro": 2048, // $0.107001 through 2048; $0.159500 at 4096
+};
+
+// The large-size tier applies only when a dimension genuinely exceeds the
+// model's threshold. A plain `size !== "1024x1024"` inequality billed SMALLER
+// renders (512x512) and harmless typos ("1024X1024", trailing space) at the
+// large-tier price.
+function isLargerThanBase(model: string, size: string): boolean {
   const m = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(size);
   if (!m) return false; // unrecognized → treat as base, don't over-charge
-  return Math.max(Number(m[1]), Number(m[2])) > 1024;
+  const threshold = LARGE_SIZE_THRESHOLD[model] ?? 1024;
+  return Math.max(Number(m[1]), Number(m[2])) > threshold;
 }
 
 // The gateway charges catalog_base x 1.05 + $0.002 — the catalog figure is NOT
@@ -170,9 +189,9 @@ function isLargerThanBase(size: string): boolean {
 const IMAGE_QUOTE_BUFFER = 1.05;
 const IMAGE_TX_FEE_USD = 0.002;
 
-function estimateCost(model: string, size: string): number {
+export function estimateCost(model: string, size: string): number {
   const catalog =
-    LARGE_SIZE_COST[model] && isLargerThanBase(size)
+    LARGE_SIZE_COST[model] && isLargerThanBase(model, size)
       ? LARGE_SIZE_COST[model]
       : (GENERATE_MODEL_COST[model] ?? 0.06);
   if (!(catalog > 0)) return 0;

@@ -22,7 +22,7 @@ mock.module("../src/utils/wallet.js", {
   },
 });
 
-const { registerImageTool } = await import("../src/tools/image.js");
+const { registerImageTool, estimateCost } = await import("../src/tools/image.js");
 
 // Minimal McpServer stub: capture the handler registerImageTool installs.
 function makeHarness() {
@@ -71,4 +71,27 @@ test("budget records the same amount that is reported to the user", async () => 
   // micro-USDC exactly as the gateway does. Footer and ledger must agree on it —
   // that is what this test is for.
   assert.equal(budget.spent, 0.054501);
+});
+
+// The large-size tier was a single >1024 rule for every model, which is wrong for
+// nano-banana-pro: probed live, it charges $0.107001 at BOTH 1024x1024 and
+// 2048x2048 and only steps to $0.159500 at 4096x4096. A 2048 render therefore
+// reserved AND booked the 4096 price (49% over), and on the Base path the
+// estimate is written to the ledger verbatim as settled spend.
+test("nano-banana-pro stays on the base price through 2048 and steps only at 4096", () => {
+  const base = estimateCost("google/nano-banana-pro", "1024x1024");
+  assert.equal(estimateCost("google/nano-banana-pro", "2048x2048"), base, "2048 must not be billed at the 4096 tier");
+  assert.ok(estimateCost("google/nano-banana-pro", "4096x4096") > base, "4096 must step up");
+  assert.equal(estimateCost("google/nano-banana-pro", "4096x4096"), 0.1595); // live quote
+  assert.equal(base, 0.107001);                                             // live quote
+});
+
+test("gpt-image-2 still steps above 1024", () => {
+  const base = estimateCost("openai/gpt-image-2", "1024x1024");
+  assert.ok(estimateCost("openai/gpt-image-2", "1536x1024") > base);
+  assert.equal(base, 0.065);
+});
+
+test("a smaller-than-base render is never billed at the large tier", () => {
+  assert.equal(estimateCost("google/nano-banana-pro", "512x512"), estimateCost("google/nano-banana-pro", "1024x1024"));
 });
