@@ -241,7 +241,15 @@ export async function checkGeoblock(): Promise<GeoblockStatus> {
   let orderPlacement: GeoblockStatus["orderPlacement"] = "unknown";
   try {
     const res = await axios.post(`${CLOB_HOST}/order`, {}, { timeout: 6_000, validateStatus: () => true });
-    orderPlacement = res.status === 403 ? "blocked" : "permitted";
+    // Treating "anything that is not 403" as permitted meant a 502/404/429 from
+    // a misconfigured POLYMARKET_CLOB_HOST rendered as "✅ Region: order
+    // placement permitted" + "🎯 Ready to trade", cached for 10 minutes — so the
+    // user funded the wallet and only discovered the truth on the first buy.
+    // An empty body reaching a WORKING CLOB is rejected as a bad request, so
+    // those codes are the positive signal; everything else is genuinely unknown.
+    if (res.status === 403) orderPlacement = "blocked";
+    else if (res.status === 400 || res.status === 401 || res.status === 422) orderPlacement = "permitted";
+    else orderPlacement = "unknown";
   } catch { /* network error → unknown */ }
 
   // Country/ip context — route it through the SAME egress as orders so the

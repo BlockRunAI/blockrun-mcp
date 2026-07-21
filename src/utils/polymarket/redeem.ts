@@ -165,11 +165,18 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       text: [
         `✅ Redeemed "${market?.question ?? conditionId}".`,
         heldText,
-        ...(paidOut !== null ? [`  Paid out: $${paidOut.toFixed(2)} pUSD`] : []),
+        // paidOut === null means a balance read failed, which ALSO makes the
+        // "paid $0 while holding a winner" guard above unreachable. Silently
+        // omitting the payout line then rendered identically to a verified
+        // payout — the exact size=0 silent-loss shape this module was rewritten
+        // to kill. Say which one it is.
+        ...(paidOut !== null
+          ? [`  Paid out: $${paidOut.toFixed(2)} pUSD`]
+          : [`  ⚠️ Payout UNVERIFIED — the pUSD balance read failed, so this is "the tx landed", not "you were paid". Re-run action:"positions" to confirm.`]),
         ...(txHash ? [`  tx: https://polygonscan.com/tx/${txHash}`] : []),
         ...(balanceAfter !== null ? [`  Funds wallet pUSD balance: $${balanceAfter.toFixed(2)}`] : []),
       ].join("\n"),
-      structured: { conditionId, negRisk, transactionHash: txHash, paidOutUsd: paidOut, pusdBalance: balanceAfter },
+      structured: { conditionId, negRisk, transactionHash: txHash, paidOutUsd: paidOut, pusdBalance: balanceAfter, payoutVerified: paidOut !== null },
     };
   } catch (err) {
     const base = await mapClobError(err);

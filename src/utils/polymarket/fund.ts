@@ -76,7 +76,19 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
       }
     }
 
-    const baseBalance = (await getChainBalance("base", agent)) ?? 0;
+    // getChainBalance returns null specifically to distinguish "could not read"
+    // from "holds nothing". Coercing that to 0 printed "holds $0.00 USDC — top up
+    // first" as a statement of fact to a user holding $200, on nothing more than
+    // an RPC blip, and sent them off to fund a wallet that was already funded.
+    const baseBalanceRaw = await getChainBalance("base", agent);
+    if (baseBalanceRaw === null) {
+      return {
+        text: `Could not read the USDC balance of your Base wallet ${agent} (RPC unavailable). ` +
+          `Not funding blind — re-run in a moment. Your funds are untouched.`,
+        isError: true,
+      };
+    }
+    const baseBalance = baseBalanceRaw;
     const needed = amountUsd + FUND_FEE_USD;
     if (baseBalance < needed) {
       return {
