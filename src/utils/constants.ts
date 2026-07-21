@@ -62,6 +62,13 @@ export const BASE_RPC_URLS = [
 //   Also live but UNLISTED (hidden from GET /v1/models, still served): gpt-oss-120b
 //   — the gateway's own free fallback — and gpt-oss-20b.
 //   Listed but too slow to route to: mistral-large-3-675b (123s on a real prompt).
+//   Listed and fast, but ALIASED on Base, so not in free[]:
+//   nemotron-3-nano-omni-30b-a3b-reasoning. It answers 200 in 2.0s — while
+//   reporting `"model": "nvidia/gpt-oss-120b"` in the response body. On sol it
+//   serves itself (3.8s). Routing to it on Base would therefore just be a slower
+//   way to reach gpt-oss-120b, which is already free[0]. This is the aliasing
+//   trap at the top of this file caught in the act; it is the reason the entry
+//   stays documented-but-unrouted rather than quietly dropped.
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "google/gemini-3.1-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
@@ -118,6 +125,33 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  */
 export const FREE_MODEL_TIMEOUT_MS = 60_000;
 export const FREE_TIER_DEADLINE_MS = 150_000;
+
+/**
+ * The free NVIDIA path SILENTLY TRUNCATES the prompt at 128 KiB.
+ *
+ * Measured 2026-07-21, and the failure is invisible by design: the request
+ * returns 200 with a confident, well-formed answer about whatever survived. No
+ * error, no warning, no `finish_reason` signal. `usage.prompt_tokens` is the
+ * only tell, and it flatlines:
+ *
+ *     sent 110,000 B -> prompt_tokens 22,065
+ *     sent 125,000 B -> prompt_tokens 25,065
+ *     sent 130,000 B -> prompt_tokens 26,065
+ *     sent 135,000 B -> prompt_tokens 26,266   <- capped
+ *     sent 150,000 B -> prompt_tokens 26,266   <- identical, 15 KB discarded
+ *
+ * Identical on gpt-oss-120b and deepseek-v4-flash, so it is a property of the
+ * free path rather than of any one model's context window. It is NOT a
+ * gateway-wide body cap: paid models scale linearly right past it — the 402
+ * quote for gpt-5.6-terra reads ~12,016 input tokens at 25 KB and ~192,016 at
+ * 400 KB, with no ceiling.
+ *
+ * Practical consequence: the "1M context" noted against deepseek-v4-flash in the
+ * catalogue above is unreachable on the free tier. Anything over this limit needs
+ * an explicit paid model. blockrun_chat warns the caller instead of letting a
+ * truncated answer pass as a complete one — see freeTierTruncationNote().
+ */
+export const FREE_TIER_MAX_PROMPT_BYTES = 131_072; // 128 KiB
 
 export const BASE_TOKENS: Record<string, string> = {
   ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",

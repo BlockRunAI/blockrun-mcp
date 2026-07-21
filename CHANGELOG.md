@@ -2,6 +2,41 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.32.2
+
+The free tier throws away everything past 128 KiB and returns `200` as if it
+hadn't. This release makes that visible, and settles the one model 0.32.1 left
+documented-but-unexplained.
+
+- **`fix(chat)` — the free tier silently truncates at 128 KiB; `blockrun_chat`
+  now says so.** Measured against the live gateway: `usage.prompt_tokens`
+  flatlines at **26,266** for every request body from 135,000 B upward —
+  identical on `gpt-oss-120b` and `deepseek-v4-flash`, so it is a property of the
+  free path, not of one model's context window. There is no error, no warning and
+  no `finish_reason` signal; the reply is confident and well-formed, which makes
+  this the worst failure shape available — **indistinguishable from success**. An
+  agent summarising a large document over `mode:"free"` would present an answer
+  about the first 128 KiB as an answer about the whole thing. Oversized free calls
+  now come back with how large the prompt was, how much was discarded, and what to
+  use instead, plus `truncated: true` in `structuredContent`. Verified end to end:
+  on a 176 KiB prompt the warning predicts 73% kept and the gateway counted 73%.
+  Sizing is in **bytes, not characters** — 128 KiB is only ~43K CJK characters, so
+  counting characters would under-report by 3x and miss exactly the prompts that
+  need warning.
+- **Paid models are deliberately never warned about.** They do not truncate: the
+  402 quote for `gpt-5.6-terra` scales linearly from ~12,016 input tokens at 25 KB
+  to ~192,016 at 400 KB with no ceiling. (Read from the payment-required header, so
+  measuring this cost nothing.) Consequence worth stating: the "1M context" noted
+  against `deepseek-v4-flash` is **unreachable on the free tier**.
+- **`docs(models)` — `nemotron-3-nano-omni-30b-a3b-reasoning` stays out of
+  `free[]`, and now says why.** 0.32.1 listed it as healthy and free while leaving
+  it unrouted with no reason given. It is healthy — and on Base it is **aliased**:
+  it answers `200` in 2.0s while reporting `"model": "nvidia/gpt-oss-120b"`. On sol
+  it serves itself (3.8s). Routing to it on Base would be a slower path to
+  `gpt-oss-120b`, which is already `free[0]`. This is the aliasing trap described
+  at the top of `constants.ts` caught in the act.
+- 185 tests, typecheck, build and `verify:prices` (20/20 exact) green.
+
 ## 0.32.1
 
 A correction to 0.32.0, which dropped two working models from the `free` tier on a
