@@ -173,9 +173,13 @@ export function getClient(): ApiClient {
  * Build a NON-cached client for the active chain with an explicit HTTP timeout.
  * Modal's sandbox/exec is synchronous — the HTTP call blocks for the whole run,
  * which the skill documents at up to 1200s — but the shared getClient() uses the
- * SDK's 60s default. A long exec on the shared client would abort, charge
- * nothing, and orphan a live paid sandbox. Modal calls use this instead, so a
- * long timeout never leaks onto the 60s client every other tool relies on.
+ * SDK default (600s, via BLOCKRUN_CHAT_TIMEOUT; this comment said 60s until
+ * 0.32.1 and was wrong by 10x). A long exec on the shared client would abort,
+ * charge nothing, and orphan a live paid sandbox. Modal calls use this instead,
+ * so a long timeout never leaks onto the shared client.
+ *
+ * blockrun_chat also uses this to put a SHORT timeout on the mode:"free"
+ * fallback loop — see FREE_MODEL_TIMEOUT_MS. Same mechanism, opposite direction.
  */
 export function buildClientWithTimeout(timeoutMs: number): ApiClient {
   if (getChain() === "solana") {

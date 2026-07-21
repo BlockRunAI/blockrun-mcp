@@ -14,7 +14,8 @@ export const BASE_RPC_URLS = [
   "https://1rpc.io/base",
 ];
 
-// Model catalogue, refreshed against the live GET /v1/models on 2026-07-20.
+// Model catalogue, refreshed against the live GET /v1/models on 2026-07-20;
+// free tier re-probed and corrected 2026-07-21 (see the free[] note below).
 // Prices below are $/M input / $/M output as the gateway quotes them.
 //
 // A NOTE ON STALENESS: the gateway silently ALIASES retired IDs onto a live
@@ -23,6 +24,14 @@ export const BASE_RPC_URLS = [
 // price). So a dead entry here does NOT surface as an error — it quietly routes
 // somewhere you did not choose. Only a genuinely unknown ID 400s. That is why
 // these lists are checked against the catalogue rather than "tested by working".
+//
+// THE CONVERSE DOES NOT HOLD, and 0.32.1 was the cost of assuming it. Absence
+// from GET /v1/models is a LISTING decision, not a death certificate: gpt-oss-120b
+// and gpt-oss-20b are hidden from the catalogue and serving fine on both chains
+// (120b is the gateway's own free fallback). State both clauses, because only one
+// of them was written down last time and two live models got deleted for it:
+//   presence in the catalogue is NECESSARY BUT NOT SUFFICIENT for health;
+//   absence from it is NOT SUFFICIENT for death — probe before deleting.
 //
 // OpenAI (22): gpt-5.6-sol ($5/$30, 1M, deepest reasoning), gpt-5.6-terra
 //   ($2.5/$15, 1M — the balanced default), gpt-5.6-luna ($1/$6, 1M, no
@@ -87,6 +96,28 @@ export const MODEL_TIERS = {
 } as const;
 
 export type RoutingMode = keyof typeof MODEL_TIERS;
+
+/**
+ * Per-model and whole-loop deadlines for the mode:"free" routing fallback.
+ *
+ * Free NVIDIA models do not fail by erroring, they fail by CRAWLING — the
+ * measurement that got mistral-large-3-675b excluded was 2s on a toy ping and
+ * 123.2s on a real 1.5K-token prompt. The SDK's default request timeout is
+ * 600s, so before these bounds existed a single degraded entry could hold an
+ * MCP tool call for ten minutes before the loop fell through to the next model,
+ * and a fully degraded tier for eight times that.
+ *
+ * Healthy free models answer a real prompt in 1.7-12s (measured 2026-07-21 on
+ * both chains), so 60s is roughly a 5x margin over the slowest healthy case and
+ * still leaves room for a long generation. A model that has not answered by
+ * then is not worth waiting for when the next one is a second away.
+ *
+ * The cumulative deadline is what actually bounds what the caller feels: it
+ * caps the whole loop regardless of how many models free[] holds, so adding a
+ * ninth entry can never lengthen the worst case again.
+ */
+export const FREE_MODEL_TIMEOUT_MS = 60_000;
+export const FREE_TIER_DEADLINE_MS = 150_000;
 
 export const BASE_TOKENS: Record<string, string> = {
   ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",

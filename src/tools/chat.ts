@@ -1,10 +1,10 @@
 // src/tools/chat.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { buildClient, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
+import { buildClient, buildClientWithTimeout, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
-import { MODEL_TIERS, type RoutingMode } from "../utils/constants.js";
+import { MODEL_TIERS, FREE_MODEL_TIMEOUT_MS, FREE_TIER_DEADLINE_MS, type RoutingMode } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { ApiClient } from "../utils/wallet.js";
@@ -260,10 +260,25 @@ Run blockrun_models to see all available models with pricing.`,
       const routingMode: RoutingMode = mode || "balanced";
       const models = MODEL_TIERS[routingMode];
 
+      // Only the free tier gets a deadline. Paid tiers are frontier/reasoning
+      // models where a multi-minute completion is the job, not a fault; free
+      // models fail by crawling and there are eight of them to fall through.
+      // See FREE_MODEL_TIMEOUT_MS for the measurements behind the numbers.
+      const freeClient = routingMode === "free" ? buildClientWithTimeout(FREE_MODEL_TIMEOUT_MS) : null;
+      const routingClient = freeClient ?? llm;
+      const loopStartedAt = Date.now();
+
       let lastError: unknown = null;
+      let deadlineHit = false;
       for (const m of models) {
+        // Stop starting NEW attempts once the loop has burned its whole budget —
+        // otherwise the bound would be per-model only and would grow with the list.
+        if (freeClient && Date.now() - loopStartedAt >= FREE_TIER_DEADLINE_MS) {
+          deadlineHit = true;
+          break;
+        }
         try {
-          const { result: response, settledUsd } = await withSettledCost(llm, () => llm.chat(m, message, {
+          const { result: response, settledUsd } = await withSettledCost(routingClient, () => routingClient.chat(m, message, {
             system,
             maxTokens: max_tokens,
             temperature,
@@ -281,7 +296,14 @@ Run blockrun_models to see all available models with pricing.`,
         }
       }
 
-      const errorMessage = lastError ? extractErrorMessage(lastError) : "All models failed";
+      // Distinguish "every model rejected" from "we ran out of time" — they need
+      // different things from the caller (retry vs. pick a paid model), and a bare
+      // last-error would have blamed whichever model happened to be slowest.
+      const errorMessage = deadlineHit
+        ? `The free tier did not answer within ${Math.round(FREE_TIER_DEADLINE_MS / 1000)}s. Free NVIDIA capacity is usually saturated when this happens — retry shortly, or pass an explicit model (or a paid mode) to skip the free tier.`
+        : lastError
+          ? extractErrorMessage(lastError)
+          : "All models failed";
       return {
         content: [{ type: "text", text: formatError(errorMessage) }],
         isError: true,
