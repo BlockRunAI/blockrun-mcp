@@ -86,12 +86,43 @@ async function withRpcRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
   throw lastErr;
 }
 
-interface ApprovalItem {
+export interface ApprovalItem {
   label: string;
   token: Hex;
   spender: Hex;
   kind: "erc20" | "erc1155";
   granted: boolean;
+}
+
+/**
+ * An approval transaction landing is not the same as the approvals being on
+ * the books — re-read the chain (retrying across RPC propagation lag, the same
+ * 3×750ms shape as redeem's post-transaction reads) and believe ONLY what it
+ * says. An empty read can never count as granted, so a truncated RPC response
+ * cannot fake success. Throws if every read attempt fails; the caller decides
+ * how to report "chain state unknown". `readFn` is injected so tests can pin
+ * the retry/verdict logic without an RPC.
+ */
+export async function verifyApprovalsLanded(
+  readFn: () => Promise<ApprovalItem[]>,
+  attempts = 3,
+  delayMs = 750,
+): Promise<{ approvals: ApprovalItem[]; allGranted: boolean }> {
+  let latest: ApprovalItem[] | null = null;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      latest = await readFn();
+      if (latest.length > 0 && latest.every((a) => a.granted)) {
+        return { approvals: latest, allGranted: true };
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  if (latest === null) throw lastErr;
+  return { approvals: latest, allGranted: false };
 }
 
 /**
@@ -242,18 +273,33 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
 
   // 3. Funds + approvals state.
   const balance = await getPusdBalance(depositWallet);
-  const approvals = await readApprovals(depositWallet);
+  let approvals = await readApprovals(depositWallet);
   const missing = approvals.filter((a) => !a.granted);
 
   // 4. Approvals batch — the first real signature; confirm-gated with preview.
   let approvalsTxHash: string | undefined;
   let approvalsPending = missing.length > 0;
+  let approvalsUnverified = false;
   if (missing.length > 0 && opts.confirm) {
     const calls = buildApprovalCalls(missing);
     const res = await sendWalletBatch(calls, depositWallet, "Approval batch");
     approvalsTxHash = res.transactionHash;
-    approvalsPending = false;
-    saveState({ approvalsDone: true });
+    // The batch landing proves it was MINED, not that the approvals are on the
+    // books. The response used to carry the pre-batch snapshot here, so every
+    // item the batch had just granted still read granted:false — and the
+    // inverse failure (relayer claims success, chain disagrees) was invisible.
+    try {
+      const verified = await verifyApprovalsLanded(() => readApprovals(depositWallet));
+      if (verified.approvals.length > 0) approvals = verified.approvals;
+      approvalsPending = !verified.allGranted;
+      approvalsUnverified = !verified.allGranted;
+    } catch {
+      // Chain state unknown after the tx landed — keep the pre-batch snapshot
+      // and report unverified rather than claiming success.
+      approvalsPending = true;
+      approvalsUnverified = true;
+    }
+    if (!approvalsPending) saveState({ approvalsDone: true });
   } else if (missing.length === 0) {
     saveState({ approvalsDone: true });
   }
@@ -309,6 +355,14 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
           `   batch via the relayer). Re-run action:"setup" with confirm:true to sign.`,
         ]
       : []),
+    ...(approvalsUnverified
+      ? [
+          ``,
+          `   ⚠️ The approval batch landed but the chain does not (yet) show every`,
+          `   approval granted — treat them as NOT granted. Re-run action:"setup"`,
+          `   to re-check before trading or redeeming.`,
+        ]
+      : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
     ...(balanceCacheWarned
       ? [`   ⚠️ Balance cache not pre-warmed (${balanceCacheWarned}) — your first buy refreshes it automatically.`]
@@ -330,6 +384,8 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
       pusdBalance: balance,
       approvals: approvals.map((a) => ({ label: a.label, granted: a.granted })),
       approvalsPending,
+      ...(approvalsTxHash ? { approvalsTxHash } : {}),
+      ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
       ready,
     },
@@ -340,16 +396,18 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
   const account = getPolymarketAccount();
   const pc = getPublicClient();
 
-  const [balance, polWei, approvals] = await Promise.all([
+  const [balance, polWei, initialApprovals] = await Promise.all([
     getPusdBalance(account.address),
     pc.getBalance({ address: account.address }),
     readApprovals(account.address),
   ]);
+  let approvals = initialApprovals;
   const pol = Number(formatUnits(polWei, 18));
   const missing = approvals.filter((a) => !a.granted);
 
   // EOA mode sends its own approval transactions — needs POL for gas.
   let approvalsPending = missing.length > 0;
+  let approvalsUnverified = false;
   const approvalTxHashes: string[] = [];
   if (missing.length > 0 && opts.confirm) {
     if (pol <= 0) {
@@ -383,7 +441,17 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
         );
         approvalTxHashes.push(hash);
       }
-      approvalsPending = false;
+      // Same rule as the deposit-wallet batch: report the post-transaction
+      // chain state, not the pre-transaction snapshot the report was built on.
+      try {
+        const verified = await verifyApprovalsLanded(() => readApprovals(account.address));
+        if (verified.approvals.length > 0) approvals = verified.approvals;
+        approvalsPending = !verified.allGranted;
+        approvalsUnverified = !verified.allGranted;
+      } catch {
+        approvalsPending = true;
+        approvalsUnverified = true;
+      }
     }
   }
 
@@ -415,6 +483,13 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
       : approvalsPending && pol <= 0
         ? [``, `   Cannot send approvals: the EOA has no POL for gas. Send a little POL first.`]
         : []),
+    ...(approvalsUnverified
+      ? [
+          ``,
+          `   ⚠️ The approval transactions landed but the chain does not (yet) show every`,
+          `   approval granted — treat them as NOT granted. Re-run action:"setup" to re-check.`,
+        ]
+      : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
     geo,
     ``,
@@ -435,6 +510,8 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
       polBalance: pol,
       approvals: approvals.map((a) => ({ label: a.label, granted: a.granted })),
       approvalsPending,
+      ...(approvalTxHashes.length ? { approvalTxHashes } : {}),
+      ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
       ready,
     },
