@@ -23,7 +23,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write          # required to push the tag + create the GitHub release
       id-token: write          # required for `mcp-publisher login github-oidc`
     steps:
       - uses: actions/checkout@v4
@@ -85,3 +85,48 @@ jobs:
       - name: Skip registry (already published)
         if: steps.v.outputs.pkg == steps.v.outputs.reg
         run: echo "registry already at ${{ steps.v.outputs.pkg }} — skipping"
+
+      # ---- git tag + GitHub release ----
+      # These used to be manual, and manual meant forgotten: 0.32.1 and 0.32.2
+      # both reached npm and the MCP registry with no tag and no release entry,
+      # because `npm view` showing the new version looks exactly like success.
+      # Same independent-guard shape as the two publishes above — it checks
+      # whether the tag already exists rather than assuming, so re-runs and
+      # workflow_dispatch are safe.
+      - name: Tag + GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.pkg }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — skipping"
+            exit 0
+          fi
+
+          # Release notes come from the CHANGELOG entry that was already written,
+          # so the release and the CHANGELOG can never drift apart. If the entry
+          # is missing, say so plainly rather than publishing an empty release.
+          if ! node scripts/changelog-section.mjs "$VERSION" > /tmp/notes.md; then
+            echo "See CHANGELOG.md for details." > /tmp/notes.md
+          fi
+
+          # Title convention is "vX.Y.Z — <headline>", and the headline already
+          # exists as the squash-merge subject on main. Strip its "(#NN)" suffix.
+          SUBJECT=$(git log -1 --format=%s)
+          HEADLINE=$(printf '%s' "$SUBJECT" | sed -E 's/ \(#[0-9]+\)$//; s/^v?[0-9]+\.[0-9]+\.[0-9]+ (— )?//')
+          if [ -z "$HEADLINE" ] || [ "$HEADLINE" = "$SUBJECT" ]; then
+            TITLE="$TAG"
+          else
+            TITLE="$TAG — $HEADLINE"
+          fi
+
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag -a "$TAG" -m "$TITLE"
+            git push origin "$TAG"
+          fi
+
+          gh release create "$TAG" --title "$TITLE" --notes-file /tmp/notes.md --latest
+          echo "Released $TAG"
