@@ -33,11 +33,11 @@ export function registerDefiTool(server: McpServer, budget: BudgetState): void {
       description: `DeFi fundamentals via DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices. Pays per call in USDC, no API key.
 
 Paths (GET only):
-- protocols                      ($0.005) — all DeFi protocols ranked by TVL
-- protocol/{slug}                ($0.005) — one protocol's TVL history + chain breakdown, e.g. protocol/aave-v3
-- chains                         ($0.005) — TVL by chain
-- yields                         ($0.005) — yield pools with APY + TVL (large; filter client-side)
-- prices/{coins}                 ($0.001) — token prices, coins like 'base:0x833589...,coingecko:ethereum'
+- protocols                      ($0.007 charged) — all DeFi protocols ranked by TVL
+- protocol/{slug}                ($0.007 charged) — one protocol's TVL history + chain breakdown, e.g. protocol/aave-v3
+- chains                         ($0.007 charged) — TVL by chain
+- yields                         ($0.007 charged) — yield pools with APY + TVL (large; filter client-side)
+- prices/{coins}                 ($0.003 charged) — token prices, coins like 'base:0x833589...,coingecko:ethereum'
 
 Examples:
   blockrun_defi({ path: "protocol/uniswap-v3" })

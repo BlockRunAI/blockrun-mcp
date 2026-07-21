@@ -206,7 +206,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
-| `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
+| `blockrun_surf` | Surf (asksurf.ai) — 83 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
@@ -327,7 +327,7 @@ Prompts and a worked example are in [`skills/image-prompting/SKILL.md`](skills/i
 |---|---|---|
 | Exa | Sign up, $20/mo minimum | $0.01/call, no subscription |
 | Polymarket | Undocumented, rate-limited | $0.0095/call, clean JSON — plus you can **trade** |
-| Surf (asksurf.ai) | Account + monthly plan | $0.0095/call, no account, 84 endpoints |
+| Surf (asksurf.ai) | Account + monthly plan | $0.0095/call, no account, 83 endpoints |
 | Multiple sources | 3 accounts, 3 API keys, 3 billing pages | **1 wallet** |
 
 One wallet. All sources. No dashboards.

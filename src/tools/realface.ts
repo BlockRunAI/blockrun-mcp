@@ -221,14 +221,24 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           // Virtual Portraits are best-effort: a transient failure on this
           // endpoint shouldn't break the RealFace listing.
           let portraits: Array<Record<string, any>> = [];
+          // Track whether the portrait lookup actually SUCCEEDED. Without this,
+          // a transient failure collapsed to portraits=[] and then rendered as
+          // "No ... assets enrolled" — a positive claim the code never verified,
+          // which prompts a duplicate $0.01 enroll of something already enrolled.
+          // The RealFace half above already surfaces its own failure; this half
+          // silently did not.
+          const portraitsUnavailable = !vpResp?.ok;
           if (vpResp?.ok) {
             const vpData = await vpResp.json().catch(() => ({})) as Record<string, any>;
             portraits = Array.isArray(vpData.portraits) ? vpData.portraits : [];
           }
           if (faces.length === 0 && portraits.length === 0) {
+            const caveat = portraitsUnavailable
+              ? `\n⚠️ The Virtual Portrait lookup failed, so this covers RealFace only — do NOT re-enroll a portrait on the strength of this listing; retry first.`
+              : "";
             return {
-              content: [{ type: "text", text: `No RealFace or Virtual Portrait assets enrolled for ${account.address}.\nEnroll one: blockrun_realface action:"init" name:"…" (real person) or action:"portrait" name:"…" image_url:"https://…" (AI character).` }],
-              structuredContent: { wallet: account.address, realfaces: [], portraits: [], count: 0 },
+              content: [{ type: "text", text: `No RealFace${portraitsUnavailable ? "" : " or Virtual Portrait"} assets enrolled for ${account.address}.${caveat}\nEnroll one: blockrun_realface action:"init" name:"…" (real person) or action:"portrait" name:"…" image_url:"https://…" (AI character).` }],
+              structuredContent: { wallet: account.address, realfaces: [], portraits: [], count: 0, portraitsUnavailable },
             };
           }
           const first = faces[0] ?? portraits[0];

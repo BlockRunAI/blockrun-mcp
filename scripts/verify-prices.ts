@@ -25,6 +25,9 @@ import { estimateModalCost } from "../src/tools/modal.js";
 import { estimatePhoneCost } from "../src/tools/phone.js";
 import { estimateSurfCost, SURF_PRICE_USD } from "../src/tools/surf.js";
 import { estimateSearchCost } from "../src/tools/search.js";
+import { estimateCost as estimateImageCost } from "../src/tools/image.js";
+import { estimateExaCost } from "../src/tools/exa.js";
+import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 
@@ -35,6 +38,10 @@ type Probe = {
   path: string;
   body?: unknown; // present => POST
   expected: number; // what our estimator reserves
+  // Some estimators reserve a deliberate worst-case (blockrun_chat cannot know
+  // which model a tier will settle on until after the call). For those, over-
+  // reserving is the design, not drift — but under-reserving is still a bug.
+  allowOver?: boolean;
 };
 
 async function quote(path: string, body?: unknown): Promise<number | string> {
@@ -89,6 +96,42 @@ const PROBES: Probe[] = [
   { label: "exa/search", path: "exa/search?query=t", expected: withTxFee(0.01) },
   { label: "defillama/protocols", path: "defillama/protocols", expected: withTxFee(0.005) },
   { label: "rpc/ethereum (single)", path: "rpc/ethereum", body: { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }, expected: withTxFee(0.002) },
+
+  // ---- PARAMETERIZED routes ----
+  // The flat routes above were always covered exactly (20/20), and every one of
+  // the pricing defects found in the 0.32.3 audit was on a route whose price
+  // depends on an ARGUMENT. That was the structural gap behind five separate
+  // bugs, so the size/count/length axes are pinned here too.
+
+  // Image: the tier boundary is per-model. A single >1024 rule billed a 2048
+  // nano-banana-pro render at the 4096 price (49% over) and wrote it to the
+  // ledger verbatim.
+  ...(["1024x1024", "2048x2048", "4096x4096"].map((size) => ({
+    label: `image nano-pro ${size}`,
+    path: "images/generations",
+    body: { model: "google/nano-banana-pro", prompt: "a cube", size },
+    expected: estimateImageCost("google/nano-banana-pro", size),
+  }))),
+  { label: "image gpt-image-2 1024", path: "images/generations", body: { model: "openai/gpt-image-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("openai/gpt-image-2", "1024x1024") },
+
+  // Exa: priced PER URL. The gateway ignores the query string when routing, so
+  // `contents?x=1` must price identically to `contents`.
+  { label: "exa/contents x1", path: "exa/contents", body: { urls: ["https://example.com"] }, expected: estimateExaCost("contents", { urls: ["https://example.com"] }) },
+  { label: "exa/contents x25", path: "exa/contents", body: { urls: Array.from({ length: 25 }, (_, i) => `https://example.com/${i}`) }, expected: estimateExaCost("contents", { urls: Array.from({ length: 25 }, (_, i) => `https://example.com/${i}`) }) },
+
+  // Chat: priced on INPUT tokens too. Reserving off max_tokens alone left a
+  // 100k-word prompt 11.4x short. Over-reserving is intended here (the tier's
+  // settling model is unknown up front); under-reserving is not.
+  ...([1_000, 100_000].map((chars) => {
+    const message = "word ".repeat(Math.round(chars / 5));
+    return {
+      label: `chat balanced ${chars / 1000}k chars`,
+      path: "chat/completions",
+      body: { model: "openai/gpt-5.6-terra", messages: [{ role: "user", content: message }], max_tokens: 1024 },
+      expected: estimateChatCost(1024, "balanced", undefined, undefined, promptCharSize(message)),
+      allowOver: true,
+    };
+  })),
 ];
 
 const EPSILON = 1e-9;
@@ -110,6 +153,8 @@ for (const probe of PROBES) {
     // The only genuinely dangerous direction: we reserve less than we pay.
     console.log(`  ✗  ${probe.label.padEnd(26)} reserve $${probe.expected} < charge $${live}  UNDER-RESERVES by $${(-delta).toFixed(6)}`);
     short++;
+  } else if (probe.allowOver && delta >= -EPSILON) {
+    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}  (reserve $${probe.expected.toFixed(6)}, intentionally conservative)`);
   } else if (delta > 0.001) {
     console.log(`  !  ${probe.label.padEnd(26)} reserve $${probe.expected} > charge $${live}  over-reserves by $${delta.toFixed(6)}`);
     over++;
