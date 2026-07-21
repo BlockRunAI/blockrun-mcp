@@ -90,3 +90,17 @@ test("mapClobError: resolved market suggests positions/redeem; FOK suggests FAK"
   assert.match(await mapClobError({ message: "market is closed" }), /positions.*redeem/s);
   assert.match(await mapClobError({ message: "FOK order not filled" }), /FAK|limit order/);
 });
+
+// Float-division noise regression (issue #72 finding 7): prices ALREADY on the
+// tick grid must survive rounding unchanged. 0.58/0.001 is 579.9999… (floor
+// alone → 0.579, one tick below the stated buy limit) and 0.42/0.01 is
+// 42.000…01 (ceil alone → 0.43, one tick above the stated sell limit).
+test("roundToTick leaves on-grid prices unchanged despite float noise", () => {
+  assert.equal(roundToTick(0.58, "0.001", "buy"), 0.58);
+  assert.equal(roundToTick(0.42, "0.01", "sell"), 0.42);
+  assert.equal(roundToTick(0.58, "0.001", "sell"), 0.58);
+  assert.equal(roundToTick(0.42, "0.01", "buy"), 0.42);
+  // Genuine off-grid prices still round conservatively by side.
+  assert.equal(roundToTick(0.5849, "0.001", "buy"), 0.584);
+  assert.equal(roundToTick(0.4251, "0.01", "sell"), 0.43);
+});

@@ -267,7 +267,24 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   if (!deployed) {
     const res = await deployDepositWallet();
     deployTxHash = res.transactionHash;
-    deployed = true;
+    // The relayer deployed *something*; only contract code at the CREATE2
+    // address WE derived proves it deployed THIS wallet. If factory/salt ever
+    // diverge between derive and deploy, recording deployed:true here would
+    // point approvals and funding at an address that doesn't exist — stranding
+    // real money (issue #72 finding 4). Retry the read across RPC lag.
+    for (let attempt = 0; attempt < 3 && !deployed; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
+      const code = await getPublicClient().getCode({ address: depositWallet }).catch(() => undefined);
+      deployed = typeof code === "string" && code !== "0x";
+    }
+    if (!deployed) {
+      throw new Error(
+        `Deposit wallet deploy confirmed (tx ${deployTxHash}) but no contract code is visible at the derived ` +
+        `address ${depositWallet} after 3 reads. Either the RPCs are lagging (re-run action:"setup" in a minute — ` +
+        `it re-checks) or the relayer deployed a different address than we derived, in which case do NOT fund ` +
+        `this wallet until that is resolved.`,
+      );
+    }
   }
   saveState({ deployed: true });
 
