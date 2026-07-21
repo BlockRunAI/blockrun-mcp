@@ -9,7 +9,7 @@ import { launchTopUp } from "../utils/onramp.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
 import { solanaPaidPost } from "../utils/solana-402.js";
-import { isBlockedFetchHost } from "../utils/ssrf.js";
+import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -46,7 +46,9 @@ export async function toImageDataUri(ref: string): Promise<string> {
       let res: Response;
       for (let hop = 0; ; hop++) {
         const host = new URL(url).hostname;
-        if (isBlockedFetchHost(host)) {
+        // Resolved, not literal: wildcard-DNS names like 127.0.0.1.nip.io are
+        // public strings that map to private addresses, and were exploitable.
+        if (await isBlockedFetchHostResolved(host)) {
           throw new Error(`refusing to fetch a private/loopback/link-local address: ${host}`);
         }
         res = await fetch(url, { signal: ctrl.signal, redirect: "manual" });

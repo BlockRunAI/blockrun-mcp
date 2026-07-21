@@ -1,7 +1,7 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isBlockedFetchHost } from "../src/utils/ssrf.js";
+import { isBlockedFetchHost, isBlockedFetchHostResolved } from "../src/utils/ssrf.js";
 
 test("isBlockedFetchHost blocks loopback/private/link-local/metadata", () => {
   for (const h of [
@@ -58,4 +58,31 @@ test("isBlockedFetchHost allows public hosts", () => {
   ]) {
     assert.equal(isBlockedFetchHost(h), false, `should allow ${h}`);
   }
+});
+
+// The guard was literal-only, and this file used to concede that a public name
+// resolving to a private IP "would still pass". The realistic vector is wildcard
+// DNS: 127.0.0.1.nip.io is a public string that resolves to loopback, and was
+// verified end-to-end reading a local server and base64ing it into the data URI
+// sent onward to the gateway. No redirect, so the per-hop literal check saw
+// nothing suspicious.
+test("wildcard-DNS names that resolve to private IPs are blocked", async () => {
+  for (const host of ["127.0.0.1.nip.io", "169.254.169.254.nip.io"]) {
+    assert.equal(isBlockedFetchHost(host), false, `${host} is not a literal — that was the bug`);
+    assert.equal(await isBlockedFetchHostResolved(host), true, `${host} must be blocked after resolution`);
+  }
+});
+
+test("an ordinary public host is still fetchable", async () => {
+  assert.equal(await isBlockedFetchHostResolved("example.com"), false);
+});
+
+test("literal private addresses stay blocked without a DNS round-trip", async () => {
+  for (const host of ["127.0.0.1", "localhost", "169.254.169.254", "[::1]"]) {
+    assert.equal(await isBlockedFetchHostResolved(host), true, host);
+  }
+});
+
+test("an unresolvable name fails closed", async () => {
+  assert.equal(await isBlockedFetchHostResolved("no-such-host-blockrun-test.invalid"), true);
 });

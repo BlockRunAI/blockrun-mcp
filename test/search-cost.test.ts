@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateSearchCost } from "../src/tools/search.js";
+import { estimateExaCost } from "../src/tools/exa.js";
 
 // blockrun_search is the most expensive tool per call in the server — priced per
 // SOURCE, so a default call settles ~$0.26 while most tools cost $0.001. The gate
@@ -70,4 +71,22 @@ test("estimateSearchCost ignores garbage max_results instead of reserving $0", (
       `max_results=${JSON.stringify(bad)} fell back below the default reserve`,
     );
   }
+});
+
+// The exa price gate matched the RAW slug, so `contents?x=1` missed the per-URL
+// branch and reserved the flat $0.01 while the gateway — which ignores the query
+// when routing — still billed per URL. 100 URLs: $0.012 reserved, $0.202 settled,
+// a 17x under-reserve that recordSpending then books wrong permanently. The path
+// is caller-supplied, so one hallucinated `?` was enough.
+test("exa contents pricing survives a query string, fragment, prefix and case", () => {
+  const body = { urls: Array.from({ length: 100 }, (_, i) => `https://e.com/${i}`) };
+  const plain = estimateExaCost("contents", body);
+  assert.ok(plain > 0.19, `100 URLs should price ~$0.202, got ${plain}`);
+  for (const variant of ["contents?x=1", "/contents?a=b&c=d", "v1/exa/contents?x=1", "contents#frag", "CONTENTS", "contents/"]) {
+    assert.equal(estimateExaCost(variant, body), plain, `${variant} must price like "contents"`);
+  }
+});
+
+test("a non-contents exa path still prices flat", () => {
+  assert.equal(estimateExaCost("search?q=1", {}), estimateExaCost("search", {}));
 });

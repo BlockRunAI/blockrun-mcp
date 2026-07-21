@@ -127,31 +127,45 @@ export const FREE_MODEL_TIMEOUT_MS = 60_000;
 export const FREE_TIER_DEADLINE_MS = 150_000;
 
 /**
- * The free NVIDIA path SILENTLY TRUNCATES the prompt at 128 KiB.
+ * The free NVIDIA path SILENTLY TRUNCATES the prompt at 131,072 CHARACTERS.
  *
- * Measured 2026-07-21, and the failure is invisible by design: the request
- * returns 200 with a confident, well-formed answer about whatever survived. No
- * error, no warning, no `finish_reason` signal. `usage.prompt_tokens` is the
- * only tell, and it flatlines:
+ * CHARACTERS — not bytes, not tokens. 0.32.2 shipped this as a BYTE cap and was
+ * wrong; 0.32.3 corrects it. The original sweep only ever probed ASCII, where
+ * bytes and characters are the same number, so the two hypotheses were
+ * indistinguishable. Re-probed 2026-07-21 with CJK, which separates them at 3
+ * bytes per character:
  *
- *     sent 110,000 B -> prompt_tokens 22,065
- *     sent 125,000 B -> prompt_tokens 25,065
- *     sent 130,000 B -> prompt_tokens 26,065
- *     sent 135,000 B -> prompt_tokens 26,266   <- capped
- *     sent 150,000 B -> prompt_tokens 26,266   <- identical, 15 KB discarded
+ *     ASCII  131,000 chars / 131,000 B -> prompt_tokens  16,440   intact
+ *     ASCII  135,000 chars / 135,000 B -> prompt_tokens  16,443   capped
+ *     ASCII  400,000 chars / 400,000 B -> prompt_tokens  16,443   capped, identical
+ *     CJK     50,000 chars / 150,000 B -> prompt_tokens  50,065   INTACT
+ *     CJK    131,000 chars / 393,000 B -> prompt_tokens 131,065   INTACT
+ *     CJK    135,000 chars / 405,000 B -> prompt_tokens 131,043   capped
  *
- * Identical on gpt-oss-120b and deepseek-v4-flash, so it is a property of the
- * free path rather than of any one model's context window. It is NOT a
- * gateway-wide body cap: paid models scale linearly right past it — the 402
- * quote for gpt-5.6-terra reads ~12,016 input tokens at 25 KB and ~192,016 at
- * 400 KB, with no ceiling.
+ * A 393 KB CJK prompt passes through whole, so the limit cannot be on bytes.
+ * 131,065 tokens is accepted while 16,443 is refused further input, so it is not
+ * on tokens either. Both alphabets cap at the same ~131,072 characters.
  *
- * Practical consequence: the "1M context" noted against deepseek-v4-flash in the
- * catalogue above is unreachable on the free tier. Anything over this limit needs
- * an explicit paid model. blockrun_chat warns the caller instead of letting a
- * truncated answer pass as a complete one — see freeTierTruncationNote().
+ * Why the direction of the error matters: UTF-8 byte length is always >= JS
+ * string length, so a byte-based check can only ever OVER-fire. It never missed
+ * a real truncation — it invented ones that never happened, bolting a
+ * "⚠️ TRUNCATED" warning onto complete, correct answers for any non-ASCII prompt
+ * (CJK, Cyrillic, Greek, Thai, emoji) and advising the caller to move to a PAID
+ * model. That pushed agents off a working $0 path into real USDC spend on a
+ * false premise, which is worse than the silence it was meant to fix.
+ *
+ * Still true and still the reason this exists: the truncation is invisible —
+ * HTTP 200, confident well-formed answer, no error and no finish_reason signal,
+ * with usage.prompt_tokens the only tell. And it is NOT a gateway-wide cap:
+ * paid models scale linearly past it (the 402 quote for gpt-5.6-terra reads
+ * ~12,016 input tokens at 25 KB and ~192,016 at 400 KB, no ceiling), so the
+ * "1M context" noted against deepseek-v4-flash is unreachable on the free tier.
+ *
+ * Measure in JS string length (UTF-16 code units). Astral characters (emoji
+ * beyond the BMP) count as 2, which errs toward warning slightly early — the
+ * safe direction, and far smaller than the 3x error being corrected here.
  */
-export const FREE_TIER_MAX_PROMPT_BYTES = 131_072; // 128 KiB
+export const FREE_TIER_MAX_PROMPT_CHARS = 131_072;
 
 export const BASE_TOKENS: Record<string, string> = {
   ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",

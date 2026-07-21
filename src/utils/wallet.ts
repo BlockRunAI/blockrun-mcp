@@ -108,11 +108,29 @@ export async function ensureBothWallets(): Promise<{
   base: { address: string; isNew: boolean };
   solana: { address: string; isNew: boolean };
 }> {
+  // Pin the chain BEFORE provisioning. getChain()'s step-3 autodetect keys off
+  // the mere existence of a non-empty .solana-session, and this function creates
+  // exactly that file — so merely running blockrun_wallet (the DEFAULT status
+  // action calls this) silently flipped a Base user to Solana. Afterwards every
+  // paid tool either signs from a zero-balance Solana wallet or hard-refuses
+  // "Base-only", including action:"deposit" — the funding path itself becomes
+  // unreachable, with no way to discover why. Contradicted this file's own
+  // "Default chain is Base."
+  //
+  // Only writes when the user has NO explicit preference; an existing .chain
+  // already wins in getChain() and must not be overwritten.
+  const chainBefore = readChainPreference() === null ? getChain() : null;
+
   const evm = ensureEvmWallet();
   const sol = await getOrCreateSolanaWallet();
   if (sol.isNew) {
     console.error(formatWalletCreatedMessage(sol.address));
   }
+
+  if (chainBefore !== null && getChain() !== chainBefore) {
+    setChain(chainBefore);
+  }
+
   return {
     base: { address: evm.address, isNew: evm.isNew },
     solana: { address: sol.address, isNew: sol.isNew },
