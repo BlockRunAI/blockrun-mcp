@@ -11,7 +11,7 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
-import { hasPathTraversal } from "../utils/path-safety.js";
+import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 type RawClient = {
@@ -19,8 +19,15 @@ type RawClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-function estimateExaCost(path: string, body: unknown): number {
-  const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
+export function estimateExaCost(path: string, body: unknown): number {
+  // normalizeClassifyPath strips the query string and fragment BEFORE matching.
+  // Without it this compared the raw slug, so `contents?x=1` missed the
+  // per-URL branch and fell through to the flat $0.01 — while the gateway
+  // ignores the query when routing and still billed per URL. 100 URLs reserved
+  // $0.012 and settled $0.202, a 17x under-reserve that recordSpending then
+  // books wrong permanently. The path is caller-supplied, so a hallucinated or
+  // injected `?` was all it took.
+  const cleanPath = normalizeClassifyPath(path).replace(/^v1\/exa\//, "");
   if (cleanPath === "contents") {
     const urls = body && typeof body === "object" ? (body as { urls?: unknown }).urls : undefined;
     // One flat fee per REQUEST, not per URL — the gateway adds it once to the
