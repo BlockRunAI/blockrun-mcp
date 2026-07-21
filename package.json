@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.32.8",
+  "version": "0.32.9",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, and crypto data. Paid via x402 micropayments.",
   "type": "module",
@@ -21,7 +21,12 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --experimental-test-module-mocks --test test/*.test.ts",
     "prepublishOnly": "npm run build",
-    "verify:prices": "tsx scripts/verify-prices.ts"
+    "verify:prices": "tsx scripts/verify-prices.ts",
+    "e2e:polymarket:readonly": "tsx scripts/polymarket-e2e-readonly.ts",
+    "e2e:polymarket:approvals": "tsx scripts/polymarket-e2e-verify-approvals.ts",
+    "e2e:polymarket:approve": "tsx scripts/polymarket-e2e-approve.ts",
+    "e2e:polymarket:withdraw": "tsx scripts/polymarket-e2e-withdraw.ts",
+    "e2e:polymarket:live": "tsx scripts/polymarket-e2e-live.ts"
   },
   "keywords": [
     "mcp",
