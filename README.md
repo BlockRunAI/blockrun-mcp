@@ -163,7 +163,7 @@ An unknown profile name falls back to `full`. `modal` and `phone` are `full`-pro
 
 Run `blockrun_wallet` to see your address. The server pays on **Base** by default — send USDC on Base (Coinbase → USDC → Base network → paste address, or bridge via [bridge.base.org](https://bridge.base.org)).
 
-**$5 covers** ~5,000 market queries · ~500 Exa searches · ~250 image generations · ~10 Seedance 1.5-pro clips.
+**$5 covers** ~525 market queries · ~500 Exa searches · ~250 image generations · ~10 Seedance 1.5-pro clips.
 
 Prefer Solana? See [Fund your wallet](#fund-your-wallet) — two tool calls, no restart.
 
@@ -181,7 +181,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 
 > **Claude:** According to Polymarket, the market puts a **73% probability** on the Fed holding rates steady, 24% on a 25bp cut, 3% on a hike. 24h volume: $2.1M. The "Hold" contract last traded at $0.73.
 >
-> *(via `blockrun_markets` · cost: $0.0075)*
+> *(via `blockrun_markets` · cost: $0.0095)*
 
 ---
 
@@ -204,9 +204,9 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
-| `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0075/query |
+| `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
-| `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0075/call |
+| `blockrun_surf` | Surf (asksurf.ai) — 84 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
 | `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
@@ -274,7 +274,7 @@ Run `blockrun_wallet` to see your address. The server pays on **Base** by defaul
 | Coinbase | Send → USDC → Base network → paste address |
 | Bridge from Ethereum | [bridge.base.org](https://bridge.base.org) |
 
-$5 covers ~5,000 market queries, ~500 Exa searches, ~250 image generations, or ~10 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.46 each).
+$5 covers ~525 market queries, ~500 Exa searches, ~250 image generations, or ~10 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.46 each).
 
 ### Pay on Solana
 
@@ -326,8 +326,8 @@ Prompts and a worked example are in [`skills/image-prompting/SKILL.md`](skills/i
 | | Direct APIs | BlockRun |
 |---|---|---|
 | Exa | Sign up, $20/mo minimum | $0.01/call, no subscription |
-| Polymarket | Undocumented, rate-limited | $0.0075/call, clean JSON — plus you can **trade** |
-| Surf (asksurf.ai) | Account + monthly plan | $0.0075/call, no account, 84 endpoints |
+| Polymarket | Undocumented, rate-limited | $0.0095/call, clean JSON — plus you can **trade** |
+| Surf (asksurf.ai) | Account + monthly plan | $0.0095/call, no account, 84 endpoints |
 | Multiple sources | 3 accounts, 3 API keys, 3 billing pages | **1 wallet** |
 
 One wallet. All sources. No dashboards.
