@@ -22,7 +22,7 @@ or preparing a fallback.
    `confirm:true`. Continue with live data and a dry-run order preview only.
    A Stanford/US presentation is always dry-run mode.
 3. Always preview through `blockrun_polymarket_read` `action:"preview"`. It has
-   no confirmation input and cannot sign or submit. A real order requires the
+   no confirmation input and cannot sign or submit an order. A real order requires the
    user's explicit approval of the exact market, outcome, amount, price/type,
    and current region eligibility.
 4. Choose the smallest whole-dollar preview from $1–$5 that satisfies the live
@@ -139,7 +139,7 @@ blockrun_polymarket_read {
 ```
 
 Show the outcome, live best ask, estimated shares, max cost, and the explicit
-line `DRY RUN — nothing signed or submitted`.
+line `DRY RUN — no order signed or submitted`.
 
 If the user explicitly approves a real order and the region is permitted,
 repeat the exact economics with `blockrun_polymarket` action `buy`/`sell` and

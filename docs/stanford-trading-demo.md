@@ -12,7 +12,7 @@ and no vendor API keys.
 3. It states both the thesis and the strongest counterevidence.
 4. It builds a live, executable-size CLOB order preview through the read-only
    Polymarket tool.
-5. It proves nothing was signed or submitted.
+5. It proves no order was signed or submitted.
 
 At Stanford, stop at dry-run. Polymarket blocks new orders from the United
 States; do not alter networking to bypass that restriction. A real-money write
@@ -69,11 +69,12 @@ Use the `signal-to-trade-demo` Skill and say:
 
 ```text
 Use the signal-to-trade-demo Skill. Spend at most five US cents on public data.
-Find one current liquid Bitcoin threshold market, build the four-source signal,
-and preview the smallest executable whole-dollar FOK order from one to five US
-dollars. Do not access account data or submit anything. Redact identifiers and
+Find the best current liquid Bitcoin threshold market, build the four-source
+signal, and preview one five-US-dollar FOK order on the best-supported side
+through the read-only preview action. Do not access account data, submit, or
+retry. Redact identifiers and
 finish with the exact line:
-DRY RUN — nothing signed or submitted.
+DRY RUN — no order signed or submitted.
 ```
 
 For the most reliable stage pacing, use two prompts instead:
@@ -85,9 +86,12 @@ signal. Do not access account data or place/preview an order.
 ```
 
 ```text
-Preview the smallest executable whole-dollar FOK order from one to five US
-dollars on the best-supported side. Use only the read-only preview action, do
-not submit, and end: DRY RUN — nothing signed or submitted.
+Using that exact market and the best-supported side, create one five-US-dollar
+FOK dry-run through blockrun_polymarket_read action preview. This is an
+execution preview, not permission to trade. Do not access wallet, setup,
+positions, orders, or resources; do not call blockrun_polymarket; do not submit
+or retry. Redact identifiers and end exactly:
+DRY RUN — no order signed or submitted.
 ```
 
 ## Stage flow
@@ -135,10 +139,11 @@ demo less credible.
 
 ### 5:30–7:00 — executable order preview
 
-The agent calls `blockrun_polymarket_read` with `action:"preview"`. It chooses
-the smallest whole-dollar amount from $1–$5 that clears the live minimum share
-size and available book depth. The MCP shows the estimated fill and cannot sign
-or submit anything.
+The agent calls `blockrun_polymarket_read` with `action:"preview"` for a fixed
+$5 FOK dry-run. Five dollars reliably clears the common five-share minimum at
+any valid probability while remaining inside the demo caps; the MCP still
+rejects it if a market has a higher minimum or insufficient depth. It shows the
+estimated fill and cannot sign or submit an order.
 
 ### 7:00–8:00 — close on safety
 

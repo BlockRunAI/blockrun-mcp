@@ -135,7 +135,7 @@ export function registerPolymarketReadTool(server: McpServer): void {
 Actions:
 - positions — holdings, current value, PnL, and redeemable status (free Data API)
 - orders — open CLOB orders, optionally filtered by condition_id
-- preview — build a live buy/sell order preview from the CLOB book. side plus token_id (or condition_id+outcome) are required. Market buys use amount_usd; limit orders use price+size. This action never accepts confirm and never signs or submits.
+- preview — build a live buy/sell order preview from the CLOB book. side plus token_id (or condition_id+outcome) are required. Market buys use amount_usd; limit orders use price+size. This action never accepts confirm and never signs or submits an order.
 
 Use blockrun_polymarket only for setup and funds-affecting operations: confirmed buy/sell, cancel, redeem, fund, or withdraw.`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
@@ -180,8 +180,11 @@ Use blockrun_polymarket only for setup and funds-affecting operations: confirmed
         if (result.isError) {
           return { content: [{ type: "text" as const, text: `Error: ${result.text}` }], isError: true };
         }
+        const text = args.action === "preview"
+          ? formatReadOnlyPreviewText(result.text)
+          : result.text;
         return {
-          content: [{ type: "text" as const, text: result.text }],
+          content: [{ type: "text" as const, text }],
           structuredContent: asStructuredContent(result.structured ?? {}),
         };
       } catch (err) {
@@ -191,5 +194,18 @@ Use blockrun_polymarket only for setup and funds-affecting operations: confirmed
         };
       }
     },
+  );
+}
+
+/**
+ * executeTrade's generic dry-run response tells callers how to repeat a trade
+ * with confirm:true. That is useful on the funds-affecting tool, but misleading
+ * on blockrun_polymarket_read because the read tool deliberately has no confirm
+ * input. Keep the execution economics while making that boundary explicit.
+ */
+export function formatReadOnlyPreviewText(text: string): string {
+  return text.replace(
+    /\n\nRe-call with confirm:true to sign and submit\.$/,
+    "\n\nREAD-ONLY PREVIEW — this tool cannot sign or submit an order.",
   );
 }
