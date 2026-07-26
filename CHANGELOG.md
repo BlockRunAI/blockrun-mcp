@@ -2,6 +2,31 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.33.0
+
+`blockrun_nosana` — rent a GPU container on Nosana, a decentralized market on
+Solana, with the wallet this MCP already holds.
+
+- A second landlord, not a cheaper one. `blockrun_modal` stays the fast path:
+  one HTTP call, USDC on Base, nothing extra to hold. Nosana is the durable
+  path — the market is an on-chain program, so no company can end a running
+  lease, and the cheapest GPU market measured $0.048/hr against $1.50/hr for a
+  managed T4. An agent that can only rent from one provider stops existing when
+  that provider does.
+- `action:"rent" | "status" | "extend"`. A lease can be extended in place, so a
+  long-lived agent does not have to move house every time the clock runs out.
+- Costs stated in the tool description, not discovered later: you must hold NOS
+  and a little SOL, and the job definition is pinned to PUBLIC IPFS — anything
+  secret has to travel through the confidential channel, never through `env`.
+- `cmd` must be a single shell string. An array command is accepted by the SDK
+  and then kills the container a few seconds in with no error, so the tool
+  refuses it where the caller can still read why.
+- `max_spend_usd` refuses an over-budget lease before any key is touched.
+- `@nosana/sdk` is an OPTIONAL PEER dependency, imported lazily inside the
+  handler. Not `optionalDependencies` — npm installs those by default, which
+  would charge every user 113 packages for a tool most will never call. An
+  optional peer is installed only by the people who ask for it.
+
 ## 0.32.9
 
 Closes the external-review backlog: all 8 findings from the Kimi K3 review

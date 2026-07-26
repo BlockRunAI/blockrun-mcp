@@ -27,14 +27,15 @@ export type ToolName =
   | "surf"
   | "rpc"
   | "defi"
-  | "polymarket";
+  | "polymarket"
+  | "nosana";
 
 // `as const satisfies` keeps the literal tuple type (so the exhaustiveness
 // guard below can see the actual entries) AND rejects any entry that isn't a
 // real ToolName (catches typos).
 export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
-  "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
+  "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi", "nosana",
   "polymarket",
 ] as const satisfies readonly ToolName[];
 
