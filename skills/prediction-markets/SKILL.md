@@ -78,8 +78,12 @@ as a second guard against concurrent x402 payment races.
 
 Current parameter contracts that prevent paid 4xx responses:
 
-- Do not call `markets/listings`; use `markets/search` for discovery, then
-  `polymarket/markets/keyset` with `condition_id` for the selected market.
+- Discover with `markets/search` (its search term is `q`), then resolve the
+  selected market with `polymarket/markets/keyset` + `condition_id`.
+- On `polymarket/markets{,/keyset}` the free-text filter is `search`, **not**
+  `q`. Use `status:"open"` rather than Gamma's `active`/`closed`, and `sort`
+  rather than `order`/`ascending`. `end_after`/`end_before` are supported
+  (Unix seconds).
 - Candlestick `interval` is integer minutes: `0`, `1`, `5`, `15`, `60`, or
   `1440`. Optional `start_time`/`end_time` are Unix seconds.
 - `polymarket/orderbooks` requires `token_id`, `start_time`, and `end_time`; the
@@ -101,6 +105,7 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 |---|---|---|
 | **Same question across venues** | `markets` | 1 |
 | **Search every venue at once** | `markets/search` | 2 |
+| Venue-native tradable listings | `markets/listings` | 1 |
 | Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
 | **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
 | Active matched pairs | `matching-markets/pairs` | 2 |

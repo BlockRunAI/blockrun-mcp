@@ -52,8 +52,8 @@ blockrun_markets {
 }
 ```
 
-Do not use `markets/listings`; the current Predexon API no longer exposes it.
-Do not automatically select the first `polymarket/crypto-updown` result because
+`markets/search` is the discovery path for a demo — it ranks across venues in
+one call. Do not automatically select the first `polymarket/crypto-updown` result because
 that feed can contain future placeholders with no liquidity. Rank candidates by:
 
 - open status and a future close time;
@@ -64,9 +64,10 @@ that feed can contain future placeholders with no liquidity. Rank candidates by:
 - a live order preview that finds a usable book.
 
 Resolve the selected market using `polymarket/markets/keyset` with
-`condition_id`, `status:"open"`, and a small `limit`. Do not invent Gamma API
-parameters such as `active`, `closed`, `order`, `ascending`, `search`, or
-`sort`; the MCP rejects these before payment.
+`condition_id`, `status:"open"`, and a small `limit`. Do not invent Gamma-only
+parameters such as `active`, `closed`, `order`, or `ascending`; the MCP rejects
+those before payment. Predexon's own `search`, `sort`, `end_after`, and
+`end_before` filters are supported on that endpoint.
 
 ## 3. Collect evidence sequentially
 

@@ -2,26 +2,37 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateMarketRequest } from "../src/utils/markets-validation.js";
 
-test("retired listings route is rejected before payment", () => {
-  assert.match(validateMarketRequest("markets/listings", {}, undefined) ?? "", /no longer exposes/i);
+test("markets/listings is a live Tier-1 route, not a pre-payment rejection", () => {
+  // The gateway still registers, prices, and advertises markets/listings in the
+  // x402 manifest (blockrun/src/lib/predexon.ts). Blocking it here would break a
+  // paid endpoint the user is being sold.
+  assert.equal(validateMarketRequest("markets/listings", { venue: "polymarket" }, undefined), null);
 });
 
-test("Gamma-style market discovery params are rejected before payment", () => {
+test("Gamma-only market discovery params are rejected before payment", () => {
   assert.match(validateMarketRequest("markets/search", {
     q: "Bitcoin", status: "active",
   }, undefined) ?? "", /status:'open'/);
 
   assert.match(validateMarketRequest("polymarket/markets", {
     active: "true", closed: "false", order: "liquidity", ascending: "false",
-  }, undefined) ?? "", /Gamma-style params/);
-
-  assert.match(validateMarketRequest("polymarket/markets/keyset", {
-    search: "Bitcoin", end_after: "2026-07-01", sort: "liquidity",
-  }, undefined) ?? "", /markets\/search/);
+  }, undefined) ?? "", /Gamma-only params/);
 
   assert.equal(validateMarketRequest("polymarket/markets/keyset", {
     condition_id: "0xabc", status: "open", limit: "5",
   }, undefined), null);
+});
+
+test("Predexon's own filters on polymarket/markets are not mistaken for Gamma params", () => {
+  // search / sort / end_after / end_before are spec-backed POLYMARKET_MARKET_PARAMS.
+  // Rejecting them blocked exactly the query the demo needs: open BTC markets
+  // ending after a date, sorted by liquidity.
+  for (const path of ["polymarket/markets", "polymarket/markets/keyset"]) {
+    assert.equal(validateMarketRequest(path, {
+      search: "Bitcoin", status: "open", sort: "liquidity",
+      end_after: "1785000000", end_before: "1790000000", limit: "20",
+    }, undefined), null, `${path} should accept Predexon's documented filters`);
+  }
 });
 
 test("candlesticks uses integer-minute intervals", () => {

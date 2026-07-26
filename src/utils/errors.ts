@@ -86,10 +86,24 @@ export function formatError(message: string, opts?: { altModels?: string }): str
 
   // The SDK prefixes every post-402 upstream failure with "API error after
   // payment", including validation failures such as 400/410/422. Those are
-  // actionable client errors, not transient server outages. Only attach retry
-  // guidance when the message actually contains a 5xx status.
-  const has5xxStatus = /(^|[^0-9.])5[0-9]{2}($|[^0-9.])/.test(msgLower);
-  const isServerError = has5xxStatus;
+  // actionable client errors, not transient server outages, so they no longer
+  // get retry guidance.
+  //
+  // A 5xx must LOOK like an HTTP status to count. A bare three-digit match is
+  // far too loose here: LLM errors are full of incidental 5xx-shaped numbers
+  // ("max_tokens 512 is above the limit", "embedding dimension 512"), and
+  // telling the user to wait out a temporary outage hides a real validation bug.
+  // Either the number is directly labelled as a status ("error 500",
+  // "status code 503", "http 502") — adjacency matters, so "context length 512
+  // exceeded" does not qualify — or it carries a standard HTTP reason phrase.
+  const has5xxStatus =
+    /(?:status(?:\s*code)?|http|error)\s*[:=]?\s*5[0-9]{2}(?:$|[^0-9.])/.test(msgLower) ||
+    /(?:^|[^0-9.])5[0-9]{2}:?\s+(?:internal|server error|bad gateway|service unavailable|gateway time)/.test(msgLower);
+  // A post-payment failure with no parseable status is still an upstream
+  // failure, not an empty wallet — without this it falls through to the
+  // "payment" keyword branch and wrongly tells the user to fund.
+  const isServerError = has5xxStatus ||
+    (msgLower.includes("api error after payment") && !isPostPaymentClientError);
 
   const altHint = opts?.altModels ? ` (e.g. ${opts.altModels})` : "";
   let errorText = `Error: ${message}`;

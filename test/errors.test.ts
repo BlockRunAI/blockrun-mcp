@@ -55,6 +55,29 @@ test("a pre-payment validation error that says no payment was made is not fundin
   assert.doesNotMatch(out, /funding instructions/);
 });
 
+test("post-payment 5xx still reads as an outage even without a parseable status", () => {
+  for (const msg of [
+    "API error after payment: 500 Internal Server Error",
+    "API error after payment: 502 Bad Gateway",
+    "API error after payment: upstream provider unavailable",
+    "Request failed with status code 503",
+  ]) {
+    const out = formatError(msg);
+    assert.match(out, /temporary API issue/, msg);
+    assert.doesNotMatch(out, /needs funding/, msg);
+  }
+});
+
+test("an incidental 5xx-shaped number is not sold to the user as an outage", () => {
+  // LLM errors are full of bare 512s; "wait it out" hides a real validation bug.
+  for (const msg of [
+    "Model rejected: max_tokens 512 is above the limit",
+    "embedding dimension 512 not supported",
+  ]) {
+    assert.equal(formatError(msg), `Error: ${msg}`, msg);
+  }
+});
+
 test("a dollar amount like $1.4020 is not misread as a 402", () => {
   const out = formatError("charged $1.4020 for the call");
   assert.equal(out, "Error: charged $1.4020 for the call"); // no funding/server text

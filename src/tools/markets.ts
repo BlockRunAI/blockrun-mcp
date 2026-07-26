@@ -36,6 +36,7 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
 
 CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
 - markets — list canonical market/question containers with cross-venue Predexon IDs
+- markets/listings — venue-native executable listings flattened across canonical markets
 - outcomes/:predexon_id — resolve a canonical outcome ID to its market context + venue listings
   Filter with ?venue=polymarket|kalshi|limitless|opinion|predictfun, ?status=, ?category=, ?league=, ?event_id=, ?pagination_key=
 
@@ -82,7 +83,8 @@ CROSS-PLATFORM:
 - markets/search — search across all platforms in one call
 
 REQUEST CONTRACTS:
-- Discover current markets with markets/search, then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id. markets/listings is no longer available.
+- Discover current markets with markets/search (its search term is "q"), then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id.
+- On polymarket/markets{,/keyset} the free-text filter is "search" (NOT "q"), and status:"open"/"closed" replaces Gamma's active/closed. "sort", "end_after", and "end_before" are supported; "order"/"ascending" are not.
 - Candlesticks interval is integer minutes: 0|1|5|15|60|1440 (use "60", not "1h"); start_time/end_time are Unix seconds.
 - polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
 - Smart-money calls require a meaningful cohort filter; a safe default is { window: "30d", min_trades: "100" }.

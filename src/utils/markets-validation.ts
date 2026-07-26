@@ -1,13 +1,14 @@
 const CANDLE_INTERVALS = new Set(["0", "1", "5", "15", "60", "1440"]);
-const GAMMA_STYLE_MARKET_PARAMS = new Set([
+// Gamma-only filter names, i.e. params the Polymarket Gamma API accepts but
+// Predexon v2 does not. Kept to exactly that set: `search`, `sort`, `end_after`,
+// and `end_before` ARE spec-backed Predexon filters on polymarket/markets{,/keyset}
+// (see blockrun/src/lib/predexon.ts POLYMARKET_MARKET_PARAMS), so rejecting them
+// here would block valid queries before payment.
+const GAMMA_ONLY_MARKET_PARAMS = new Set([
   "active",
   "closed",
   "order",
   "ascending",
-  "search",
-  "end_after",
-  "end_before",
-  "sort",
 ]);
 
 function numberParam(params: Record<string, string>, key: string): number | undefined {
@@ -30,20 +31,16 @@ export function validateMarketRequest(
   const path = rawPath.replace(/^\/+|\/+$/g, "");
   const query = params ?? {};
 
-  if (path === "markets/listings") {
-    return "Predexon no longer exposes 'markets/listings' in its current API. Use 'markets/search' to discover open venue markets, then resolve the selected Polymarket market with 'polymarket/markets/keyset'. No payment was made.";
-  }
-
   if (path === "markets/search" && query.status === "active") {
     return "markets/search uses params.status:'open', not the Gamma-style value 'active'. No payment was made.";
   }
 
   if (path === "polymarket/markets" || path === "polymarket/markets/keyset") {
-    const unsupported = Object.keys(query).filter((key) => GAMMA_STYLE_MARKET_PARAMS.has(key));
+    const unsupported = Object.keys(query).filter((key) => GAMMA_ONLY_MARKET_PARAMS.has(key));
     if (unsupported.length > 0) {
-      return `Predexon ${path} does not accept Gamma-style params ${unsupported.map((key) => `'${key}'`).join(", ")}. ` +
-        "Discover by text with markets/search params { q, status:'open', venue:'polymarket', limit }, then resolve with " +
-        "polymarket/markets/keyset params { condition_id, status:'open', limit }. No payment was made.";
+      return `Predexon ${path} does not accept Gamma-only params ${unsupported.map((key) => `'${key}'`).join(", ")}. ` +
+        "Use status:'open' instead of active/closed, and 'sort' instead of order/ascending. " +
+        "Free-text filtering on this endpoint is 'search' (only markets/search uses 'q'). No payment was made.";
     }
   }
 
