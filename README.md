@@ -211,7 +211,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
-| `blockrun_polymarket_read` | Read-only Polymarket positions and open orders, separated for MCP clients that enforce tool safety annotations | free |
+| `blockrun_polymarket_read` | Read-only Polymarket positions/open orders plus executable live order previews, separated for MCP clients that enforce tool safety annotations | free |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
 | `blockrun_surf` | Surf (asksurf.ai) — 83 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
@@ -258,8 +258,9 @@ blockrun_polymarket action:"fund" amount_usd:5 confirm:true
 # 3. Sign the one-time gasless approval batch
 blockrun_polymarket action:"setup" confirm:true
 
-# 4. Find a market with blockrun_markets, then place (dry-run without confirm)
-blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:2 confirm:true
+# 4. Find a market, preview safely, then place only after exact user approval
+blockrun_polymarket_read action:"preview" side:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK"
+blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK" confirm:true
 
 # 5. Manage → positions · orders · cancel · sell · redeem · withdraw
 ```

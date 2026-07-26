@@ -1,4 +1,14 @@
 const CANDLE_INTERVALS = new Set(["0", "1", "5", "15", "60", "1440"]);
+const GAMMA_STYLE_MARKET_PARAMS = new Set([
+  "active",
+  "closed",
+  "order",
+  "ascending",
+  "search",
+  "end_after",
+  "end_before",
+  "sort",
+]);
 
 function numberParam(params: Record<string, string>, key: string): number | undefined {
   if (!(key in params)) return undefined;
@@ -22,6 +32,19 @@ export function validateMarketRequest(
 
   if (path === "markets/listings") {
     return "Predexon no longer exposes 'markets/listings' in its current API. Use 'markets/search' to discover open venue markets, then resolve the selected Polymarket market with 'polymarket/markets/keyset'. No payment was made.";
+  }
+
+  if (path === "markets/search" && query.status === "active") {
+    return "markets/search uses params.status:'open', not the Gamma-style value 'active'. No payment was made.";
+  }
+
+  if (path === "polymarket/markets" || path === "polymarket/markets/keyset") {
+    const unsupported = Object.keys(query).filter((key) => GAMMA_STYLE_MARKET_PARAMS.has(key));
+    if (unsupported.length > 0) {
+      return `Predexon ${path} does not accept Gamma-style params ${unsupported.map((key) => `'${key}'`).join(", ")}. ` +
+        "Discover by text with markets/search params { q, status:'open', venue:'polymarket', limit }, then resolve with " +
+        "polymarket/markets/keyset params { condition_id, status:'open', limit }. No payment was made.";
+    }
   }
 
   if (/^polymarket\/candlesticks\/(?:token\/)?[^/]+$/.test(path)) {

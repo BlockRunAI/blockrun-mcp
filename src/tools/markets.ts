@@ -92,7 +92,7 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
       annotations: TOOL_ANNOTATIONS.paidOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
-        params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. { limit: '20', active: 'true' })"),
+        params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. markets/search uses { q: 'Bitcoin', status: 'open', venue: 'polymarket', limit: '20' })"),
         body: z.any().optional().describe("JSON body for POST queries (triggers pmQuery — most endpoints are GET)"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },

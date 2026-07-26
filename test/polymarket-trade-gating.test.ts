@@ -78,6 +78,14 @@ test("minimum order size enforced from the live book", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("market-buy preview enforces the live minimum share size", async () => {
+  const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 1 });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /minimum order size of 5 shares/);
+  assert.match(res.text, /use at least \$2\.25/i);
+  assert.equal(calls.length, 0);
+});
+
 test("confirm:true submits a limit BUY with the price floored onto the tick grid", async () => {
   const res = await executeTrade({ action: "buy", token_id: "111", price: 0.456, size: 10, confirm: true });
   assert.equal(res.isError, undefined, res.text);
@@ -174,6 +182,33 @@ test("market sell with no bid in the book is rejected, not silently $0-notional"
     const res = await executeTrade({ action: "sell", token_id: "111", size: 100000, confirm: true });
     assert.equal(res.isError, true);
     assert.match(res.text, /no bid|price a market sell/i);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("market buy with no ask is rejected instead of producing a fake preview", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5", asks: [], bids: [],
+  }));
+  try {
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5 });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /no ask|price a market buy/i);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("FOK market-buy preview rejects insufficient ask depth", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.45", size: "5" }], bids: [{ price: "0.44", size: "100" }],
+  }));
+  try {
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, order_type: "FOK" });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /cannot fill the full \$5\.00 FOK buy/i);
   } finally {
     mock.restoreAll();
   }

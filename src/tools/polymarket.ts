@@ -130,24 +130,53 @@ export function registerPolymarketReadTool(server: McpServer): void {
   server.registerTool(
     "blockrun_polymarket_read",
     {
-      description: `Read the local wallet's Polymarket state without signing or changing anything.
+      description: `Read or preview Polymarket state without signing or changing anything.
 
 Actions:
 - positions — holdings, current value, PnL, and redeemable status (free Data API)
 - orders — open CLOB orders, optionally filtered by condition_id
+- preview — build a live buy/sell order preview from the CLOB book. side plus token_id (or condition_id+outcome) are required. Market buys use amount_usd; limit orders use price+size. This action never accepts confirm and never signs or submits.
 
-Use blockrun_polymarket for setup, dry-run previews, buy/sell, cancel, redeem, fund, or withdraw.`,
-      annotations: TOOL_ANNOTATIONS.readOnly,
+Use blockrun_polymarket only for setup and funds-affecting operations: confirmed buy/sell, cancel, redeem, fund, or withdraw.`,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
-        action: z.enum(["positions", "orders"]).describe("Read-only operation"),
+        action: z.enum(["positions", "orders", "preview"]).describe("Read-only operation"),
         condition_id: z.string().optional().describe("orders: optional market condition ID filter"),
+        side: z.enum(["buy", "sell"]).optional().describe("preview: order side"),
+        token_id: z.string().optional().describe("preview: outcome token ID"),
+        outcome: z.string().optional().describe("preview: outcome label used with condition_id"),
+        price: z.number().gt(0).lt(1).optional().describe("preview: limit probability; omit for market order"),
+        size: z.number().positive().optional().describe("preview: shares for limits and market sells"),
+        amount_usd: z.number().positive().optional().describe("preview: pUSD to spend on a market buy"),
+        order_type: z.enum(["GTC", "GTD", "FOK", "FAK"]).optional().describe("preview: order type"),
+        expires_at: z.number().int().positive().optional().describe("preview: GTD expiry in Unix seconds"),
+        post_only: z.boolean().optional().describe("preview: maker-only limit order"),
       },
     },
-    async ({ action, condition_id }) => {
+    async (args) => {
       try {
-        const result = action === "positions"
-          ? await listPositions()
-          : await listOpenOrders({ condition_id });
+        let result: ToolResult;
+        if (args.action === "positions") {
+          result = await listPositions();
+        } else if (args.action === "orders") {
+          result = await listOpenOrders({ condition_id: args.condition_id });
+        } else if (!args.side) {
+          result = { text: "preview requires side:'buy' or side:'sell'.", isError: true };
+        } else {
+          result = await executeTrade({
+            action: args.side,
+            token_id: args.token_id,
+            condition_id: args.condition_id,
+            outcome: args.outcome,
+            price: args.price,
+            size: args.size,
+            amount_usd: args.amount_usd,
+            order_type: args.order_type,
+            expires_at: args.expires_at,
+            post_only: args.post_only,
+            confirm: false,
+          });
+        }
         if (result.isError) {
           return { content: [{ type: "text" as const, text: `Error: ${result.text}` }], isError: true };
         }

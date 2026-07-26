@@ -6,6 +6,24 @@ test("retired listings route is rejected before payment", () => {
   assert.match(validateMarketRequest("markets/listings", {}, undefined) ?? "", /no longer exposes/i);
 });
 
+test("Gamma-style market discovery params are rejected before payment", () => {
+  assert.match(validateMarketRequest("markets/search", {
+    q: "Bitcoin", status: "active",
+  }, undefined) ?? "", /status:'open'/);
+
+  assert.match(validateMarketRequest("polymarket/markets", {
+    active: "true", closed: "false", order: "liquidity", ascending: "false",
+  }, undefined) ?? "", /Gamma-style params/);
+
+  assert.match(validateMarketRequest("polymarket/markets/keyset", {
+    search: "Bitcoin", end_after: "2026-07-01", sort: "liquidity",
+  }, undefined) ?? "", /markets\/search/);
+
+  assert.equal(validateMarketRequest("polymarket/markets/keyset", {
+    condition_id: "0xabc", status: "open", limit: "5",
+  }, undefined), null);
+});
+
 test("candlesticks uses integer-minute intervals", () => {
   const path = "polymarket/candlesticks/token/123";
   assert.match(validateMarketRequest(path, { interval: "1h" }, undefined) ?? "", /use '60', not '1h'/i);

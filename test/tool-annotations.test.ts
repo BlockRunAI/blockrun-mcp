@@ -26,7 +26,7 @@ test("trading profile exposes nine annotated tools and no media surface", () => 
 
   assert.deepEqual(annotations.get("blockrun_polymarket_read"), {
     readOnlyHint: true,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: false,
   });
   assert.deepEqual(annotations.get("blockrun_polymarket"), {

@@ -62,8 +62,8 @@ blockrun_markets path:"markets/search" params:{q:"Bitcoin",status:"open",venue:"
 blockrun_markets path:"polymarket/markets/keyset" params:{condition_id:"0x...",status:"open",limit:"5"}
 
 # 5. Preview, then place
-blockrun_polymarket action:"buy" token_id:"..." amount_usd:2            # dry-run
-blockrun_polymarket action:"buy" token_id:"..." amount_usd:2 confirm:true  # market FOK
+blockrun_polymarket_read action:"preview" side:"buy" token_id:"..." amount_usd:5 order_type:"FOK"
+blockrun_polymarket action:"buy" token_id:"..." amount_usd:5 order_type:"FOK" confirm:true
 #   or limit: price:0.45 size:10 (GTC; order_type:"GTD" + expires_at for expiry)
 #   or via condition: condition_id:"0x..." outcome:"Yes"
 

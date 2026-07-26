@@ -10,9 +10,9 @@ and no vendor API keys.
 2. It combines live BTC spot, probability history, smart-wallet positioning,
    and liquidity into one evidence table.
 3. It states both the thesis and the strongest counterevidence.
-4. It builds a real $1 CLOB order preview from the live book.
-5. It proves nothing was submitted and verifies positions with a separate
-   read-only MCP tool.
+4. It builds a live, executable-size CLOB order preview through the read-only
+   Polymarket tool.
+5. It proves nothing was signed or submitted.
 
 At Stanford, stop at dry-run. Polymarket blocks new orders from the United
 States; do not alter networking to bypass that restriction. A real-money write
@@ -26,7 +26,7 @@ Claude Code:
 ```bash
 claude mcp add blockrun-trading -s user \
   -e BLOCKRUN_BUDGET_LIMIT=0.15 \
-  -e POLYMARKET_MAX_BET_USD=2 POLYMARKET_MAX_SESSION_USD=5 \
+  -e POLYMARKET_MAX_BET_USD=5 POLYMARKET_MAX_SESSION_USD=5 \
   -- npx -y @blockrun/mcp@latest --profile trading
 claude mcp list
 ```
@@ -43,7 +43,7 @@ Codex CLI:
 ```bash
 codex mcp add blockrun-trading \
   --env BLOCKRUN_BUDGET_LIMIT=0.15 \
-  --env POLYMARKET_MAX_BET_USD=2 \
+  --env POLYMARKET_MAX_BET_USD=5 \
   --env POLYMARKET_MAX_SESSION_USD=5 \
   -- npx -y @blockrun/mcp@latest --profile trading
 codex mcp list
@@ -68,16 +68,26 @@ If image, video, chat, or phone appears, the wrong profile is installed.
 Use the `signal-to-trade-demo` Skill and say:
 
 ```text
-Build a live signal-to-trade demo for one current, liquid Polymarket Bitcoin
-threshold market. Discover it dynamically; do not use a stored condition or
-token ID. Verify the resolution rule and expiry. Then collect BTC spot,
-24-hour Yes-probability candles, 30-day smart-money positioning with at least
-100 trades, and 24-hour historical orderbooks. Make paid calls sequentially.
-
-Show an evidence table, strongest counterevidence, confidence, and a $1 FOK
-buy preview on the justified side. Never pass confirm:true. Redact all wallet,
-order, and transaction identifiers. Finish with the exact line:
+Use the signal-to-trade-demo Skill. Spend at most five US cents on public data.
+Find one current liquid Bitcoin threshold market, build the four-source signal,
+and preview the smallest executable whole-dollar FOK order from one to five US
+dollars. Do not access account data or submit anything. Redact identifiers and
+finish with the exact line:
 DRY RUN — nothing signed or submitted.
+```
+
+For the most reliable stage pacing, use two prompts instead:
+
+```text
+Use the signal-to-trade-demo Skill. Spend at most five US cents on public data.
+Find the best current liquid Bitcoin threshold market and return the four-source
+signal. Do not access account data or place/preview an order.
+```
+
+```text
+Preview the smallest executable whole-dollar FOK order from one to five US
+dollars on the best-supported side. Use only the read-only preview action, do
+not submit, and end: DRY RUN — nothing signed or submitted.
 ```
 
 ## Stage flow
@@ -88,9 +98,9 @@ DRY RUN — nothing signed or submitted.
 wallet, turn those sources into a traceable signal, and act on the same market
 without creating API accounts.”
 
-Show the nine-tool Trading profile. Point out that `polymarket_read` is
-separated from the funds-affecting trading tool, so MCP clients can approve
-reads without approving writes.
+Show the nine-tool Trading profile. Point out that order preview lives inside
+`polymarket_read`, separated from the funds-affecting trading tool, so MCP
+clients do not request write approval for a dry-run.
 
 ### 1:00–3:30 — dynamic market and signal
 
@@ -123,19 +133,17 @@ the remaining price move and negative cohort PnL argue for caution. The agent
 should be allowed to return `NO TRADE`; forcing a bullish answer would make the
 demo less credible.
 
-### 5:30–7:00 — real order preview
+### 5:30–7:00 — executable order preview
 
-The agent calls the trading tool without `confirm`. The tested live preview was
-a $1 market FOK at a best ask near 0.31. The MCP shows the estimated fill and
-does not sign or submit anything.
-
-Then call `blockrun_polymarket_read` for positions and open orders. The tested
-after-state contained zero positions and no submitted order.
+The agent calls `blockrun_polymarket_read` with `action:"preview"`. It chooses
+the smallest whole-dollar amount from $1–$5 that clears the live minimum share
+size and available book depth. The MCP shows the estimated fill and cannot sign
+or submit anything.
 
 ### 7:00–8:00 — close on safety
 
 - local signing and self-custody;
-- $2 per-order and $5 per-session demo caps;
+- $5 per-order and $5 per-session demo caps;
 - $0.15 API budget;
 - pre-payment parameter validation;
 - serialized x402 calls from one wallet;
@@ -153,7 +161,8 @@ after-state contained zero positions and no submitted order.
 
 ## Presenter checklist
 
-- Update to the release containing these fixes; run `claude mcp list`.
+- Update to the release containing these fixes; run `claude mcp list` or
+  `codex mcp list`.
 - Confirm wallet funding privately; never put an address on the projector.
 - Run setup once before screen sharing; verify approvals and blocked-region
   status without showing identifiers.

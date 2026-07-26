@@ -14,29 +14,32 @@ or preparing a fallback.
 
 ## Hard safety contract
 
-1. Start with `blockrun_polymarket` `action:"setup"` without `confirm` to check
-   readiness and geographic eligibility. Use `blockrun_polymarket_read` for
-   positions and orders.
+1. In a presentation dry-run, do not call wallet, setup, positions, orders, or
+   resources. Those responses can contain wallet-derived identifiers before the
+   final answer is redacted. The presenter performs account readiness privately
+   before screen sharing.
 2. If the current egress is blocked, never call a funds-affecting action with
    `confirm:true`. Continue with live data and a dry-run order preview only.
    A Stanford/US presentation is always dry-run mode.
-3. Always preview an order without `confirm` first. A real order requires the
+3. Always preview through `blockrun_polymarket_read` `action:"preview"`. It has
+   no confirmation input and cannot sign or submit. A real order requires the
    user's explicit approval of the exact market, outcome, amount, price/type,
    and current region eligibility.
-4. Default demo notional is $1, hard cap $2. Do not split orders to bypass caps.
+4. Choose the smallest whole-dollar preview from $1–$5 that satisfies the live
+   `min_order_size` and book depth. Never present a smaller, non-executable
+   preview as valid. Do not split orders to bypass caps.
 5. Make paid market-data calls sequentially. Do not launch them in parallel
    against one payment wallet.
 
-## 1. Preflight
+## 1. Private operator preflight
 
 - Confirm the Trading profile exposes nine tools and no image/video/media tool:
   wallet, price, dex, markets, surf, defi, rpc, polymarket_read, polymarket.
-- Check `blockrun_wallet` status and set a small API budget if needed. Report
-  only chain and rounded balance; redact addresses.
-- Call `blockrun_polymarket` setup without confirmation. Record only readiness,
-  pUSD balance, approvals, and region result.
-- Call `blockrun_polymarket_read` positions and orders to establish the before
-  state.
+- Before screen sharing, the human operator may check `blockrun_wallet`, run
+  setup, and inspect positions/orders. Never include those raw calls in the
+  presentation conversation.
+- For the live dry-run conversation, begin directly with public market
+  discovery. No account state is required to preview a CLOB order.
 
 ## 2. Discover a current market
 
@@ -62,8 +65,8 @@ that feed can contain future placeholders with no liquidity. Rank candidates by:
 
 Resolve the selected market using `polymarket/markets/keyset` with
 `condition_id`, `status:"open"`, and a small `limit`. Do not invent Gamma API
-parameters such as `active`, `closed`, `order`, or `ascending`; unknown values
-may be ignored silently.
+parameters such as `active`, `closed`, `order`, `ascending`, `search`, or
+`sort`; the MCP rejects these before payment.
 
 ## 3. Collect evidence sequentially
 
@@ -116,28 +119,31 @@ Then state:
 - one-sentence thesis;
 - strongest counterevidence;
 - confidence (`low`, `medium`, or `high`) with a reason;
-- proposed side and maximum $1 preview, or `NO TRADE` when gates fail.
+- proposed side and the smallest executable whole-dollar preview from $1–$5,
+  or `NO TRADE` when gates fail.
 
 Do not describe the result as financial advice or a guaranteed “good signal.”
 
 ## 5. Preview and verify
 
-Preview without confirmation:
+Preview through the dedicated non-destructive action:
 
 ```text
-blockrun_polymarket {
-  action: "buy",
+blockrun_polymarket_read {
+  action: "preview",
+  side: "buy",
   token_id: "<TOKEN_ID>",
-  amount_usd: 1,
+  amount_usd: <SMALLEST_WHOLE_DOLLAR_FROM_1_TO_5_THAT_MEETS_MIN_SIZE>,
   order_type: "FOK"
 }
 ```
 
 Show the outcome, live best ask, estimated shares, max cost, and the explicit
-line `DRY RUN — nothing signed or submitted`. If blocked, stop here.
+line `DRY RUN — nothing signed or submitted`.
 
 If the user explicitly approves a real order and the region is permitted,
-repeat the exact call with `confirm:true`, then use
+repeat the exact economics with `blockrun_polymarket` action `buy`/`sell` and
+`confirm:true`, then use
 `blockrun_polymarket_read` to inspect positions and open orders. Redact all
 identifiers. If a FOK does not fill, report it honestly; do not silently switch
 to FAK or raise the price.
@@ -153,6 +159,6 @@ Underlying: <spot> | Required move: <x%> | Time left: <duration>
 Trend: <change> | Smart money: <buyer share + PnL caveat>
 Liquidity: <spread/activity>
 Verdict: <side or NO TRADE> | Confidence: <level>
-Order: $1 <side> preview | DRY RUN / SUBMITTED
+Order: $<amount> <side> preview | DRY RUN / SUBMITTED
 Safety: local signing, capped notional, IDs redacted
 ```
