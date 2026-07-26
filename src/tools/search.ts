@@ -6,6 +6,7 @@
 // skill, not the tool description.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
@@ -75,6 +76,7 @@ Common shape:
 \`sources\` accepts any subset of ["web","x","news"] (defaults to all three). For tweet-only searches, use ["x"]. \`max_results\` is 1–50 (default 10) and drives the price — pass a smaller value if you want to cap spend.
 
 Full request shape + worked examples in the \`search\` skill (\`skills/search/SKILL.md\`).`,
+      annotations: TOOL_ANNOTATIONS.paidOpenWorld,
       inputSchema: {
         path: z.string().optional().default("").describe("Endpoint sub-path under /v1/search/ (default empty = root /v1/search). Reserved for future surfaces."),
         body: z.any().optional().describe("Request body. At minimum { query: '...' }. Sent as POST."),

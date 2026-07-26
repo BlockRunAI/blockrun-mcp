@@ -9,6 +9,7 @@ import { redeemPosition } from "../utils/polymarket/redeem.js";
 import { runSetup } from "../utils/polymarket/setup.js";
 import { withdrawFunds } from "../utils/polymarket/withdraw.js";
 import { fundVault } from "../utils/polymarket/fund.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -35,7 +36,8 @@ Actions:
 - redeem — claim resolved winnings for condition_id (confirm:true; gasless)
 - withdraw — cash out pUSD → native USDC on Base to your agent wallet (confirm:true). amount_usd optional (default: full balance); to_address optional (default: your wallet).
 
-Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Geoblock is handled by default (CLOB traffic routes through BlockRun's Finland egress) — setup reports your region status.`,
+Prices are probabilities 0–1 on the market's tick grid. token_id comes from blockrun_markets Polymarket data. The default CLOB connection is direct so Polymarket can enforce geographic eligibility; setup reports status. Never route around a blocked jurisdiction.`,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         action: z.enum(["setup", "fund", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
           .describe("Operation to perform"),
@@ -106,6 +108,52 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
         return {
           content: [{ type: "text" as const, text: result.text }],
           structuredContent: asStructuredContent(result.structured ?? { session: getSessionLedger() }),
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${extractErrorMessage(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Narrow read surface for clients that enforce MCP annotations at tool level.
+ * The legacy blockrun_polymarket tool keeps these actions for compatibility,
+ * but mixing reads and real-money writes forces that whole tool to be marked
+ * destructive. This companion lets Codex and other clients safely inspect
+ * positions/orders without approving a funds-affecting tool call.
+ */
+export function registerPolymarketReadTool(server: McpServer): void {
+  server.registerTool(
+    "blockrun_polymarket_read",
+    {
+      description: `Read the local wallet's Polymarket state without signing or changing anything.
+
+Actions:
+- positions — holdings, current value, PnL, and redeemable status (free Data API)
+- orders — open CLOB orders, optionally filtered by condition_id
+
+Use blockrun_polymarket for setup, dry-run previews, buy/sell, cancel, redeem, fund, or withdraw.`,
+      annotations: TOOL_ANNOTATIONS.readOnly,
+      inputSchema: {
+        action: z.enum(["positions", "orders"]).describe("Read-only operation"),
+        condition_id: z.string().optional().describe("orders: optional market condition ID filter"),
+      },
+    },
+    async ({ action, condition_id }) => {
+      try {
+        const result = action === "positions"
+          ? await listPositions()
+          : await listOpenOrders({ condition_id });
+        if (result.isError) {
+          return { content: [{ type: "text" as const, text: `Error: ${result.text}` }], isError: true };
+        }
+        return {
+          content: [{ type: "text" as const, text: result.text }],
+          structuredContent: asStructuredContent(result.structured ?? {}),
         };
       } catch (err) {
         return {

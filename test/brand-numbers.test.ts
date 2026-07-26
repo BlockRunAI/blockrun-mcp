@@ -28,7 +28,7 @@ test("ships the advertised number of tools", () => {
 });
 
 test("the default profile is the one the count describes", () => {
-  // Copy says "19 tools" without qualification, so the count has to be what an
+  // Copy states the tool count without qualification, so it has to be what an
   // agent gets by default — not a maximum only reachable with a flag.
   const { tools } = resolveTools(undefined, {});
   assert.equal(tools.size, published.mcp.tools);

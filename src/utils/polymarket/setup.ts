@@ -231,9 +231,8 @@ async function geoblockLine(): Promise<string> {
   if (geo.orderPlacement === "permitted") return `✅ Region: order placement permitted from this egress${where}`;
   if (geo.orderPlacement === "blocked") {
     return `❌ Region: order placement BLOCKED from this egress${where}. ` +
-      "Point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay " +
-      "(see deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / " +
-      "HTTPS_PROXY) only changes how the current egress is reached, not the Polymarket-facing IP.";
+      "Do not submit a new order from this location. Use read-only signal analysis and a dry-run " +
+      "preview, or trade only when physically operating from a jurisdiction Polymarket permits.";
   }
   return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
 }

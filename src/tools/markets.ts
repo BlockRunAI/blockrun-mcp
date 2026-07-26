@@ -7,6 +7,9 @@ import { getClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
+import { validateMarketRequest } from "../utils/markets-validation.js";
 
 // What x402 CHARGES, which is not the 402's JSON `price` field. That field is the
 // BASE ($0.0075); the charge is base + a $0.002 flat transaction fee, and it lives
@@ -33,7 +36,6 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
 
 CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
 - markets — list canonical market/question containers with cross-venue Predexon IDs
-- markets/listings — venue-native executable listings flattened across canonical markets
 - outcomes/:predexon_id — resolve a canonical outcome ID to its market context + venue listings
   Filter with ?venue=polymarket|kalshi|limitless|opinion|predictfun, ?status=, ?category=, ?league=, ?event_id=, ?pagination_key=
 
@@ -79,7 +81,15 @@ CROSS-PLATFORM:
 - matching-markets, matching-markets/pairs — equivalent markets across Polymarket+Kalshi
 - markets/search — search across all platforms in one call
 
+REQUEST CONTRACTS:
+- Discover current markets with markets/search, then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id. markets/listings is no longer available.
+- Candlesticks interval is integer minutes: 0|1|5|15|60|1440 (use "60", not "1h"); start_time/end_time are Unix seconds.
+- polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
+- Smart-money calls require a meaningful cohort filter; a safe default is { window: "30d", min_trades: "100" }.
+- Issue paid calls sequentially. The MCP also serializes them to protect one wallet from concurrent x402 payment races.
+
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
+      annotations: TOOL_ANNOTATIONS.paidOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. { limit: '20', active: 'true' })"),
@@ -95,6 +105,10 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         if (hasPathTraversal(path)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
+        const validationError = validateMarketRequest(path, params, body);
+        if (validationError) {
+          return { content: [{ type: "text", text: formatError(validationError) }], isError: true };
+        }
         const estimatedCost = estimateMarketCost(path, body);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
@@ -105,9 +119,9 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         }
         try {
           const llm = getClient();
-          const result = body !== undefined
-            ? await llm.pmQuery(path, body)
-            : await llm.pm(path, params);
+          const result = await serializePaidRequest(() => body !== undefined
+            ? llm.pmQuery(path, body)
+            : llm.pm(path, params));
           recordSpending(budget, estimatedCost, agent_id);
 
           return {

@@ -6,6 +6,8 @@
 // in USDC via x402. Endpoint catalog mirrors blockrun/src/lib/defillama.ts.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -45,6 +47,7 @@ Examples:
   blockrun_defi({ path: "chains" })
 
 Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pairs, blockrun_surf for labeled on-chain data — this tool is for protocol/TVL/yield fundamentals.`,
+      annotations: TOOL_ANNOTATIONS.paidPrivate,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/defillama/, e.g. 'protocols', 'protocol/aave-v3', 'chains', 'yields', 'prices/coingecko:ethereum'"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
@@ -66,7 +69,7 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
         }
         try {
           const client = getClient() as unknown as RawClient;
-          const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
+          const result = await serializePaidRequest(() => client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`));
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

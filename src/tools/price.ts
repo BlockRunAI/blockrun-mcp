@@ -19,6 +19,8 @@ import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
 
 const CATEGORY = z.enum(["crypto", "fx", "commodity", "usstock", "stocks"]);
 const MARKET = z.enum([
@@ -54,6 +56,7 @@ Examples:
 - { action: "price", category: "stocks", symbol: "AAPL", market: "us" }
 - { action: "history", category: "crypto", symbol: "ETH-USD", resolution: "D", from: 1700000000, to: 1710000000 }
 - { action: "list", category: "crypto", query: "sol" }`,
+      annotations: TOOL_ANNOTATIONS.paidPrivate,
       inputSchema: {
         action: ACTION.describe("Which endpoint to hit: price, history, or list."),
         category: CATEGORY.describe("Market category."),
@@ -98,10 +101,11 @@ Examples:
 
           if (action === "price") {
             if (!symbol) throw new Error("symbol is required for action='price'");
-            const result = await priceClient.price(category as PriceCategory, symbol, {
+            const task = () => priceClient.price(category as PriceCategory, symbol, {
               market: market as StockMarket | undefined,
               session: session as MarketSession | undefined,
             });
+            const result = paid ? await serializePaidRequest(task) : await task();
             if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
             return {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -112,13 +116,14 @@ Examples:
           if (action === "history") {
             if (!symbol) throw new Error("symbol is required for action='history'");
             if (from === undefined) throw new Error("from (unix seconds) is required for action='history'");
-            const result = await priceClient.history(category as PriceCategory, symbol, {
+            const task = () => priceClient.history(category as PriceCategory, symbol, {
               market: market as StockMarket | undefined,
               session: session as MarketSession | undefined,
               resolution: (resolution ?? "D") as BarResolution,
               from,
               to,
             });
+            const result = paid ? await serializePaidRequest(task) : await task();
             if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
             return {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

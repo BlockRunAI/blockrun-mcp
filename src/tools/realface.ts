@@ -1,5 +1,6 @@
 // src/tools/realface.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -99,6 +100,7 @@ Typical flow:
   4. blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"ta_xxxx" prompt:"…"
 
 Privacy: BlockRun does not store face/liveness data — only the asset id, name, and the photo URL you supply.`,
+      annotations: TOOL_ANNOTATIONS.paidPrivate,
       inputSchema: {
         action: z.enum(["init", "status", "enroll", "portrait", "list"]).describe("What to do"),
         name: z.string().min(1).max(64).optional().describe("Display name for the person/character (required for init, enroll, and portrait)."),

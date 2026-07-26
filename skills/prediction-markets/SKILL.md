@@ -64,7 +64,7 @@ One tool, three params. Method auto-routes: POST when `body` is set, GET otherwi
 ```ts
 blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 
-blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1h" } })
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "60" } })
 
 blockrun_markets({ path: "polymarket/wallet/identities", body: {
   addresses: ["0xabc...", "0xdef..."]
@@ -72,6 +72,20 @@ blockrun_markets({ path: "polymarket/wallet/identities", body: {
 ```
 
 Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child agent's budget.
+
+Make paid calls sequentially when one wallet is paying. The MCP serializes them
+as a second guard against concurrent x402 payment races.
+
+Current parameter contracts that prevent paid 4xx responses:
+
+- Do not call `markets/listings`; use `markets/search` for discovery, then
+  `polymarket/markets/keyset` with `condition_id` for the selected market.
+- Candlestick `interval` is integer minutes: `0`, `1`, `5`, `15`, `60`, or
+  `1440`. Optional `start_time`/`end_time` are Unix seconds.
+- `polymarket/orderbooks` requires `token_id`, `start_time`, and `end_time`; the
+  times are Unix milliseconds.
+- Smart-money calls require a meaningful filter. For general analysis use
+  `{ window: "30d", min_trades: "100" }`.
 
 ## Two Pricing Tiers
 
@@ -87,7 +101,6 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 |---|---|---|
 | **Same question across venues** | `markets` | 1 |
 | **Search every venue at once** | `markets/search` | 2 |
-| Venue-native tradable listings | `markets/listings` | 1 |
 | Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
 | **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
 | Active matched pairs | `matching-markets/pairs` | 2 |
@@ -156,9 +169,14 @@ blockrun_markets({ path: "outcomes/PXM-12345" })   // → venue listings + price
 ### 3. "Show me this market's price history" (impossible from a free API)
 
 ```ts
-blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1h" } })
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: {
+  interval: "60", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>"
+} })
 blockrun_markets({ path: "polymarket/volume-chart/0xCONDITION_ID" })
 blockrun_markets({ path: "polymarket/markets/0xCONDITION_ID/open_interest" })
+blockrun_markets({ path: "polymarket/orderbooks", params: {
+  token_id: "<TOKEN_ID>", start_time: "<UNIX_MILLISECONDS>", end_time: "<UNIX_MILLISECONDS>"
+} })
 ```
 
 ### 4. "Who's smart money betting on in this market?" ← compound
@@ -167,7 +185,9 @@ Positioning → then profile the wallets behind it.
 
 ```ts
 // 1. Which high-performing wallets are in this market, and on which side
-blockrun_markets({ path: "polymarket/market/0xCONDITION_ID/smart-money" })
+blockrun_markets({ path: "polymarket/market/0xCONDITION_ID/smart-money", params: {
+  window: "30d", min_trades: "100"
+} })
 
 // 2. Profile the top wallet it returns — win rate, P&L, style
 blockrun_markets({ path: "polymarket/wallet/0xWHALE" })
@@ -257,7 +277,7 @@ Inside the MCP, use `blockrun_markets` above. For standalone scripts:
 from blockrun_llm import setup_agent_wallet   # setup_agent_solana_wallet() on Solana
 client = setup_agent_wallet()
 
-client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="1h")
+client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="60")
 client.pm_query("polymarket/wallet/identities", {"addresses": ["0xabc"]})
 ```
 

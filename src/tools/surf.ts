@@ -11,6 +11,8 @@
 // forwards the request server-side using the BlockRun-held SURF_API_KEY.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
@@ -73,6 +75,7 @@ Common paths (full 83-endpoint catalog in the surf skill):
 
 Method is auto-routed: pass 'body' for POST endpoints; otherwise GET with 'params'.
 Each Surf endpoint pre-validates required params before settling — you get a 400 (not a charge) if a required field is missing. Browse the full catalog: https://blockrun.ai/marketplace/surf`,
+      annotations: TOOL_ANNOTATIONS.paidOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint path under /v1/surf/, e.g. 'market/price', 'prediction-market/polymarket/ranking', 'wallet/detail', 'onchain/sql'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET endpoints, e.g. { symbol: 'BTC' } or { address: '0x...', chain: 'ethereum' }"),
@@ -98,9 +101,9 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
         try {
           const client = getClient() as unknown as SurfClient;
           const endpoint = `/v1/surf/${cleanPath}`;
-          const result = body !== undefined
-            ? await client.requestWithPaymentRaw(endpoint, body)
-            : await client.getWithPaymentRaw(endpoint, params);
+          const result = await serializePaidRequest(() => body !== undefined
+            ? client.requestWithPaymentRaw(endpoint, body)
+            : client.getWithPaymentRaw(endpoint, params));
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

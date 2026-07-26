@@ -5,6 +5,7 @@
 // GPU type / image / timeout details live in the modal skill.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -115,6 +116,7 @@ Common paths (all POST):
 - sandbox/terminate  — body: { sandbox_id }                                                ($0.0030)
 
 Full pricing tables + GPU details in the \`modal\` skill.`,
+      annotations: TOOL_ANNOTATIONS.paidPrivate,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/modal/, e.g. 'sandbox/create', 'sandbox/exec'"),
         body: z.any().optional().describe("JSON body. Sent as POST."),

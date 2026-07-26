@@ -68,18 +68,11 @@ export function assertContractConfig(): void {
   }
 }
 
-// --- Hosts (env-overridable so Phase 2 can point them at the BlockRun gateway) ---
-// CLOB order placement is geoblocked by IP (US/UK/EU and many regions). We
-// DEFAULT to BlockRun's hosted Finland egress (europe-north1) so trading works
-// out of the box with zero config — Finland is FULLY unrestricted under
-// Polymarket's geographic policy (frontend + API), a more durable choice than
-// Japan (close-only on the frontend). The relay only forwards to Polymarket's
-// CLOB (it can't see or move funds; every order is still signed locally by the
-// user's key). Override with POLYMARKET_CLOB_HOST to hit Polymarket directly
-// (from a permitted region) or run your own egress (see deploy/finland-egress).
-// Direct Polymarket host: https://clob.polymarket.com
+// --- Hosts (env-overridable for compliant private infrastructure) ---
+// Default directly to Polymarket so its geographic controls evaluate the
+// user's actual network location. Do not route around a blocked jurisdiction.
 export const CLOB_HOST =
-  process.env.POLYMARKET_CLOB_HOST || "https://pm-egress-1092497648280.europe-north1.run.app/clob";
+  process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
 export const RELAYER_URL =
   process.env.POLYMARKET_RELAYER_URL || "https://relayer-v2.polymarket.com";
 export const DATA_API_HOST =
@@ -93,8 +86,7 @@ export const BRIDGE_API_HOST =
 // USDC_ADDRESS in ../constants.ts.)
 export const BASE_CHAIN_ID = 8453;
 export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-// Overridable so a demo routing orders through the egress relay can report the
-// SAME egress's region (a permitted ✅) instead of the local IP's status.
+// Overridable for compliant private infrastructure and tests.
 export const GEOBLOCK_URL =
   process.env.POLYMARKET_GEOBLOCK_URL || "https://polymarket.com/api/geoblock";
 export const BRIDGE_UI_URL = "https://polymarket.com"; // deposits happen via the Polymarket bridge UI/API

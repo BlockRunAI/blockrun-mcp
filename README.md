@@ -6,12 +6,12 @@
 
 <p>Agents can't sign up for accounts. Agents can't enter credit cards.<br>
 Agents can only sign transactions.<br><br>
-<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call in USDC. No accounts. No API keys. No dashboards.</strong><br><br>
+<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call in USDC. No accounts. No API keys. No dashboards.</strong><br><br>
 <em>Read the odds <strong>and</strong> place the bet, from one self-custody wallet.</em></p>
 
 <br>
 
-<img src="https://img.shields.io/badge/🧰_19_Tools-success?style=for-the-badge" alt="19 tools">&nbsp;
+<img src="https://img.shields.io/badge/🧰_20_Tools-success?style=for-the-badge" alt="20 tools">&nbsp;
 <img src="https://img.shields.io/badge/🤖_Agent--Native-black?style=for-the-badge" alt="Agent native">&nbsp;
 <img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="No API keys">&nbsp;
 <img src="https://img.shields.io/badge/📈_Read_+_Trade_Polymarket-e11d48?style=for-the-badge" alt="Read and trade Polymarket">&nbsp;
@@ -42,7 +42,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**. Authentication is a wallet signature (no API keys); you pay per call in USDC via the [x402](https://x402.org) protocol (no credit cards, no subscriptions). One self-custody wallet on Base or Solana. MIT licensed.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**. Authentication is a wallet signature (no API keys); you pay per call in USDC via the [x402](https://x402.org) protocol (no credit cards, no subscriptions). One self-custody wallet on Base or Solana. MIT licensed.
 
 ## 🏆 First of its kind — the signal → trade loop in Claude Code
 
@@ -56,7 +56,7 @@ Every other data integration was built for **human developers** — create an ac
 
 **Agents can't do any of that.** BlockRun MCP is built for the agent-first world:
 
-- **One wallet, every source** — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
+- **One wallet, every source** — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
 - **No API keys** — your wallet signature *is* authentication.
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
@@ -71,7 +71,7 @@ Every other data integration was built for **human developers** — create an ac
 | ------------------- | -------------------------------- | ------------------------- | ----------------------------------------- |
 | **Setup**           | Account + API key *per vendor*   | Account/key for 1 vendor  | **Wallet auto-created, no signup**        |
 | **Payment**         | Credit card, monthly minimums    | Credit card / vendor plan | **USDC per-call via x402**                |
-| **Data sources**    | One per integration              | One vendor                | **<!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools — LLMs, media, markets, chain**|
+| **Data sources**    | One per integration              | One vendor                | **<!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — LLMs, media, markets, chain**|
 | **Place real bets** | Build it yourself                | Rare                      | **Yes — Polymarket CLOB, confirm-gated**  |
 | **Pay-chain**       | —                                | —                         | **Base + Solana**                         |
 | **Agent budgets**   | Manual                           | —                         | **Built-in per-agent delegation**         |
@@ -147,17 +147,23 @@ Expose a trimmed tool set so the client loads fewer schemas into context. Pass `
 
 | Profile | Tools |
 |---------|-------|
-| `full` *(default)* | everything (<!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools) |
+| `full` *(default)* | everything (<!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools) |
 | `media` | `wallet` `models` `image` `video` `realface` `music` `speech` |
-| `trading` | `wallet` `price` `dex` `markets` `surf` `defi` `rpc` `polymarket` |
+| `trading` | `wallet` `price` `dex` `markets` `surf` `defi` `rpc` `polymarket_read` `polymarket` |
 | `research` | `wallet` `models` `chat` `search` `exa` `surf` |
 | `chat` | `wallet` `models` `chat` |
 
 ```bash
 claude mcp add blockrun-trading -s user -- npx -y @blockrun/mcp@latest --profile trading
+
+# Codex CLI
+codex mcp add blockrun-trading -- npx -y @blockrun/mcp@latest --profile trading
 ```
 
 An unknown profile name falls back to `full`. `modal` and `phone` are `full`-profile only.
+For a complete live signal → order-preview presentation, use
+[`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)
+with the [Stanford runbook](docs/stanford-trading-demo.md).
 
 ### 3. Fund your wallet
 
@@ -205,6 +211,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
+| `blockrun_polymarket_read` | Read-only Polymarket positions and open orders, separated for MCP clients that enforce tool safety annotations | free |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
 | `blockrun_surf` | Surf (asksurf.ai) — 83 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
@@ -259,7 +266,7 @@ blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:2 confirm:true
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
-**Regions:** Polymarket geoblocks order placement by IP (US/UK + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Finland egress (a fully unrestricted region under Polymarket's policy), so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress, optionally reached via `HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY` (a proxy alone doesn't change the Polymarket-facing egress). Complying with Polymarket's terms for your jurisdiction is your responsibility.
+**Regions:** Polymarket restricts order placement in some jurisdictions. The MCP connects directly to Polymarket by default so the platform can enforce eligibility, and `setup` reports the current egress status. If the location is blocked, use read-only analysis and dry-run previews only—never route around the restriction. `POLYMARKET_CLOB_HOST` and proxy settings exist for compliant private infrastructure, not geoblock evasion.
 
 > ⚠️ **Back up your signer key** (`~/.blockrun/.session` by default; a `BLOCKRUN_WALLET_KEY` env var or an existing agent `wallet.json` takes precedence — `setup` prints the actual signer address). It is the only key to both the payment wallet and the Polymarket deposit wallet.
 
@@ -297,7 +304,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 
 - **CRITICAL: On any payment / balance / 402 error, call `blockrun_wallet` *first*** to check status, then `action:"setup"` for funding. Don't retry the failing tool blindly — the wallet is empty.
 - **CRITICAL: `blockrun_polymarket` moves REAL user funds** (pUSD on Polygon), separate from the x402 API budget. Never `buy`/`sell`/`redeem` with `confirm:true` unless the user explicitly approved that exact trade; without `confirm` you get a safe dry-run. Discover markets/token IDs with `blockrun_markets` first.
-- **CRITICAL: `blockrun_surf`'s 84-endpoint catalog is in [`skills/surf/SKILL.md`](skills/surf/SKILL.md); `blockrun_markets`' full endpoint list is in its tool description** (worked examples in [`skills/prediction-markets/SKILL.md`](skills/prediction-markets/SKILL.md)). Browse those before guessing paths.
+- **CRITICAL: `blockrun_surf`'s 84-endpoint catalog is in [`skills/surf/SKILL.md`](skills/surf/SKILL.md); `blockrun_markets`' full endpoint list is in its tool description** (worked examples in [`skills/prediction-markets/SKILL.md`](skills/prediction-markets/SKILL.md); live-demo workflow in [`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)). Browse those before guessing paths.
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures / client timeouts do NOT charge. Don't retry-loop — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`, then pass `agent_id:"X"` to every downstream call. The child is auto-blocked at zero.
 - **Free tier first for drafts:** `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto/FX/commodity), and `blockrun_models` are $0.
@@ -347,7 +354,7 @@ One wallet. All sources. No dashboards.
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
-| `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
+| `POLYMARKET_CLOB_HOST` | `https://clob.polymarket.com` | CLOB endpoint. Override only for compliant private infrastructure; never use it to evade geographic restrictions. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
 | `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |
@@ -382,7 +389,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 ## FAQ
 
 **What is BlockRun MCP?**
-An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call in USDC. No accounts, no API keys.
+An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call in USDC. No accounts, no API keys.
 
 **Do I need API keys or accounts?**
 No. A wallet is auto-created locally on first run; you fund it with USDC. No signups, no dashboards, no key rotation.

@@ -6,6 +6,7 @@ import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, g
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -51,6 +52,7 @@ Usage pattern for multi-agent systems:
   3. blockrun_wallet action:"report" to audit spending
 
 Do NOT call this for actual AI queries — use blockrun_chat for that.`,
+      annotations: TOOL_ANNOTATIONS.walletManagement,
       inputSchema: {
         action: z.enum(["status", "deposit", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
         chain: z.enum(["base", "solana"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),

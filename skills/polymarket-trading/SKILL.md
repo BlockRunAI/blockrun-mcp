@@ -21,10 +21,10 @@ this tool only trades.
   signer's EIP-712 signatures. Deploy/approve/redeem are **gasless** (relayer).
 - **Money separation**: bets spend pUSD on Polygon; x402 API fees spend USDC on
   Base. The budget ledger does NOT cover bets — `confirm:true` + caps do.
-- **Zero setup**: no Polymarket account, no API keys, no gas token. On first
-  `setup` the MCP bootstraps a builder key from the user's OWN wallet, then
-  derives + deploys the vault (all gasless). Geoblock is handled by default —
-  CLOB traffic routes through BlockRun's Finland egress out of the box.
+- **Zero account setup**: no Polymarket account, no API keys, no gas token. On
+  first `setup` the MCP bootstraps a builder key from the user's OWN wallet,
+  then derives + deploys the vault (all gasless). The direct CLOB connection
+  still enforces Polymarket's geographic eligibility rules.
 
 ## Golden rules for agents
 
@@ -35,15 +35,15 @@ this tool only trades.
    are enforced server-side; don't try to split orders to sneak past them.
 3. On ANY error, read the message — it says exactly what to do next (fund,
    approve, region, re-run setup). Don't retry blindly.
+4. If `setup` reports a blocked region, stop before every confirmed order.
+   Read-only research and dry-run previews are still suitable for a demo.
 
 ## End-to-end flow
 
 ```
 # 0. No Polymarket account or API keys needed — the MCP bootstraps everything
-#    from the user's own wallet on first setup. (Geoblock is already handled:
-#    CLOB traffic routes through BlockRun's Finland egress by default. Set
-#    POLYMARKET_CLOB_HOST only to use your own egress, or to hit Polymarket
-#    directly from a permitted region.)
+#    from the user's own wallet on first setup. Geographic eligibility still
+#    applies; the default CLOB endpoint is direct to Polymarket.
 
 # 1. Provision + inspect (idempotent, safe to re-run any time)
 blockrun_polymarket action:"setup"
@@ -57,8 +57,9 @@ blockrun_polymarket action:"fund" amount_usd:5 confirm:true
 # 3. Sign the one-time gasless approval batch (after user consent)
 blockrun_polymarket action:"setup" confirm:true
 
-# 4. Find a market + token (data tool, paid data)
-blockrun_markets path:"polymarket/markets" params:{...}   # → clobTokenIds, conditionId
+# 4. Find a market, then resolve the selected condition (paid data)
+blockrun_markets path:"markets/search" params:{q:"Bitcoin",status:"open",venue:"polymarket",limit:"20"}
+blockrun_markets path:"polymarket/markets/keyset" params:{condition_id:"0x...",status:"open",limit:"5"}
 
 # 5. Preview, then place
 blockrun_polymarket action:"buy" token_id:"..." amount_usd:2            # dry-run
@@ -67,9 +68,9 @@ blockrun_polymarket action:"buy" token_id:"..." amount_usd:2 confirm:true  # mar
 #   or via condition: condition_id:"0x..." outcome:"Yes"
 
 # 6. Manage
-blockrun_polymarket action:"orders"                     # open orders
+blockrun_polymarket_read action:"orders"                # open orders
 blockrun_polymarket action:"cancel" order_id:"..."      # or all:true
-blockrun_polymarket action:"positions"                  # holdings + PnL + redeemable
+blockrun_polymarket_read action:"positions"             # holdings + PnL + redeemable
 
 # 7. Claim winnings after resolution (gasless)
 blockrun_polymarket action:"redeem" condition_id:"0x..."             # preview
@@ -90,16 +91,12 @@ blockrun_polymarket action:"withdraw" confirm:true                   # (partial:
 
 ## Regions / geoblock
 
-Order placement is IP-geoblocked (US/UK/EU + many regions). **Handled by
-default** — CLOB traffic routes through BlockRun's Finland egress, so `setup`
-reports `✅ Region: order placement permitted` out of the box; you don't need to
-do anything. A user can override by pointing `POLYMARKET_CLOB_HOST` at their
-own relay (or at Polymarket directly, from a permitted region), optionally
-reached through their own proxy via `POLYMARKET_CLOB_PROXY` / `HTTPS_PROXY`
-(`POLYMARKET_CLOB_PROXY` wins if both are set). A proxy alone does NOT change
-the Polymarket-facing egress — CLOB traffic still exits from BlockRun's Finland
-relay unless `POLYMARKET_CLOB_HOST` is also repointed. Respecting Polymarket's ToS for the
-user's jurisdiction is the user's responsibility — never suggest evading it.
+Order placement is IP-restricted in some jurisdictions. The default connection
+is direct to Polymarket, and `setup` reports whether the current egress is
+eligible. If it is blocked, never submit an order with `confirm:true`; continue
+with read-only data and dry-run previews. `POLYMARKET_CLOB_HOST`,
+`POLYMARKET_CLOB_PROXY`, and `HTTPS_PROXY` are for compliant private
+infrastructure and debugging only, not for bypassing a regional restriction.
 
 ## Troubleshooting
 

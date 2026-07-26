@@ -19,6 +19,11 @@
       "name": "polymarket-trading",
       "source": "./skills/polymarket-trading",
       "description": "Use when the user wants to actually place, manage, or redeem real bets on Polymarket via blockrun_polymarket — setup, funding, confirm-gated orders, positions, redemption."
+    },
+    {
+      "name": "signal-to-trade-demo",
+      "source": "./skills/signal-to-trade-demo",
+      "description": "Build a presentation-ready live Polymarket signal from price, probability history, smart-money, and liquidity evidence, then produce a safe order preview and verify state."
     }
   ]
 }
