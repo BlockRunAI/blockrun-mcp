@@ -116,7 +116,7 @@ Common paths (all POST):
 - sandbox/terminate  — body: { sandbox_id }                                                ($0.0030)
 
 Full pricing tables + GPU details in the \`modal\` skill.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/modal/, e.g. 'sandbox/create', 'sandbox/exec'"),
         body: z.any().optional().describe("JSON body. Sent as POST."),

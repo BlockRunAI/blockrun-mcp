@@ -173,7 +173,7 @@ Notable modes:
 Pick directly: model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"anthropic/claude-opus-4.8", model:"xai/grok-4.5", model:"nvidia/deepseek-v4-flash" (free).
 
 Run blockrun_models to see all available models with pricing.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'moonshot/kimi-k3', 'openai/gpt-5.6-sol', 'zai/glm-5')"),

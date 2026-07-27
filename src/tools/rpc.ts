@@ -43,7 +43,7 @@ Examples:
   blockrun_rpc({ network: "ethereum", body: [{jsonrpc:"2.0",id:1,method:"eth_blockNumber"},{...}] })  // batch
 
 Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_surf (labeled/aggregated data) when they cover the question — this tool is for raw chain access.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         network: z.string().describe("Chain key, e.g. 'ethereum', 'base', 'solana', 'bitcoin', 'arbitrum', 'polygon'. Unknown slugs pass through to the Tatum gateway."),
         method: z.string().optional().describe("JSON-RPC method, e.g. 'eth_blockNumber', 'eth_call', 'getSlot' (Solana), 'getblockchaininfo' (Bitcoin). Required unless 'body' is set."),

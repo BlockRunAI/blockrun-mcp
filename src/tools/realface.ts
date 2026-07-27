@@ -100,7 +100,7 @@ Typical flow:
   4. blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"ta_xxxx" prompt:"…"
 
 Privacy: BlockRun does not store face/liveness data — only the asset id, name, and the photo URL you supply.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         action: z.enum(["init", "status", "enroll", "portrait", "list"]).describe("What to do"),
         name: z.string().min(1).max(64).optional().describe("Display name for the person/character (required for init, enroll, and portrait)."),

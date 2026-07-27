@@ -47,7 +47,7 @@ Examples:
   blockrun_defi({ path: "chains" })
 
 Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pairs, blockrun_surf for labeled on-chain data — this tool is for protocol/TVL/yield fundamentals.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/defillama/, e.g. 'protocols', 'protocol/aave-v3', 'chains', 'yields', 'prices/coingecko:ethereum'"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),

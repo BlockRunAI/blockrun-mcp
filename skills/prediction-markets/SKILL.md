@@ -88,8 +88,10 @@ Current parameter contracts that prevent paid 4xx responses:
   `1440`. Optional `start_time`/`end_time` are Unix seconds.
 - `polymarket/orderbooks` requires `token_id`, `start_time`, and `end_time`; the
   times are Unix milliseconds.
-- Smart-money calls require a meaningful filter. For general analysis use
-  `{ window: "30d", min_trades: "100" }`.
+- Smart-money calls need at least one cohort filter — `window`, `min_trades`,
+  `min_volume`, `min_roi`, `min_realized_pnl`, `min_total_pnl`, `min_win_rate`,
+  or `min_profit_factor`. For general analysis use
+  `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine too.
 
 ## Two Pricing Tiers
 

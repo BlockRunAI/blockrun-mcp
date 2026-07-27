@@ -4,6 +4,16 @@ const CANDLE_INTERVALS = new Set(["0", "1", "5", "15", "60", "1440"]);
 // and `end_before` ARE spec-backed Predexon filters on polymarket/markets{,/keyset}
 // (see blockrun/src/lib/predexon.ts POLYMARKET_MARKET_PARAMS), so rejecting them
 // here would block valid queries before payment.
+const SMART_MONEY_FILTERS = [
+  "window",
+  "min_trades",
+  "min_volume",
+  "min_roi",
+  "min_realized_pnl",
+  "min_total_pnl",
+  "min_win_rate",
+  "min_profit_factor",
+] as const;
 const GAMMA_ONLY_MARKET_PARAMS = new Set([
   "active",
   "closed",
@@ -48,8 +58,11 @@ export function validateMarketRequest(
     if (body !== undefined) {
       return "Polymarket candlesticks is a GET endpoint. Pass query values in params, not body. No payment was made.";
     }
-    if (!query.interval || !CANDLE_INTERVALS.has(query.interval)) {
-      return "Polymarket candlesticks requires params.interval in integer minutes: '0', '1', '5', '15', '60', or '1440' (use '60', not '1h'). Optional start_time/end_time are Unix seconds. No payment was made.";
+    // Only validate the VALUE, and only when one is supplied. "1h" is a known
+    // paid failure; whether the endpoint requires `interval` at all is not
+    // established, so omitting it must not be rejected client-side.
+    if (query.interval !== undefined && !CANDLE_INTERVALS.has(query.interval)) {
+      return `Polymarket candlesticks interval '${query.interval}' is not valid. Use integer minutes: '0', '1', '5', '15', '60', or '1440' (so '60', not '1h'). Optional start_time/end_time are Unix seconds. No payment was made.`;
     }
     if ("start" in query || "end" in query) {
       return "Polymarket candlesticks uses params.start_time and params.end_time in Unix seconds, not start/end. No payment was made.";
@@ -68,18 +81,15 @@ export function validateMarketRequest(
     }
   }
 
+  // The observed paid failure was an UNFILTERED smart-money call. Require some
+  // cohort filter, but don't invent magnitudes: thresholds like "min_trades >=
+  // 100" were never verified against the API and would reject legitimate
+  // narrower cohorts (a 20-trade window, a 7d lookback) with no way to override.
   if (/^polymarket\/market\/[^/]+\/smart-money$/.test(path)) {
-    const minTrades = numberParam(query, "min_trades") ?? 0;
-    const strongFilter =
-      (numberParam(query, "min_realized_pnl") ?? 0) >= 1_000 ||
-      (numberParam(query, "min_total_pnl") ?? 0) >= 1_000 ||
-      (numberParam(query, "min_roi") ?? 0) >= 0.15 ||
-      minTrades >= 100 ||
-      (numberParam(query, "min_volume") ?? 0) >= 10_000;
-    const qualityFilter =
-      ("min_win_rate" in query || "min_profit_factor" in query) && minTrades >= 50;
-    if (!strongFilter && !qualityFilter) {
-      return "Polymarket smart-money requires a meaningful cohort filter. For a general demo use params { window: '30d', min_trades: '100' }; alternatives include min_realized_pnl >= 1000, min_total_pnl >= 1000, min_roi >= 0.15, or min_volume >= 10000. No payment was made.";
+    const hasCohortFilter = SMART_MONEY_FILTERS.some((key) => key in query);
+    if (!hasCohortFilter) {
+      return "Polymarket smart-money needs at least one cohort filter — an unfiltered call is rejected upstream. A good general default is params { window: '30d', min_trades: '100' }; " +
+        `any of ${SMART_MONEY_FILTERS.map((key) => `'${key}'`).join(", ")} also works. No payment was made.`;
     }
   }
 

@@ -56,7 +56,7 @@ Examples:
 - { action: "price", category: "stocks", symbol: "AAPL", market: "us" }
 - { action: "history", category: "crypto", symbol: "ETH-USD", resolution: "D", from: 1700000000, to: 1710000000 }
 - { action: "list", category: "crypto", query: "sol" }`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         action: ACTION.describe("Which endpoint to hit: price, history, or list."),
         category: CATEGORY.describe("Market category."),

@@ -84,7 +84,7 @@ Models (speak): elevenlabs/flash-v2.5 ($0.05/1k chars, ~75ms, default), elevenla
 Voice aliases: sarah (default), george, laura, charlie, river, roger, callum, harry — or any raw ElevenLabs voice_id.
 
 Returns a hosted audio URL — download immediately if you need to keep the file.`,
-      annotations: TOOL_ANNOTATIONS.paidPrivate,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         action: z.enum(["speak", "sound_effect", "voices"]).optional().default("speak").describe("speak: text-to-speech (default). sound_effect: generate a sound effect. voices: list voices (free)."),
         input: z.string().optional().describe("speak: text to synthesize. sound_effect: description of the sound, e.g. 'rain on a tin roof, distant thunder' (max 1000 chars)."),

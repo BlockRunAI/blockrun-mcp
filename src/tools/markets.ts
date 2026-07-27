@@ -87,11 +87,11 @@ REQUEST CONTRACTS:
 - On polymarket/markets{,/keyset} the free-text filter is "search" (NOT "q"), and status:"open"/"closed" replaces Gamma's active/closed. "sort", "end_after", and "end_before" are supported; "order"/"ascending" are not.
 - Candlesticks interval is integer minutes: 0|1|5|15|60|1440 (use "60", not "1h"); start_time/end_time are Unix seconds.
 - polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
-- Smart-money calls require a meaningful cohort filter; a safe default is { window: "30d", min_trades: "100" }.
+- Smart-money calls need at least one cohort filter (window, min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor); a good default is { window: "30d", min_trades: "100" }.
 - Issue paid calls sequentially. The MCP also serializes them to protect one wallet from concurrent x402 payment races.
 
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
-      annotations: TOOL_ANNOTATIONS.paidOpenWorld,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. markets/search uses { q: 'Bitcoin', status: 'open', venue: 'polymarket', limit: '20' })"),
