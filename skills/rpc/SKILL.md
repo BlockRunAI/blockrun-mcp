@@ -1,6 +1,6 @@
 ---
 name: rpc
-description: Use when the user needs raw blockchain JSON-RPC access — contract reads (eth_call), native balances, blocks, transactions, logs, gas estimates, or any chain-native RPC method across 40+ chains. One endpoint per chain via BlockRun's Tatum-backed gateway, $0.0040 per call, no node, no API key. Prefer blockrun_price / blockrun_dex / blockrun_surf when they already cover the question.
+description: Use when the user needs raw blockchain JSON-RPC access — contract reads (eth_call), native balances, blocks, transactions, logs, gas estimates, or any chain-native RPC method across 40 chains. One endpoint per chain via BlockRun's Tatum-backed gateway, $0.0040 per call, no node, no API key. Prefer blockrun_price / blockrun_dex / blockrun_surf when they already cover the question.
 triggers:
   - "rpc"
   - "json-rpc"
@@ -16,7 +16,7 @@ triggers:
   - "tatum"
 ---
 
-# Multi-chain RPC — 40+ chains, one tool
+# Multi-chain RPC — every supported chain, one tool
 
 `blockrun_rpc` POSTs a standard JSON-RPC 2.0 body to `/v1/rpc/{network}`. Flat **$0.0040 per call** ($0.002 base + the $0.002 transaction fee). A JSON-RPC **batch array charges per element but pays the flat fee only once** — $0.002 × n + $0.002, so a batch of 3 costs $0.0080 where three separate calls cost $0.0120. Batch whenever you can. Settlement in USDC via x402. Responses are cached briefly server-side for identical read calls (`X-Cache: HIT` is free of upstream latency but still billed).
 

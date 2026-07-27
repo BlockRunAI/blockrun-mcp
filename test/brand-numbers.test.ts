@@ -21,7 +21,7 @@ import { ALL_TOOLS, PROFILES, resolveTools } from "../src/profiles.js";
 
 const published = JSON.parse(
   readFileSync(new URL("../brand-numbers.json", import.meta.url), "utf8"),
-) as { mcp: { tools: number } };
+) as { mcp: { tools: number }; chains: { rpc: number } };
 
 test("ships the advertised number of tools", () => {
   assert.equal(ALL_TOOLS.length, published.mcp.tools);
@@ -51,5 +51,20 @@ test("no profile advertises a tool that does not exist", () => {
     for (const tool of tools) {
       assert.ok(known.has(tool), `profile ${name} names unknown tool ${tool}`);
     }
+  }
+});
+
+test("skills frontmatter states the published chain count", () => {
+  // A skill's YAML frontmatter becomes the description an agent reads when
+  // deciding whether to load it. A marker there is not inert — it would be
+  // part of the string — so these are literals, asserted instead.
+  const n = published.chains.rpc;
+  for (const f of ["skills/rpc/SKILL.md", "skills/crypto-data/SKILL.md"]) {
+    const text = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+    const frontmatter = text.slice(0, text.indexOf("\n---", 4));
+    assert.ok(
+      frontmatter.includes(`${n} chains`),
+      `${f} frontmatter must say "${n} chains"`,
+    );
   }
 });
