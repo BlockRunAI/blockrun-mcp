@@ -1,6 +1,6 @@
 ---
 name: crypto-data
-description: Use for any crypto data question — token/coin prices, FX, commodities, stocks, OHLC history, DEX pairs and liquidity, DeFi TVL, yield/APY pools, on-chain SQL, wallet labels and net worth, social mindshare, news, or raw JSON-RPC against a chain. Routes across five tools that overlap heavily, so it also says which one to use and which are FREE — blockrun_price (crypto/FX/commodities free, Pyth), blockrun_dex (free, DexScreener), blockrun_defi (DefiLlama TVL + yields), blockrun_surf (83 endpoints — on-chain SQL, 100M+ wallet labels, social), blockrun_rpc (40+ chains). No API keys, pay-per-call in USDC via x402.
+description: Use for any crypto data question — token/coin prices, FX, commodities, stocks, OHLC history, DEX pairs and liquidity, DeFi TVL, yield/APY pools, on-chain SQL, wallet labels and net worth, social mindshare, news, or raw JSON-RPC against a chain. Routes across five tools that overlap heavily, so it also says which one to use and which are FREE — blockrun_price (crypto/FX/commodities free, Pyth), blockrun_dex (free, DexScreener), blockrun_defi (DefiLlama TVL + yields), blockrun_surf (83 endpoints — on-chain SQL, 100M+ wallet labels, social), blockrun_rpc (40 chains). No API keys, pay-per-call in USDC via x402.
 triggers:
   - "crypto price"
   - "token price"
@@ -62,7 +62,7 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 | **DEX pair, liquidity, volume, contract** | `blockrun_dex` | **FREE** |
 | Stock quote / history (12 markets) | `blockrun_price` category:"stocks" | $0.0030 |
 | Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.0030 |
-| Raw JSON-RPC on 40+ chains | `blockrun_rpc` | $0.0040 |
+| Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains | `blockrun_rpc` | $0.0040 |
 | Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.0070 |
 | **Everything below** (on-chain SQL, wallet labels, social, news, unlocks, liquidations, ETF flows) | `blockrun_surf` | $0.0095 |
 | Raw SQL over 80+ ClickHouse tables | `blockrun_surf` path:"onchain/sql" | $0.0095 |
@@ -136,7 +136,7 @@ blockrun_surf({ path: "onchain/sql", body: {
 
 ## blockrun_rpc — raw chain access
 
-40+ chains, one endpoint, no node, no key. $0.0040/call (batches charge per element, plus one flat fee per request). See [`skills/rpc/SKILL.md`](../rpc/SKILL.md).
+<!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, one endpoint, no node, no key. $0.0040/call (batches charge per element, plus one flat fee per request). See [`skills/rpc/SKILL.md`](../rpc/SKILL.md).
 
 ```ts
 blockrun_rpc({ network: "base", method: "eth_blockNumber", params: [] })

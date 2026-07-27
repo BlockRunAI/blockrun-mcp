@@ -19,7 +19,7 @@ Smoke-test the built server via the MCP stdio handshake:
 (printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'; sleep 2) | node dist/index.js 2>/dev/null
 ```
 
-Should return 18 tools including `blockrun_surf` and any new one you add.
+Should return <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools including `blockrun_surf` and any new one you add.
 
 To test locally with Claude Code, point it at your dev build:
 
