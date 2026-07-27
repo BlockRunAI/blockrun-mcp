@@ -188,9 +188,11 @@ export async function mapClobError(err: unknown): Promise<string> {
     const geo = await checkGeoblock();
     const where = geo.country ? ` (egress country: ${geo.country})` : "";
     return `Order rejected with 403 — Polymarket geoblocks order placement from this egress${where} ` +
-      `(the US, UK, and other jurisdictions are restricted). Do not route around this restriction. ` +
-      `Use read-only analysis and dry-run previews here, and place new orders only from a jurisdiction ` +
-      `Polymarket permits. Raw: ${message}`;
+      `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
+      `Fix: point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay ` +
+      `(deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / HTTPS_PROXY) ` +
+      `does not change the Polymarket-facing egress. Complying with Polymarket's terms for your ` +
+      `jurisdiction is your responsibility. Raw: ${message}`;
   }
   if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
     return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +

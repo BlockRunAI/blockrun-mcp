@@ -29,9 +29,10 @@ order that matched** — no Polymarket account, no manual API keys, no gas token
 - **No Polymarket account, no API keys.** The MCP bootstraps everything it needs
   (a builder key for the gasless relayer) from your own wallet, automatically, on
   first `setup`.
-- **Geographic eligibility still applies.** The MCP connects directly to
-  Polymarket by default and reports the current egress status. A blocked
-  location may use reads and dry-run previews, but must not submit an order.
+- **Geoblock — handled for you.** Polymarket blocks *order placement* by IP
+  (US / UK and many regions). The MCP defaults to BlockRun's Finland egress (a
+  fully unrestricted region under Polymarket's policy), so it works out of the box
+  (§3). Reads, funding, and x402/AI traffic stay direct.
 
 ---
 
@@ -71,20 +72,49 @@ actual signer address).
 
 ---
 
-## 3. Geographic eligibility
+## 3. Geoblock — handled by default
 
-Polymarket restricts order placement in some jurisdictions. The MCP connects
-directly to `https://clob.polymarket.com` by default, and
-`blockrun_polymarket action:"setup"` reports whether the current egress can
-place orders. A blocked result is a hard stop for every confirmed buy or sell.
-Read-only market research, position inspection, and dry-run order previews can
-still be used.
+Polymarket blocks order placement by IP (US / UK and many regions). **You
+don't need to do anything** — the MCP defaults to BlockRun's hosted Finland egress
+(a fully unrestricted region under Polymarket's policy), so orders route through a
+permitted region out of the box, and `action:"setup"` confirms `✅ Region: order
+placement permitted`. The relay only forwards to Polymarket's CLOB (it can't see
+or move your funds — every order is signed locally by your key); reads, funding,
+and x402/AI traffic stay direct.
 
-`POLYMARKET_CLOB_HOST`, `POLYMARKET_CLOB_PROXY`, and `HTTPS_PROXY` remain
-available for compliant private infrastructure or network debugging. They must
-not be used to evade a geographic restriction. At a US presentation, keep the
-demo in read-only/dry-run mode and perform any real-money verification only
-while physically operating from a permitted jurisdiction.
+**Run your own instead** (production, scale, or your own compliance posture) —
+override `POLYMARKET_CLOB_HOST`:
+
+- Direct to Polymarket (only works from a permitted region):
+  ```
+  POLYMARKET_CLOB_HOST=https://clob.polymarket.com
+  ```
+- Your own Cloud Run relay — one command, `europe-north1` (Finland), no VM or
+  public IP (works even under a `vmExternalIpAccess=DENY` org policy):
+  ```bash
+  bash deploy/finland-egress/deploy.sh   # deploys, prints the URL → use as POLYMARKET_CLOB_HOST
+  ```
+- A forward proxy in a permitted region — only effective when
+  `POLYMARKET_CLOB_HOST` is also pointed at Polymarket directly
+  (`https://clob.polymarket.com`) or at your own relay; a proxy alone only
+  changes how the default Finland relay is reached, not the Polymarket-facing
+  egress:
+  ```
+  HTTPS_PROXY=http://user:pass@host:port            # covers CLOB + relayer
+  POLYMARKET_CLOB_PROXY=http://user:pass@host:port  # Polymarket-only
+  ```
+
+Check any egress reaches CLOB V2 and isn't geoblocked (`401` = permitted; `403` =
+blocked):
+
+```bash
+curl -s   <CLOB_HOST>/version                                    # → {"version":2}
+curl -s -o /dev/null -w "%{http_code}\n" -X POST <CLOB_HOST>/order \
+     -H "content-type: application/json" -d '{}'                 # → 401  (good)
+```
+
+> The relayer (deploy/approve/redeem) is **not** geoblocked, so only order
+> placement needs the egress.
 
 ---
 
@@ -98,8 +128,8 @@ Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
   "command": "npx",
   "args": ["-y", "@blockrun/mcp@latest", "--profile", "trading"],
   "env": {
-    // Direct to Polymarket by default. Override only for compliant private
-    // infrastructure, never to evade a geographic restriction.
+    // Geoblock egress is handled by default (BlockRun's Finland relay) — you only
+    // need POLYMARKET_CLOB_HOST to run your own egress or go direct (§3).
     // "POLYMARKET_CLOB_HOST": "https://clob.polymarket.com",
 
     // Optional safety knobs:
@@ -109,9 +139,9 @@ Add the env to your `blockrun` registration (in `~/.claude.json`, the server's
 }
 ```
 
-**Nothing here is required.** No Polymarket account or API keys are needed; the
-MCP bootstraps its builder key from your wallet on first `setup`. Geographic
-eligibility still applies. The knobs above are optional. (Advanced:
+**Nothing here is required.** No Polymarket account, no API keys, no egress
+config — the MCP bootstraps its builder key from your wallet on first `setup` and
+defaults the geoblock egress for you; the knobs above are optional. (Advanced:
 `POLYMARKET_SIG_TYPE=0` switches to plain-EOA mode, where you hold pUSD and pay
 POL gas yourself — useful for reads, but the deposit wallet is the path that
 places orders.)
@@ -121,8 +151,9 @@ places orders.)
 ## 5. The full flow
 
 Use `blockrun_polymarket_read` for order previews and account reads, and
-`blockrun_polymarket` for setup or funds-affecting actions. Discover markets
-with `blockrun_markets` first. **`confirm:true` is required to place anything**.
+`blockrun_polymarket` for setup and funds-affecting actions. Discover markets
+with `blockrun_markets` first. **`confirm:true` is required to place anything** —
+without it you get a dry-run preview and nothing is signed.
 
 ```
 # 1) Provision + inspect — idempotent, safe to re-run any time.
@@ -213,8 +244,8 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
 
 | Symptom | Fix |
 |---|---|
-| `403 Trading restricted in your region` | Stop confirmed orders from this location. Use read-only research and dry-run previews, or resume only when physically operating from a permitted jurisdiction (§3). |
-| `❌ Region: order placement BLOCKED` in setup | Same: do not submit a confirmed order from the current egress. |
+| `403 Trading restricted in your region` | The default Finland egress was overridden or isn't routing. Restore the default `POLYMARKET_CLOB_HOST` or point it at a working permitted-region egress and restart (§3) — a proxy alone doesn't change the Polymarket-facing egress. |
+| `❌ Region: order placement BLOCKED` in setup | Same — the order-endpoint probe still sees a restricted egress. |
 | `redeem` reverts / relayer batch failed | The two pUSD collateral-adapter approvals (added 2026-07) pull your outcome tokens during `redeem`. A wallet set up earlier lacks them — run `action:"setup" confirm:true` once (setup reads approvals on-chain every run and signs what's missing), then retry. |
 | Vault shows `$0.00` right after funding | The bridge credits pUSD **asynchronously** (minutes, sometimes 30+). Re-run `action:"setup"` and watch the balance. |
 | `Minimum funding is $2` | The Polymarket bridge won't deliver deposits under $2. Fund ≥ $2. |

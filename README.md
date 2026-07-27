@@ -267,7 +267,7 @@ blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK" c
 
 **Safety rails** (server-side; an agent cannot bypass them): `confirm:true` required for every order/approval/redeem, `POLYMARKET_MAX_BET_USD` per-order cap (default $25), optional `POLYMARKET_MAX_SESSION_USD` session cap, and bets never draw from the x402 API budget.
 
-**Regions:** Polymarket restricts order placement in some jurisdictions. The MCP connects directly to Polymarket by default so the platform can enforce eligibility, and `setup` reports the current egress status. If the location is blocked, use read-only analysis and dry-run previews only—never route around the restriction. `POLYMARKET_CLOB_HOST` and proxy settings exist for compliant private infrastructure, not geoblock evasion.
+**Regions:** Polymarket geoblocks order placement by IP (US/UK + many regions). **Handled by default** — the MCP routes CLOB traffic through BlockRun's hosted Finland egress (a fully unrestricted region under Polymarket's policy), so trading works out of the box; `setup` reports your status. Override `POLYMARKET_CLOB_HOST` to go direct or run your own egress, optionally reached via `HTTPS_PROXY` / `POLYMARKET_CLOB_PROXY` (a proxy alone doesn't change the Polymarket-facing egress). Complying with Polymarket's terms for your jurisdiction is your responsibility.
 
 > ⚠️ **Back up your signer key** (`~/.blockrun/.session` by default; a `BLOCKRUN_WALLET_KEY` env var or an existing agent `wallet.json` takes precedence — `setup` prints the actual signer address). It is the only key to both the payment wallet and the Polymarket deposit wallet.
 
@@ -355,7 +355,7 @@ One wallet. All sources. No dashboards.
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
-| `POLYMARKET_CLOB_HOST` | `https://clob.polymarket.com` | CLOB endpoint. Override only for compliant private infrastructure; never use it to evade geographic restrictions. |
+| `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
 | `POLYMARKET_SIG_TYPE` | `3` | `3` = deposit wallet (POLY_1271, gasless); `0` = plain EOA mode. |

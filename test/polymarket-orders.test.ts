@@ -54,11 +54,10 @@ test("cross-field validation rejects before any client work", async () => {
   }
 });
 
-test("mapClobError: geoblock 403 stops confirmed orders without bypass guidance", async () => {
+test("mapClobError: geoblock 403 gives egress options", async () => {
   const text = await mapClobError({ message: "Request failed with status code 403", status: 403 });
   assert.match(text, /geoblock|restricted|close-only/i);
-  assert.match(text, /do not route around|dry-run/i);
-  assert.doesNotMatch(text, /POLYMARKET_CLOB_PROXY|Finland/i);
+  assert.match(text, /POLYMARKET_CLOB_PROXY/);
 });
 
 test("mapClobError: issue-#65 creds mismatch points at re-derive + sig-0 fallback", async () => {

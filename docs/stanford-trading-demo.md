@@ -19,6 +19,12 @@ States; do not alter networking to bypass that restriction. A real-money write
 test must be performed separately while physically operating from an eligible
 jurisdiction and only after explicit approval of the exact trade.
 
+The shipped default routes CLOB traffic through BlockRun's Finland egress, so
+`setup` will report a permitted region even from the venue. For the demo to be
+region-honest, set `POLYMARKET_CLOB_HOST=https://clob.polymarket.com`
+explicitly on the presentation machine (the install commands below do this) and
+let `setup` report the real status. Never type `confirm:true` regardless.
+
 ## Install the isolated Trading profile
 
 Claude Code:
@@ -26,7 +32,9 @@ Claude Code:
 ```bash
 claude mcp add blockrun-trading -s user \
   -e BLOCKRUN_BUDGET_LIMIT=0.15 \
-  -e POLYMARKET_MAX_BET_USD=5 POLYMARKET_MAX_SESSION_USD=5 \
+  -e POLYMARKET_MAX_BET_USD=5 \
+  -e POLYMARKET_MAX_SESSION_USD=5 \
+  -e POLYMARKET_CLOB_HOST=https://clob.polymarket.com \
   -- npx -y @blockrun/mcp@latest --profile trading
 claude mcp list
 ```
@@ -45,6 +53,7 @@ codex mcp add blockrun-trading \
   --env BLOCKRUN_BUDGET_LIMIT=0.15 \
   --env POLYMARKET_MAX_BET_USD=5 \
   --env POLYMARKET_MAX_SESSION_USD=5 \
+  --env POLYMARKET_CLOB_HOST=https://clob.polymarket.com \
   -- npx -y @blockrun/mcp@latest --profile trading
 codex mcp list
 ```
