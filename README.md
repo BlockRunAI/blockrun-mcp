@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.BlockRunAI%2Fblockrun-mcp.svg)](https://mcptoplist.com/server/io.github.BlockRunAI%2Fblockrun-mcp)
+
 <div align="center">
 
 <h1>BlockRun MCP</h1>
