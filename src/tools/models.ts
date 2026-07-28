@@ -1,5 +1,6 @@
 // src/tools/models.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import type { ImageModel, Model } from "@blockrun/llm";
 import { getClient } from "../utils/wallet.js";
@@ -15,6 +16,7 @@ export function registerModelsTool(server: McpServer, modelCache: ModelCache): v
     "blockrun_models",
     {
       description: "List available AI models with pricing. Use to discover models and compare costs.",
+      annotations: TOOL_ANNOTATIONS.readOnly,
       inputSchema: {
         category: z.enum(["all", "chat", "reasoning", "image", "embedding"]).optional().default("all").describe("Filter by category"),
         provider: z.string().optional().describe("Filter by provider (e.g., 'openai', 'anthropic')"),

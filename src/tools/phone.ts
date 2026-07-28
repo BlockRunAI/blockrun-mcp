@@ -6,6 +6,7 @@
 // Full catalog lives in the phone skill.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -75,6 +76,7 @@ REQUIRED for voice/call: \`from\` must be a number your wallet owns. Provision o
 Voice presets: nat, josh, maya, june, paige, derek, florian. Phone numbers use E.164 format (e.g. +1 followed by 10 US digits, or +<country-code><number>).
 
 Voice call flow + voice preset details + full body shapes in the \`phone\` skill.`,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         path: z.string().describe("Endpoint after /v1/. Use 'phone/...' for lookup + number ops, 'voice/call' for outbound AI calls, 'voice/call/{id}' (no body) to poll status."),
         body: z.any().optional().describe("JSON body. Sent as POST. Omit for the free GET poll (voice/call/{call_id})."),

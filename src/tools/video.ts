@@ -1,5 +1,6 @@
 // src/tools/video.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -72,6 +73,7 @@ Models (Seedance defaults bumped to 720p + synced audio on the gateway):
 RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with a Seedance 2.0 model. Mutually exclusive with image_url.
 
 Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         prompt: z.string().describe("Text description of the video to generate. E.g. 'a red apple slowly spinning on a wooden table', 'a hummingbird hovering near a red flower, ultra slow motion'"),
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),

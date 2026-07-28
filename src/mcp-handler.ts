@@ -23,7 +23,7 @@ import { registerPhoneTool } from "./tools/phone.js";
 import { registerSurfTool } from "./tools/surf.js";
 import { registerRpcTool } from "./tools/rpc.js";
 import { registerDefiTool } from "./tools/defi.js";
-import { registerPolymarketTool } from "./tools/polymarket.js";
+import { registerPolymarketReadTool, registerPolymarketTool } from "./tools/polymarket.js";
 import { resolveTools, type ToolName } from "./profiles.js";
 
 /**
@@ -73,6 +73,7 @@ export function initializeMcpServer(
     surf: () => registerSurfTool(server, budget),
     rpc: () => registerRpcTool(server, budget),
     defi: () => registerDefiTool(server, budget),
+    polymarket_read: () => registerPolymarketReadTool(server),
     polymarket: () => registerPolymarketTool(server),
   };
 

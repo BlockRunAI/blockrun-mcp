@@ -7,6 +7,9 @@ import { getClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
+import { validateMarketRequest } from "../utils/markets-validation.js";
 
 // What x402 CHARGES, which is not the 402's JSON `price` field. That field is the
 // BASE ($0.0075); the charge is base + a $0.002 flat transaction fee, and it lives
@@ -79,10 +82,19 @@ CROSS-PLATFORM:
 - matching-markets, matching-markets/pairs — equivalent markets across Polymarket+Kalshi
 - markets/search — search across all platforms in one call
 
+REQUEST CONTRACTS:
+- Discover current markets with markets/search (its search term is "q"), then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id.
+- On polymarket/markets{,/keyset} the free-text filter is "search" (NOT "q"), and status:"open"/"closed" replaces Gamma's active/closed. "sort", "end_after", and "end_before" are supported; "order"/"ascending" are not.
+- Candlesticks interval is integer minutes: 0|1|5|15|60|1440 (use "60", not "1h"); start_time/end_time are Unix seconds.
+- polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
+- Smart-money calls need at least one cohort filter (window, min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor); a good default is { window: "30d", min_trades: "100" }.
+- Issue paid calls sequentially. The MCP also serializes them to protect one wallet from concurrent x402 payment races.
+
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
-        params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. { limit: '20', active: 'true' })"),
+        params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. markets/search uses { q: 'Bitcoin', status: 'open', venue: 'polymarket', limit: '20' })"),
         body: z.any().optional().describe("JSON body for POST queries (triggers pmQuery — most endpoints are GET)"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
@@ -95,6 +107,10 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         if (hasPathTraversal(path)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
+        const validationError = validateMarketRequest(path, params, body);
+        if (validationError) {
+          return { content: [{ type: "text", text: formatError(validationError) }], isError: true };
+        }
         const estimatedCost = estimateMarketCost(path, body);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
@@ -105,9 +121,9 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         }
         try {
           const llm = getClient();
-          const result = body !== undefined
-            ? await llm.pmQuery(path, body)
-            : await llm.pm(path, params);
+          const result = await serializePaidRequest(() => body !== undefined
+            ? llm.pmQuery(path, body)
+            : llm.pm(path, params));
           recordSpending(budget, estimatedCost, agent_id);
 
           return {

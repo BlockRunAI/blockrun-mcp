@@ -1,0 +1,4 @@
+interface:
+  display_name: "Signal to Trade Demo"
+  short_description: "Build a verified Polymarket signal-to-order demo"
+  default_prompt: "Use $signal-to-trade-demo to analyze a live Polymarket market and prepare a safe order preview."

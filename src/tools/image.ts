@@ -1,5 +1,6 @@
 // src/tools/image.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
 import { reserveBudget, recordSpending, recordActualSpend, reReserveIfHigher, BudgetExceededError } from "../utils/budget.js";
@@ -276,6 +277,7 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro
 Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
 Source images and masks accept a base64 data URI, an http(s) URL, or a local file path (auto-encoded). Inpaint mask (openai/gpt-image-* only) via "mask"; not combinable with multiple source images.`,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         prompt: z.string().describe("Image description or edit instructions"),
         action: z.enum(["generate", "edit"]).optional().default("generate").describe("generate: create from text; edit: transform existing image"),

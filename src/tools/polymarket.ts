@@ -9,6 +9,7 @@ import { redeemPosition } from "../utils/polymarket/redeem.js";
 import { runSetup } from "../utils/polymarket/setup.js";
 import { withdrawFunds } from "../utils/polymarket/withdraw.js";
 import { fundVault } from "../utils/polymarket/fund.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -35,7 +36,8 @@ Actions:
 - redeem — claim resolved winnings for condition_id (confirm:true; gasless)
 - withdraw — cash out pUSD → native USDC on Base to your agent wallet (confirm:true). amount_usd optional (default: full balance); to_address optional (default: your wallet).
 
-Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenIds from blockrun_markets Polymarket data. Geoblock is handled by default (CLOB traffic routes through BlockRun's Finland egress) — setup reports your region status.`,
+Prices are probabilities 0–1 on the market's tick grid. token_id comes from blockrun_markets Polymarket data. Geoblock is handled by default (CLOB traffic routes through BlockRun's Finland egress) — setup reports your region status. Complying with Polymarket's terms for the user's jurisdiction is the user's responsibility.`,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         action: z.enum(["setup", "fund", "buy", "sell", "cancel", "orders", "positions", "redeem", "withdraw"])
           .describe("Operation to perform"),
@@ -114,5 +116,96 @@ Prices are probabilities 0–1 on the market's tick grid. token_id = clobTokenId
         };
       }
     },
+  );
+}
+
+/**
+ * Narrow read surface for clients that enforce MCP annotations at tool level.
+ * The legacy blockrun_polymarket tool keeps these actions for compatibility,
+ * but mixing reads and real-money writes forces that whole tool to be marked
+ * destructive. This companion lets Codex and other clients safely inspect
+ * positions/orders without approving a funds-affecting tool call.
+ */
+export function registerPolymarketReadTool(server: McpServer): void {
+  server.registerTool(
+    "blockrun_polymarket_read",
+    {
+      description: `Read or preview Polymarket state without signing or changing anything.
+
+Actions:
+- positions — holdings, current value, PnL, and redeemable status (free Data API)
+- orders — open CLOB orders, optionally filtered by condition_id
+- preview — build a live buy/sell order preview from the CLOB book. side plus token_id (or condition_id+outcome) are required. Market buys use amount_usd; limit orders use price+size. This action never accepts confirm and never signs or submits an order.
+
+Use blockrun_polymarket only for setup and funds-affecting operations: confirmed buy/sell, cancel, redeem, fund, or withdraw.`,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
+      inputSchema: {
+        action: z.enum(["positions", "orders", "preview"]).describe("Read-only operation"),
+        condition_id: z.string().optional().describe("orders: optional market condition ID filter"),
+        side: z.enum(["buy", "sell"]).optional().describe("preview: order side"),
+        token_id: z.string().optional().describe("preview: outcome token ID"),
+        outcome: z.string().optional().describe("preview: outcome label used with condition_id"),
+        price: z.number().gt(0).lt(1).optional().describe("preview: limit probability; omit for market order"),
+        size: z.number().positive().optional().describe("preview: shares for limits and market sells"),
+        amount_usd: z.number().positive().optional().describe("preview: pUSD to spend on a market buy"),
+        order_type: z.enum(["GTC", "GTD", "FOK", "FAK"]).optional().describe("preview: order type"),
+        expires_at: z.number().int().positive().optional().describe("preview: GTD expiry in Unix seconds"),
+        post_only: z.boolean().optional().describe("preview: maker-only limit order"),
+      },
+    },
+    async (args) => {
+      try {
+        let result: ToolResult;
+        if (args.action === "positions") {
+          result = await listPositions();
+        } else if (args.action === "orders") {
+          result = await listOpenOrders({ condition_id: args.condition_id });
+        } else if (!args.side) {
+          result = { text: "preview requires side:'buy' or side:'sell'.", isError: true };
+        } else {
+          result = await executeTrade({
+            action: args.side,
+            token_id: args.token_id,
+            condition_id: args.condition_id,
+            outcome: args.outcome,
+            price: args.price,
+            size: args.size,
+            amount_usd: args.amount_usd,
+            order_type: args.order_type,
+            expires_at: args.expires_at,
+            post_only: args.post_only,
+            confirm: false,
+          });
+        }
+        if (result.isError) {
+          return { content: [{ type: "text" as const, text: `Error: ${result.text}` }], isError: true };
+        }
+        const text = args.action === "preview"
+          ? formatReadOnlyPreviewText(result.text)
+          : result.text;
+        return {
+          content: [{ type: "text" as const, text }],
+          structuredContent: asStructuredContent(result.structured ?? {}),
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${extractErrorMessage(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * executeTrade's generic dry-run response tells callers how to repeat a trade
+ * with confirm:true. That is useful on the funds-affecting tool, but misleading
+ * on blockrun_polymarket_read because the read tool deliberately has no confirm
+ * input. Keep the execution economics while making that boundary explicit.
+ */
+export function formatReadOnlyPreviewText(text: string): string {
+  return text.replace(
+    /\n\nRe-call with confirm:true to sign and submit\.$/,
+    "\n\nREAD-ONLY PREVIEW — this tool cannot sign or submit an order.",
   );
 }

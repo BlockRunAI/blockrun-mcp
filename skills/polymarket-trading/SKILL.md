@@ -57,19 +57,20 @@ blockrun_polymarket action:"fund" amount_usd:5 confirm:true
 # 3. Sign the one-time gasless approval batch (after user consent)
 blockrun_polymarket action:"setup" confirm:true
 
-# 4. Find a market + token (data tool, paid data)
-blockrun_markets path:"polymarket/markets" params:{...}   # → clobTokenIds, conditionId
+# 4. Find a market, then resolve the selected condition (paid data)
+blockrun_markets path:"markets/search" params:{q:"Bitcoin",status:"open",venue:"polymarket",limit:"20"}
+blockrun_markets path:"polymarket/markets/keyset" params:{condition_id:"0x...",status:"open",limit:"5"}
 
 # 5. Preview, then place
-blockrun_polymarket action:"buy" token_id:"..." amount_usd:2            # dry-run
-blockrun_polymarket action:"buy" token_id:"..." amount_usd:2 confirm:true  # market FOK
+blockrun_polymarket_read action:"preview" side:"buy" token_id:"..." amount_usd:5 order_type:"FOK"
+blockrun_polymarket action:"buy" token_id:"..." amount_usd:5 order_type:"FOK" confirm:true
 #   or limit: price:0.45 size:10 (GTC; order_type:"GTD" + expires_at for expiry)
 #   or via condition: condition_id:"0x..." outcome:"Yes"
 
 # 6. Manage
-blockrun_polymarket action:"orders"                     # open orders
+blockrun_polymarket_read action:"orders"                # open orders
 blockrun_polymarket action:"cancel" order_id:"..."      # or all:true
-blockrun_polymarket action:"positions"                  # holdings + PnL + redeemable
+blockrun_polymarket_read action:"positions"             # holdings + PnL + redeemable
 
 # 7. Claim winnings after resolution (gasless)
 blockrun_polymarket action:"redeem" condition_id:"0x..."             # preview

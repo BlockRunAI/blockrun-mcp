@@ -150,8 +150,9 @@ places orders.)
 
 ## 5. The full flow
 
-Everything is the `blockrun_polymarket` tool. Discover markets with
-`blockrun_markets` first. **`confirm:true` is required to place anything** —
+Use `blockrun_polymarket_read` for order previews and account reads, and
+`blockrun_polymarket` for setup and funds-affecting actions. Discover markets
+with `blockrun_markets` first. **`confirm:true` is required to place anything** —
 without it you get a dry-run preview and nothing is signed.
 
 ```
@@ -176,11 +177,12 @@ blockrun_polymarket action:"fund" amount_usd:5 confirm:true    # signs + submits
 blockrun_polymarket action:"setup" confirm:true
 
 # 4) Find a market + outcome token.
-blockrun_markets path:"polymarket/markets" params:{ ... }      # → clobTokenIds, conditionId
+blockrun_markets path:"markets/search" params:{q:"Bitcoin",status:"open",venue:"polymarket",limit:"20"}
 
-# 5) Preview, then place a $1 test order.
-blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:1              # dry-run preview
-blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:1 confirm:true # places (market FOK)
+# 5) Preview, then place only after exact user approval. Use an amount that
+#    meets the live minimum share size; $5 covers the common five-share minimum.
+blockrun_polymarket_read action:"preview" side:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK"
+blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK" confirm:true
 #    limit order:  price:0.45 size:10           (GTC, rests on the book)
 #    by market:    condition_id:"0x..." outcome:"Yes"
 

@@ -100,9 +100,9 @@ export function getPolymarketAccount(): PrivateKeyAccount {
 /**
  * The shared HttpsProxyAgent for POLYMARKET_CLOB_PROXY, or null when unset.
  * Built once. Reused for both the CLOB axios (v1, here) and the relayer's own
- * axios (0.27) instance (relayer.ts injects it), so a US-egress demo can route
- * ALL geoblockable Polymarket traffic — order placement AND the relayer
- * deploy/approve/redeem calls — through one permitted egress.
+ * axios (0.27) instance (relayer.ts injects it), so operators with compliant
+ * private infrastructure can route all Polymarket traffic consistently.
+ * This option must not be used to evade Polymarket's regional restrictions.
  */
 export function getClobProxyAgent(): HttpsProxyAgent<string> | null {
   if (_proxyAgent === undefined) {
@@ -118,7 +118,7 @@ export function getClobProxyAgent(): HttpsProxyAgent<string> | null {
  * calls) share via the hoisted axios install; @blockrun/llm and the other tools
  * use fetch (which ignores this), so it scopes to Polymarket traffic. Plain
  * HTTPS_PROXY is honored by BOTH axios copies natively (proxy-from-env) without
- * any of this — the simplest option for a US-egress demo.
+ * any of this. Operators remain responsible for geographic eligibility.
  */
 export function applyClobProxyOnce(): void {
   // The header bridge is harmless everywhere and needed whenever a relay is in

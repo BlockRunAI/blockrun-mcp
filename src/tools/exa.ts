@@ -5,6 +5,8 @@
 // not the tool description.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -53,6 +55,7 @@ Common paths (all POST, body shapes documented in the exa-research skill):
 Categories for search: "news", "research paper", "company", "tweet", "github", "pdf".
 
 Full request/response shapes + worked research workflows in the \`exa-research\` skill.`,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint name under /v1/exa/, e.g. 'search', 'answer', 'contents', 'find-similar'"),
         body: z.any().optional().describe("JSON body for the call. Sent as POST. Required for all four endpoints."),
@@ -77,7 +80,7 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
         try {
           const client = getClient() as unknown as RawClient;
           const endpoint = `/v1/exa/${cleanPath}`;
-          const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
+          const result = await serializePaidRequest(() => client.requestWithPaymentRaw(endpoint, body ?? {}));
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

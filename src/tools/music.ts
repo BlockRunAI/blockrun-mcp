@@ -1,5 +1,6 @@
 // src/tools/music.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -39,6 +40,7 @@ are not charged.
 Models: minimax/music-2.5+ ($0.1575), minimax/music-2.5 ($0.1575)
 
 Returns a permanent BlockRun-hosted URL.`,
+      annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         prompt: z.string().describe("Music style, mood, or description. E.g. 'upbeat synthwave with neon pads', 'chill lo-fi beats', 'epic orchestral film score'"),
         instrumental: z.boolean().optional().default(true).describe("Generate without vocals (default: true)"),

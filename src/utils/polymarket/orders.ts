@@ -126,6 +126,22 @@ function bestQuote(book: OrderBookSummary, side: "buy" | "sell"): number | null 
   return side === "buy" ? Math.min(...prices) : Math.max(...prices);
 }
 
+function estimateMarketBuyShares(book: OrderBookSummary, amountUsd: number): { shares: number; unfilledUsd: number } {
+  const asks = (book.asks ?? [])
+    .map((level) => ({ price: parseFloat(level.price), size: parseFloat(level.size) }))
+    .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.size) && level.size > 0)
+    .sort((a, b) => a.price - b.price);
+  let remaining = amountUsd;
+  let shares = 0;
+  for (const level of asks) {
+    if (remaining <= 1e-9) break;
+    const spend = Math.min(remaining, level.price * level.size);
+    shares += spend / level.price;
+    remaining -= spend;
+  }
+  return { shares, unfilledUsd: Math.max(0, remaining) };
+}
+
 /**
  * True when an error is a CLOB credential/auth failure worth re-deriving for
  * (the issue-#65 fingerprint, or a genuine auth rejection). Deliberately does
@@ -175,7 +191,8 @@ export async function mapClobError(err: unknown): Promise<string> {
       `(US/UK/EU and many regions are restricted; automated trading is allowed from unrestricted egress). ` +
       `Fix: point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay ` +
       `(deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / HTTPS_PROXY) ` +
-      `does not change the Polymarket-facing egress. Raw: ${message}`;
+      `does not change the Polymarket-facing egress. Complying with Polymarket's terms for your ` +
+      `jurisdiction is your responsibility. Raw: ${message}`;
   }
   if (m.includes("maker address not allowed") || m.includes("deposit wallet flow")) {
     return `Polymarket rejected this maker address — CLOB V2 requires the deposit-wallet flow to place ` +
@@ -310,13 +327,12 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
       }
       const size = input.size;
 
-      // A market SELL's notional depends on the live best bid; if the book has
-      // no parseable bid we cannot bound the spend, so REJECT rather than let a
-      // $0 notional silently bypass the caps (the SDK would still fill it).
-      if (!isLimit && input.action === "sell" && !quote) {
+      // A market order needs a live opposite-side quote. Reject an empty book
+      // instead of presenting an order that the CLOB cannot execute.
+      if (!isLimit && !quote) {
         return {
-          text: `Cannot price a market sell right now — the order book has no bid to estimate against. ` +
-            `Retry shortly, or place a limit sell with an explicit price.`,
+          text: `Cannot price a market ${input.action} right now — the order book has no ${input.action === "buy" ? "ask" : "bid"} to estimate against. ` +
+            `Retry shortly, or place a limit ${input.action} with an explicit price.`,
           isError: true,
         };
       }
@@ -327,10 +343,8 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
           ? (input.amount_usd as number)
           : (size as number) * (quote as number);
 
-      if (isLimit && minSize > 0 && (size as number) < minSize) {
-        return { text: `Size ${size} is below this market's minimum order size of ${minSize} shares.`, isError: true };
-      }
-
+      // Enforce the user's hard cap before doing any softer fillability
+      // analysis, so an oversized order always fails for the primary reason.
       const maxBet = getMaxBetUsd();
       if (notional > maxBet) {
         return {
@@ -339,6 +353,29 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
           isError: true,
         };
       }
+
+      const marketBuyEstimate = !isLimit && input.action === "buy"
+        ? estimateMarketBuyShares(book, input.amount_usd as number)
+        : undefined;
+      const effectiveSize = marketBuyEstimate?.shares ?? size;
+
+      if (marketBuyEstimate && marketBuyEstimate.unfilledUsd > 0.000001 && (input.order_type ?? "FOK") === "FOK") {
+        return {
+          text: `The live ask book cannot fill the full $${(input.amount_usd as number).toFixed(2)} FOK buy ` +
+            `(about $${marketBuyEstimate.unfilledUsd.toFixed(2)} has no available asks). Reduce the amount or use FAK explicitly.`,
+          isError: true,
+        };
+      }
+
+      if (minSize > 0 && (effectiveSize ?? 0) < minSize) {
+        const minimumSpend = input.action === "buy" && quote ? minSize * quote : undefined;
+        return {
+          text: `Estimated size ${(effectiveSize ?? 0).toFixed(4)} is below this market's minimum order size of ${minSize} shares.` +
+            (minimumSpend !== undefined ? ` At the current best ask, use at least $${minimumSpend.toFixed(2)} (plus a small depth buffer).` : ""),
+          isError: true,
+        };
+      }
+
       // Reserve against the session cap ATOMICALLY, before the awaited submit,
       // so two concurrent orders can't both pass the check against a stale total
       // and jointly overshoot. Rolled back below if the order fails to place.
@@ -358,7 +395,8 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         isLimit
           ? `  Limit ${orderKind}: ${size} shares @ ${price} (notional $${notional.toFixed(2)})`
           : input.action === "buy"
-            ? `  Market ${orderKind}: spend $${(input.amount_usd as number).toFixed(2)}${quote ? ` (best ask ${quote})` : ""}`
+            ? `  Market ${orderKind}: spend $${(input.amount_usd as number).toFixed(2)}${quote ? ` (best ask ${quote}` +
+              `${marketBuyEstimate ? `, est. ${marketBuyEstimate.shares.toFixed(4)} shares` : ""})` : ""}`
             : `  Market ${orderKind}: sell ${size} shares${quote ? ` (best bid ${quote}, est. $${notional.toFixed(2)})` : ""}`,
         `  Tick ${tickSize} · negRisk ${negRisk} · min size ${minSize || "n/a"} · fees are taker-only`,
       ].join("\n");
@@ -374,6 +412,7 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
             price,
             size,
             amountUsd: input.amount_usd,
+            estimatedSize: effectiveSize,
             orderType: orderKind,
             notionalUsd: notional,
             tickSize,

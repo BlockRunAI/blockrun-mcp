@@ -8,6 +8,8 @@
 // and per-chain method examples live in the `rpc` skill.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -41,6 +43,7 @@ Examples:
   blockrun_rpc({ network: "ethereum", body: [{jsonrpc:"2.0",id:1,method:"eth_blockNumber"},{...}] })  // batch
 
 Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_surf (labeled/aggregated data) when they cover the question — this tool is for raw chain access.`,
+      annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         network: z.string().describe("Chain key, e.g. 'ethereum', 'base', 'solana', 'bitcoin', 'arbitrum', 'polygon'. Unknown slugs pass through to the Tatum gateway."),
         method: z.string().optional().describe("JSON-RPC method, e.g. 'eth_blockNumber', 'eth_call', 'getSlot' (Solana), 'getblockchaininfo' (Bitcoin). Required unless 'body' is set."),
@@ -89,7 +92,7 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
         }
         try {
           const client = getClient() as unknown as RawClient;
-          const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
+          const result = await serializePaidRequest(() => client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body));
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

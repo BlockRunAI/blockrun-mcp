@@ -1,5 +1,6 @@
 // src/tools/dex.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { fetchWithTimeout } from "../utils/http.js";
 
@@ -18,6 +19,7 @@ Examples:
   blockrun_dex({ query: "SOL" })           -> Search for SOL pairs
   blockrun_dex({ token: "So11...xxx" })    -> Get specific token data
   blockrun_dex({ symbol: "PEPE" })         -> Search by symbol`,
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         query: z.string().optional().describe("Search query (token name, symbol, or address)"),
         token: z.string().optional().describe("Token address for direct lookup"),
