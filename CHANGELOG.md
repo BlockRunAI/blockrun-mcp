@@ -2,6 +2,61 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.33.0
+
+A 20th tool, MCP safety annotations that describe effect instead of price, and
+pre-payment request validation (#81).
+
+- **`feat(polymarket)` — `blockrun_polymarket_read`, a read-only companion
+  tool.** `positions`, `orders`, and a live CLOB `preview` that builds real
+  order economics from the book but has no `confirm` input and cannot sign or
+  submit. `blockrun_polymarket` keeps every action for compatibility, but
+  mixing reads with real-money writes forced that whole tool to be marked
+  destructive; clients enforcing annotations can now inspect a position or
+  price an order without approving a funds-affecting call. Trading profile goes
+  to 9 tools, the default surface to 20.
+- **`feat` — every tool carries an MCP safety annotation, assigned by effect.**
+  `destructiveHint` means "irreversible update" and is only meaningful when
+  `readOnlyHint` is false; it says nothing about money, and MCP has no cost
+  hint. Paid data queries (`markets`, `search`, `exa`, `surf`, `defi`, `price`)
+  are therefore read-only — marking them destructive because they settle
+  $0.0095 made annotation-honoring clients demand approval for a plain lookup.
+  Spend control stays where it belongs, in the budget ledger. Two tools got
+  *stricter*: `rpc` (`eth_sendRawTransaction` can broadcast) and `modal`
+  (executes arbitrary code) are now destructive alongside `phone` and
+  `polymarket`. A test fails if a new tool ships unannotated — under the spec
+  that silently defaults to destructive.
+- **`feat(markets)` — request contracts validated before the x402 payment is
+  created.** A guaranteed-4xx call now costs $0 instead of a settled fee:
+  Gamma-only params (`active`, `closed`, `order`, `ascending`) on
+  `polymarket/markets{,/keyset}`, a non-integer candlestick `interval` (`60`,
+  not `1h`), `polymarket/orderbooks` without a valid millisecond range, and an
+  unfiltered smart-money call. Deliberately narrow: rules are pinned to the
+  gateway's own route/param registry, and unknown paths pass through, so a new
+  Predexon route is never blocked by a stale client.
+- **`fix` — paid data calls from one wallet are serialized.** Concurrent x402
+  authorizations can race at the settlement layer and get one otherwise-funded
+  call rejected. Covers the fast paid-data tools (`markets`, `surf`, `exa`,
+  `search`, `rpc`, `defi`, paid `price`); the 60–180s media tools stay
+  concurrent on purpose, since queueing a 5ms price lookup behind a video
+  render trades a rare failure for a guaranteed one. Waiters give up after a
+  bounded wait so one hung call can't wedge every paid tool until restart.
+- **`fix(errors)` — a validation bug no longer reads as an outage, and an
+  outage no longer reads as an empty wallet.** A post-402 failure carrying a
+  4xx is an actionable client error, not a transient blip, so it loses the
+  "try again in a few minutes" advice. A 5xx now has to look like an HTTP
+  status to count — LLM errors are full of incidental 5xx-shaped numbers
+  ("max_tokens 512 is above the limit"), and retry guidance there hides a real
+  bug. Conversely, a post-payment failure with no parseable status is still an
+  upstream failure, so it stops falling through to "your wallet needs funding".
+- **`fix(polymarket)` — market buys are priced against real book depth.** An
+  empty ask book is rejected instead of producing a preview the CLOB can't
+  execute; a FOK buy the book cannot fill is rejected before signing; and the
+  minimum-share check now runs on the estimated fill for market orders, not
+  just limits, with the minimum spend quoted at the live best ask.
+- **`docs`** — packaged `signal-to-trade-demo` skill plus a Stanford runbook,
+  and `docs/` no longer ships in the npm tarball.
+
 ## 0.32.9
 
 Closes the external-review backlog: all 8 findings from the Kimi K3 review
