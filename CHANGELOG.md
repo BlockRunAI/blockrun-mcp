@@ -2,6 +2,33 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.33.1
+
+Live-probes the three pre-payment rules 0.33.0 shipped on inference rather than
+evidence. Two were wrong, and both cost users real money.
+
+- **`fix(markets)` — `markets/listings` is blocked again; it is retired
+  upstream.** Verified against the live gateway: the route settles a payment and
+  THEN returns **410 Gone**. 0.33.0 unblocked it because blockrun's own registry
+  still lists, prices, and advertises it — but the gateway only proxies, and
+  Predexon has retired it. Registry presence is not evidence that a route serves.
+  #81 had this right and the 0.33.0 change was the regression.
+- **`fix(markets)` — `window` is no longer treated as a smart-money cohort
+  filter.** Verified: no params 400s, `{ window: "7d" }` alone **also** 400s, and
+  `{ min_trades: "100" }` alone succeeds (window then defaults to `all_time`).
+  `window` scopes the time range; it does not define the cohort. 0.33.0 counted
+  it as a filter and passed a guaranteed paid 400 straight through. The check now
+  requires a smart-wallet criterion and says why when only `window` is present.
+- **`fix(markets)` — the candlestick interval whitelist is gone.** Verified on
+  one market: omitting `interval` succeeds, `1440` succeeds, `1h` 422s, and
+  `60` returns a paid **400**. Which integer intervals a market can serve is
+  data-dependent, so a client-side numeric whitelist both blocks valid calls and
+  still lets paid failures through. Only the shape is checkable client-side:
+  non-numeric is rejected, integers pass.
+
+Tool description and the `prediction-markets` skill corrected to match. 279
+tests, typecheck, build, and brand-numbers `--check` green.
+
 ## 0.35.0
 
 `bytedance/seedream-5-pro` in the image tool, with a min-dimension price tier.

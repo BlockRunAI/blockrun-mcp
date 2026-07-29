@@ -36,7 +36,6 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
 
 CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
 - markets — list canonical market/question containers with cross-venue Predexon IDs
-- markets/listings — venue-native executable listings flattened across canonical markets
 - outcomes/:predexon_id — resolve a canonical outcome ID to its market context + venue listings
   Filter with ?venue=polymarket|kalshi|limitless|opinion|predictfun, ?status=, ?category=, ?league=, ?event_id=, ?pagination_key=
 
@@ -85,9 +84,9 @@ CROSS-PLATFORM:
 REQUEST CONTRACTS:
 - Discover current markets with markets/search (its search term is "q"), then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id.
 - On polymarket/markets{,/keyset} the free-text filter is "search" (NOT "q"), and status:"open"/"closed" replaces Gamma's active/closed. "sort", "end_after", and "end_before" are supported; "order"/"ascending" are not.
-- Candlesticks interval is integer minutes: 0|1|5|15|60|1440 (use "60", not "1h"); start_time/end_time are Unix seconds.
+- Candlesticks interval is integer minutes ("1440", not "1h"); it is OPTIONAL (the server defaults). Which intervals a market serves varies — 1440 may work where 60 does not. start_time/end_time are Unix seconds.
 - polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
-- Smart-money calls need at least one cohort filter (window, min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor); a good default is { window: "30d", min_trades: "100" }.
+- Smart-money needs a smart-wallet CRITERION (min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor). "window" only scopes time and is NOT sufficient on its own. Default: { window: "30d", min_trades: "100" }.
 - Issue paid calls sequentially. The MCP also serializes them to protect one wallet from concurrent x402 payment races.
 
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,

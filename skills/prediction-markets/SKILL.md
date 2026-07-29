@@ -84,14 +84,18 @@ Current parameter contracts that prevent paid 4xx responses:
   `q`. Use `status:"open"` rather than Gamma's `active`/`closed`, and `sort`
   rather than `order`/`ascending`. `end_after`/`end_before` are supported
   (Unix seconds).
-- Candlestick `interval` is integer minutes: `0`, `1`, `5`, `15`, `60`, or
-  `1440`. Optional `start_time`/`end_time` are Unix seconds.
+- Candlestick `interval` is integer minutes (`1440`, not `1h`) and is
+  **optional** — the server has a default. Which intervals a market can serve
+  varies: `1440` may work where `60` returns a paid 400. Optional
+  `start_time`/`end_time` are Unix seconds.
 - `polymarket/orderbooks` requires `token_id`, `start_time`, and `end_time`; the
   times are Unix milliseconds.
-- Smart-money calls need at least one cohort filter — `window`, `min_trades`,
-  `min_volume`, `min_roi`, `min_realized_pnl`, `min_total_pnl`, `min_win_rate`,
-  or `min_profit_factor`. For general analysis use
-  `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine too.
+- Smart-money needs a smart-wallet **criterion**: `min_trades`, `min_volume`,
+  `min_roi`, `min_realized_pnl`, `min_total_pnl`, `min_win_rate`, or
+  `min_profit_factor`. `window` only scopes the time range and is **not**
+  sufficient alone (verified: window-only returns a paid 400). Use
+  `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine.
+- `markets/listings` is retired upstream (410 Gone) — the MCP blocks it before payment.
 
 ## Two Pricing Tiers
 
@@ -107,7 +111,6 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 |---|---|---|
 | **Same question across venues** | `markets` | 1 |
 | **Search every venue at once** | `markets/search` | 2 |
-| Venue-native tradable listings | `markets/listings` | 1 |
 | Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
 | **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
 | Active matched pairs | `matching-markets/pairs` | 2 |

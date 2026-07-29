@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validateMarketRequest } from "../src/utils/markets-validation.js";
 
-test("markets/listings is a live Tier-1 route, not a pre-payment rejection", () => {
-  // The gateway still registers, prices, and advertises markets/listings in the
-  // x402 manifest (blockrun/src/lib/predexon.ts). Blocking it here would break a
-  // paid endpoint the user is being sold.
-  assert.equal(validateMarketRequest("markets/listings", { venue: "polymarket" }, undefined), null);
+test("markets/listings is retired upstream and blocked before payment", () => {
+  // Verified live 2026-07-29: settles payment, THEN returns 410 Gone. The
+  // gateway still registers and prices it, but the gateway only proxies —
+  // registry presence is not evidence that a route still serves.
+  assert.match(validateMarketRequest("markets/listings", { venue: "polymarket" }, undefined) ?? "", /410 Gone/);
 });
 
 test("Gamma-only market discovery params are rejected before payment", () => {
@@ -35,9 +35,14 @@ test("Predexon's own filters on polymarket/markets are not mistaken for Gamma pa
   }
 });
 
-test("candlesticks rejects a bad interval value but does not invent a required one", () => {
+test("candlesticks rejects a malformed interval but does not whitelist numbers", () => {
   const path = "polymarket/candlesticks/token/123";
-  assert.match(validateMarketRequest(path, { interval: "1h" }, undefined) ?? "", /'60', not '1h'/i);
+  assert.match(validateMarketRequest(path, { interval: "1h" }, undefined) ?? "", /not a number/i);
+  assert.match(validateMarketRequest(path, { interval: "1d" }, undefined) ?? "", /not a number/i);
+  // Verified live: 1440 works where 60 returns a paid 400 on the SAME market,
+  // so which integers serve is data-dependent and not ours to guess.
+  assert.equal(validateMarketRequest(path, { interval: "1440" }, undefined), null);
+  assert.equal(validateMarketRequest(path, { interval: "60" }, undefined), null);
   assert.match(validateMarketRequest(path, { interval: "60", start: "1", end: "2" }, undefined) ?? "", /start_time/);
   assert.equal(validateMarketRequest(path, { interval: "60", start_time: "1", end_time: "2" }, undefined), null);
 
@@ -57,18 +62,21 @@ test("historical orderbooks require a valid millisecond range", () => {
   }, undefined), null);
 });
 
-test("smart-money blocks the unfiltered call without inventing thresholds", () => {
+test("smart-money requires a wallet criterion, and window alone is not one", () => {
   const path = "polymarket/market/0xabc/smart-money";
-  // The observed paid failure: no filter at all.
   assert.match(validateMarketRequest(path, {}, undefined) ?? "", /min_trades: '100'/);
-  assert.equal(validateMarketRequest(path, { window: "30d", min_trades: "100" }, undefined), null);
 
-  // Magnitudes were never verified against the API, so a narrower but perfectly
-  // legitimate cohort must still go through.
-  assert.equal(validateMarketRequest(path, { window: "7d" }, undefined), null);
+  // Verified live: window-only 400s upstream. 0.33.0 counted `window` as a
+  // cohort filter and let that paid failure through.
+  const windowOnly = validateMarketRequest(path, { window: "7d" }, undefined) ?? "";
+  assert.match(windowOnly, /only scopes the time range/);
+
+  // Verified live: min_trades alone succeeds (window defaults to all_time).
+  assert.equal(validateMarketRequest(path, { min_trades: "100" }, undefined), null);
+  assert.equal(validateMarketRequest(path, { window: "30d", min_trades: "100" }, undefined), null);
+  // Magnitudes stay unvalidated — a narrower cohort is legitimate.
   assert.equal(validateMarketRequest(path, { min_trades: "20" }, undefined), null);
   assert.equal(validateMarketRequest(path, { min_roi: "0.05" }, undefined), null);
-  assert.equal(validateMarketRequest(path, { min_win_rate: "0.6" }, undefined), null);
 });
 
 test("unknown paths remain forward compatible", () => {
