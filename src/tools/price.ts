@@ -20,7 +20,6 @@ import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 
 const CATEGORY = z.enum(["crypto", "fx", "commodity", "usstock", "stocks"]);
 const MARKET = z.enum([
@@ -105,7 +104,7 @@ Examples:
               market: market as StockMarket | undefined,
               session: session as MarketSession | undefined,
             });
-            const result = paid ? await serializePaidRequest(task) : await task();
+            const result = await task();
             if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
             return {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -123,7 +122,7 @@ Examples:
               from,
               to,
             });
-            const result = paid ? await serializePaidRequest(task) : await task();
+            const result = await task();
             if (estimatedCost > 0) recordSpending(budget, estimatedCost, agent_id);
             return {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

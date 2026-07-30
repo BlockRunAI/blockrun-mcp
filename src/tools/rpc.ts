@@ -9,7 +9,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -92,7 +91,7 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
         }
         try {
           const client = getClient() as unknown as RawClient;
-          const result = await serializePaidRequest(() => client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body));
+          const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

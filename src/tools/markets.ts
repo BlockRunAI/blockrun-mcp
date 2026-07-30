@@ -8,7 +8,6 @@ import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { validateMarketRequest } from "../utils/markets-validation.js";
 
 // What x402 CHARGES, which is not the 402's JSON `price` field. That field is the
@@ -87,7 +86,6 @@ REQUEST CONTRACTS:
 - Candlesticks interval is integer minutes ("1440", not "1h"); it is OPTIONAL (the server defaults). Which intervals a market serves varies — 1440 may work where 60 does not. start_time/end_time are Unix seconds.
 - polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
 - Smart-money needs a smart-wallet CRITERION (min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor). "window" only scopes time and is NOT sufficient on its own. Default: { window: "30d", min_trades: "100" }.
-- Issue paid calls sequentially. The MCP also serializes them to protect one wallet from concurrent x402 payment races.
 
 Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
@@ -120,9 +118,9 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
         }
         try {
           const llm = getClient();
-          const result = await serializePaidRequest(() => body !== undefined
-            ? llm.pmQuery(path, body)
-            : llm.pm(path, params));
+          const result = body !== undefined
+            ? await llm.pmQuery(path, body)
+            : await llm.pm(path, params);
           recordSpending(budget, estimatedCost, agent_id);
 
           return {

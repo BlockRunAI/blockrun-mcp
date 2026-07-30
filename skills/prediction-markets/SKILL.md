@@ -73,8 +73,8 @@ blockrun_markets({ path: "polymarket/wallet/identities", body: {
 
 Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child agent's budget.
 
-Make paid calls sequentially when one wallet is paying. The MCP serializes them
-as a second guard against concurrent x402 payment races.
+Paid calls can run in parallel. Each x402 authorization carries its own nonce,
+so concurrent calls from one wallet do not collide.
 
 Current parameter contracts that prevent paid 4xx responses:
 

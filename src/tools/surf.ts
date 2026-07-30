@@ -12,7 +12,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
@@ -101,9 +100,9 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
         try {
           const client = getClient() as unknown as SurfClient;
           const endpoint = `/v1/surf/${cleanPath}`;
-          const result = await serializePaidRequest(() => body !== undefined
-            ? client.requestWithPaymentRaw(endpoint, body)
-            : client.getWithPaymentRaw(endpoint, params));
+          const result = body !== undefined
+            ? await client.requestWithPaymentRaw(endpoint, body)
+            : await client.getWithPaymentRaw(endpoint, params);
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

@@ -26,6 +26,18 @@ evidence. Two were wrong, and both cost users real money.
   still lets paid failures through. Only the shape is checkable client-side:
   non-numeric is rejected, integers pass.
 
+- **`perf` — the process-global paid-call queue is removed.** 0.33.0 serialized
+  every paid data call on the reasoning that "concurrent authorizations from one
+  wallet can race at the settlement layer". Measured, that protects nothing:
+  Base mints a fresh random 32-byte nonce per payment (`x402.ts:235`), so two
+  concurrent authorizations can never collide; the real Solana collision is
+  handled inside `@blockrun/llm` 3.8.4 by making each payment distinct, and its
+  check-and-add is synchronous, so it is already concurrency-safe without a
+  caller queue. The tools that *did* have a concurrency bug (`chat`'s settled-cost
+  delta) were never in the queue — they use a fresh non-cached client instead.
+  Cost of keeping it, measured on 4 concurrent `markets/search` calls: **+4025ms
+  (2.68x)**, with the unserialized arm returning 4/4 clean. Tracked as #89.
+
 Tool description and the `prediction-markets` skill corrected to match. 279
 tests, typecheck, build, and brand-numbers `--check` green.
 
