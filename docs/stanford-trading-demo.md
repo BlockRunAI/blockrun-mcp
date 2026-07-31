@@ -160,7 +160,7 @@ estimated fill and cannot sign or submit an order.
 - $5 per-order and $5 per-session demo caps;
 - $0.15 API budget;
 - pre-payment parameter validation;
-- serialized x402 calls from one wallet;
+- per-call payment authorization signed locally;
 - explicit confirmation gate plus regional eligibility enforcement.
 
 ## Tested fallbacks

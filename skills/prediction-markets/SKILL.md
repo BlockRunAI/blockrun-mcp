@@ -64,7 +64,7 @@ One tool, three params. Method auto-routes: POST when `body` is set, GET otherwi
 ```ts
 blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 
-blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "60" } })
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1440" } })
 
 blockrun_markets({ path: "polymarket/wallet/identities", body: {
   addresses: ["0xabc...", "0xdef..."]
@@ -73,8 +73,10 @@ blockrun_markets({ path: "polymarket/wallet/identities", body: {
 
 Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child agent's budget.
 
-Paid calls can run in parallel. Each x402 authorization carries its own nonce,
-so concurrent calls from one wallet do not collide.
+Paid calls can run in parallel **on Base**: each EIP-3009 authorization carries
+its own random nonce, so concurrent calls from one wallet cannot collide.
+The Solana payload has no nonce field — distinctness comes from the SDK
+(`@blockrun/llm` >= 3.8.4), so keep that floor if you fan out on Solana.
 
 Current parameter contracts that prevent paid 4xx responses:
 
@@ -180,7 +182,7 @@ blockrun_markets({ path: "outcomes/PXM-12345" })   // → venue listings + price
 
 ```ts
 blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: {
-  interval: "60", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>"
+  interval: "1440", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>"
 } })
 blockrun_markets({ path: "polymarket/volume-chart/0xCONDITION_ID" })
 blockrun_markets({ path: "polymarket/markets/0xCONDITION_ID/open_interest" })
@@ -287,7 +289,7 @@ Inside the MCP, use `blockrun_markets` above. For standalone scripts:
 from blockrun_llm import setup_agent_wallet   # setup_agent_solana_wallet() on Solana
 client = setup_agent_wallet()
 
-client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="60")
+client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="1440")
 client.pm_query("polymarket/wallet/identities", {"addresses": ["0xabc"]})
 ```
 

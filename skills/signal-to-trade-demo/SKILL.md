@@ -28,8 +28,8 @@ or preparing a fallback.
 4. Choose the smallest whole-dollar preview from $1–$5 that satisfies the live
    `min_order_size` and book depth. Never present a smaller, non-executable
    preview as valid. Do not split orders to bypass caps.
-5. Make paid market-data calls sequentially. Do not launch them in parallel
-   against one payment wallet.
+5. Paid market-data calls may run in parallel on Base. On Solana keep
+   `@blockrun/llm` >= 3.8.4, which is what makes concurrent payments distinct.
 
 ## 1. Private operator preflight
 
@@ -80,12 +80,13 @@ Use four independent lenses where the market supports them:
    ```text
    blockrun_markets {
      path: "polymarket/candlesticks/token/<TOKEN_ID>",
-     params: { interval: "60", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>" }
+     params: { interval: "1440", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>" }
    }
    ```
 
-   `interval` is integer minutes (`60`, not `1h`); `start_time` and `end_time`
-   are Unix seconds.
+   `interval` is integer minutes (`1440`, not `1h`) and is optional. `60` was
+   observed returning a paid 400 where `1440` worked; `start_time` and
+   `end_time` are Unix seconds.
 3. **Smart money:** use a meaningful cohort:
 
    ```text

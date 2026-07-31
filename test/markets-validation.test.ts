@@ -82,3 +82,57 @@ test("smart-money requires a wallet criterion, and window alone is not one", () 
 test("unknown paths remain forward compatible", () => {
   assert.equal(validateMarketRequest("future/provider/endpoint", {}, undefined), null);
 });
+
+test("a decorated path cannot step around a rule", () => {
+  // Every rule matched a bare, exactly-cased slug, so these all sailed past and
+  // settled a payment for the exact failure the rule exists to prevent. The
+  // gateway router ignores query strings, fragments, casing, slash runs, and
+  // control characters when matching, so validation has to as well.
+  for (const path of [
+    "markets/listings?venue=polymarket",
+    "Markets/Listings",
+    "markets//listings",
+    "markets/listings#x",
+    "markets/listings\t",
+    "/markets/listings/",
+  ]) {
+    assert.match(
+      validateMarketRequest(path, {}, undefined) ?? "",
+      /410 Gone/,
+      `${JSON.stringify(path)} must not bypass the retired-route block`,
+    );
+  }
+
+  assert.match(
+    validateMarketRequest("polymarket/market/0xabc/smart-money?window=7d", {}, undefined) ?? "",
+    /smart-wallet criterion/,
+  );
+  assert.match(
+    validateMarketRequest("POLYMARKET/ORDERBOOKS", {}, undefined) ?? "",
+    /token_id/,
+  );
+});
+
+test("every smart-money criterion is honoured, and an unusable value is not one", () => {
+  const path = "polymarket/market/0xabc/smart-money";
+  // Without this loop, dropping 5 of the 7 entries kept the whole suite green.
+  for (const key of [
+    "min_trades", "min_volume", "min_roi", "min_realized_pnl",
+    "min_total_pnl", "min_win_rate", "min_profit_factor",
+  ]) {
+    assert.equal(
+      validateMarketRequest(path, { [key]: "1" }, undefined), null,
+      `${key} should satisfy the criterion requirement`,
+    );
+  }
+  // Presence is not usability — these 400 upstream exactly like no filter.
+  for (const q of [{ min_trades: "" }, { min_roi: "   " }] as Array<Record<string, string>>) {
+    assert.match(validateMarketRequest(path, q, undefined) ?? "", /smart-wallet criterion/);
+  }
+});
+
+test("a non-Polymarket candlestick route keeps its own interval format", () => {
+  // Binance klines take "1h" natively; applying the digits-only rule there
+  // would be a pure over-block.
+  assert.equal(validateMarketRequest("binance/candles/BTCUSDT", { interval: "1h" }, undefined), null);
+});
