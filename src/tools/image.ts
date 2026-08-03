@@ -104,6 +104,7 @@ const GENERATE_MODEL_COST: Record<string, number> = {
   "google/nano-banana": 0.05,
   "google/nano-banana-2": 0.09,
   "google/nano-banana-pro": 0.10,
+  "bytedance/seedream-5-pro": 0.045,
 };
 
 // Non-square / oversized renders cost more on these models (live catalog).
@@ -111,6 +112,7 @@ const LARGE_SIZE_COST: Record<string, number> = {
   "openai/gpt-image-1": 0.04,
   "openai/gpt-image-2": 0.12,
   "google/nano-banana-pro": 0.15, // 4096x4096 tier
+  "bytedance/seedream-5-pro": 0.09, // min(w,h) > 1024 tier — see LARGE_SIZE_MIN_DIM_MODELS
 };
 
 // Mirrors the gateway's EDIT_SUPPORTED_MODELS (/v1/images/image2image).
@@ -142,6 +144,7 @@ const IMAGE_MODELS = [
   "openai/gpt-image-2",
   "xai/grok-imagine-image",
   "xai/grok-imagine-image-pro",
+  "bytedance/seedream-5-pro",
 ] as const;
 
 // Where each model's large tier actually starts, in max(width,height).
@@ -161,6 +164,15 @@ const LARGE_SIZE_THRESHOLD: Record<string, number> = {
   "google/nano-banana-pro": 2048, // $0.107001 through 2048; $0.159500 at 4096
 };
 
+// Seedream's large tier is keyed on the SMALLER dimension, not the larger one
+// (probed live across all 8 catalog sizes): 2048x1024 and 1280x720 bill the
+// $0.045 base while 2048x2048 / 2304x1728 / 2848x1600 bill $0.09. A max(w,h)
+// rule cannot express that — threshold 1024 would over-bill 2048x1024 at 2x,
+// threshold 2048 would UNDER-reserve 2048x2048. min(w,h) > 1024 matches every
+// listed size, and unlisted sizes are rejected by the gateway before any
+// payment exists, so the rule only ever has to be right on the catalog sizes.
+const LARGE_SIZE_MIN_DIM_MODELS = new Set(["bytedance/seedream-5-pro"]);
+
 // The large-size tier applies only when a dimension genuinely exceeds the
 // model's threshold. A plain `size !== "1024x1024"` inequality billed SMALLER
 // renders (512x512) and harmless typos ("1024X1024", trailing space) at the
@@ -169,7 +181,8 @@ function isLargerThanBase(model: string, size: string): boolean {
   const m = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(size);
   if (!m) return false; // unrecognized → treat as base, don't over-charge
   const threshold = LARGE_SIZE_THRESHOLD[model] ?? 1024;
-  return Math.max(Number(m[1]), Number(m[2])) > threshold;
+  const pick = LARGE_SIZE_MIN_DIM_MODELS.has(model) ? Math.min : Math.max;
+  return pick(Number(m[1]), Number(m[2])) > threshold;
 }
 
 // The gateway charges catalog_base x 1.05 + $0.002 — the catalog figure is NOT
@@ -277,6 +290,7 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - xai/grok-imagine-image ($0.02) — stylized, fast
 - xai/grok-imagine-image-pro ($0.07) — higher quality Grok Imagine
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
+- bytedance/seedream-5-pro ($0.045; $0.09 when both dimensions exceed 1024) — Seedream 5.0 Pro; cheap widescreen at 1280x720 / 2048x1024, large formats up to 2848x1600
 
 Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-pro
 Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
@@ -291,7 +305,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           .optional()
           .describe("Source image(s) for edit action: a base64 data URI, an http(s) URL, or a local file path (auto-encoded to a data URI) — or an array of 2–4 to fuse into one render (e.g. subject + layout guide, or reference + brand logo). openai/* accepts up to 4, google/* up to 3; a mask cannot be combined with multiple images."),
         mask: z.string().optional().describe("Inpaint mask for edit action (openai/gpt-image-* only): a base64 data URI, http(s) URL, or local file path. Transparent areas of the mask are regenerated. Cannot be combined with multiple source images."),
-        size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro)"),
+        size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro), 1280x720 / 2048x1024 / 2048x2048 / 2848x1600 (seedream-5-pro)"),
         quality: z.enum(["standard", "hd"]).optional().default("standard"),
         inline: z.boolean().optional().describe("Return a small inline image preview (thumbnail) the client can render in-conversation, in addition to the full-resolution URL. Defaults to the BLOCKRUN_INLINE_IMAGES env setting (off unless set). Rich clients (e.g. the VS Code extension) render it; plain terminals ignore it. Off keeps responses lightweight."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),

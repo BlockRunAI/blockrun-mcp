@@ -116,6 +116,14 @@ const PROBES: Probe[] = [
   // nano-banana-2 is 1024-only upstream (the gateway 400s any other size), so a
   // single probe covers its whole price surface.
   { label: "image nano-banana-2 1024", path: "images/generations", body: { model: "google/nano-banana-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("google/nano-banana-2", "1024x1024") },
+  // Seedream's tier is keyed on min(w,h), not max: 2048x1024 must bill BASE
+  // while 2048x2048 bills the large tier. Pin the boundary from both sides.
+  ...(["1024x1024", "2048x1024", "2048x2048"].map((size) => ({
+    label: `image seedream-5-pro ${size}`,
+    path: "images/generations",
+    body: { model: "bytedance/seedream-5-pro", prompt: "a cube", size },
+    expected: estimateImageCost("bytedance/seedream-5-pro", size),
+  }))),
 
   // Exa: priced PER URL. The gateway ignores the query string when routing, so
   // `contents?x=1` must price identically to `contents`.

@@ -103,6 +103,30 @@ test("nano-banana-2 bills its flat 1024 price and is accepted for edits", async 
   assert.equal(edit.isError, undefined);
 });
 
+// Seedream's large tier is keyed on min(w,h), probed live: 2048x1024 and
+// 1280x720 bill the $0.045 base while 2048x2048 bills $0.09. A max(w,h) rule
+// gets one of the two 2048 sizes wrong whichever threshold it picks.
+test("seedream-5-pro tiers on the smaller dimension", () => {
+  const base = estimateCost("bytedance/seedream-5-pro", "1024x1024");
+  assert.equal(base, 0.04925); // 0.045 catalog x 1.05 + $0.002
+  assert.equal(estimateCost("bytedance/seedream-5-pro", "1280x720"), base);
+  assert.equal(estimateCost("bytedance/seedream-5-pro", "2048x1024"), base, "2048x1024 is a base-tier size upstream");
+  assert.equal(estimateCost("bytedance/seedream-5-pro", "2048x2048"), 0.0965, "2048x2048 is the $0.09 tier");
+  assert.equal(estimateCost("bytedance/seedream-5-pro", "2848x1600"), 0.0965);
+});
+
+test("seedream-5-pro is rejected for edits before any charge", async () => {
+  const { call, budget } = makeHarness();
+  const res = await call({
+    prompt: "make it red",
+    action: "edit",
+    model: "bytedance/seedream-5-pro",
+    image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  });
+  assert.equal(res.isError, true);
+  assert.equal(budget.spent, 0);
+});
+
 test("gpt-image-2 still steps above 1024", () => {
   const base = estimateCost("openai/gpt-image-2", "1024x1024");
   assert.ok(estimateCost("openai/gpt-image-2", "1536x1024") > base);
