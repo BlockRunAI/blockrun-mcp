@@ -2,6 +2,21 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.34.0
+
+`google/nano-banana-2` in the image tool.
+
+- **`feat(image)` — `google/nano-banana-2` (Gemini 3.1 Flash) in
+  `blockrun_image`.** Pro-level quality at Flash speed: $0.09 catalog base,
+  1024x1024 only (the gateway rejects any other size before payment is
+  created, so a wrong size costs $0), supported for both generate and edit.
+  Priced against the live 402 quote and pinned by a new `verify:prices`
+  probe. The edit-rejection message is now derived from `EDIT_MODELS`
+  instead of hand-listing models, so the next model addition cannot leave
+  it stale.
+- **`docs` — model listed in the README tool table and the
+  `image-prompting` skill's decision table.**
+
 ## 0.33.0
 
 A 20th tool, MCP safety annotations that describe effect instead of price, and
