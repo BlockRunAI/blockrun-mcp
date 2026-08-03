@@ -86,6 +86,23 @@ test("nano-banana-pro stays on the base price through 2048 and steps only at 409
   assert.equal(base, 0.107001);                                             // live quote
 });
 
+test("nano-banana-2 bills its flat 1024 price and is accepted for edits", async () => {
+  const { call } = makeHarness();
+  const res = await call({ prompt: "a pear", model: "google/nano-banana-2" });
+  const text = res.content.map((c: any) => c.text).join("\n");
+  assert.match(text, /Cost: \$0\.0965/); // 0.09 catalog x 1.05 + $0.002
+  assert.equal(res.isError, undefined);
+  // Edit support: the gateway's EDIT_SUPPORTED_MODELS includes nano-banana-2,
+  // so the local gate must not reject it before the paid call.
+  const edit = await call({
+    prompt: "make it red",
+    action: "edit",
+    model: "google/nano-banana-2",
+    image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  });
+  assert.equal(edit.isError, undefined);
+});
+
 test("gpt-image-2 still steps above 1024", () => {
   const base = estimateCost("openai/gpt-image-2", "1024x1024");
   assert.ok(estimateCost("openai/gpt-image-2", "1536x1024") > base);

@@ -102,6 +102,7 @@ const GENERATE_MODEL_COST: Record<string, number> = {
   "openai/gpt-image-1": 0.02,
   "openai/gpt-image-2": 0.06,
   "google/nano-banana": 0.05,
+  "google/nano-banana-2": 0.09,
   "google/nano-banana-pro": 0.10,
 };
 
@@ -117,6 +118,7 @@ const EDIT_MODELS = new Set([
   "openai/gpt-image-1",
   "openai/gpt-image-2",
   "google/nano-banana",
+  "google/nano-banana-2",
   "google/nano-banana-pro",
 ]);
 
@@ -134,6 +136,7 @@ const MASK_MODELS = new Set(["openai/gpt-image-1", "openai/gpt-image-2"]);
 const IMAGE_MODELS = [
   "zai/cogview-4",
   "google/nano-banana",
+  "google/nano-banana-2",
   "google/nano-banana-pro",
   "openai/gpt-image-1",
   "openai/gpt-image-2",
@@ -269,12 +272,13 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - openai/gpt-image-2 ($0.06–0.12) — flagship, reasoning-driven, multilingual on-image text + character consistency (default)
 - openai/gpt-image-1 ($0.02–0.04) — GPT native image generation
 - google/nano-banana ($0.05) — Gemini-family image model
+- google/nano-banana-2 ($0.09) — Gemini 3.1 Flash, pro-level quality at Flash speed (1024x1024 only)
 - google/nano-banana-pro ($0.10; $0.15 at 4096px) — up to 4K, strongest photorealism
 - xai/grok-imagine-image ($0.02) — stylized, fast
 - xai/grok-imagine-image-pro ($0.07) — higher quality Grok Imagine
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 
-Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-pro
+Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-pro
 Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
 Source images and masks accept a base64 data URI, an http(s) URL, or a local file path (auto-encoded). Inpaint mask (openai/gpt-image-* only) via "mask"; not combinable with multiple source images.`,
       annotations: TOOL_ANNOTATIONS.generative,
@@ -312,7 +316,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           }
           if (!EDIT_MODELS.has(selectedModel)) {
             return {
-              content: [{ type: "text", text: formatError("Image edits support openai/gpt-image-1, openai/gpt-image-2, google/nano-banana, or google/nano-banana-pro") }],
+              content: [{ type: "text", text: formatError(`Image edits support ${[...EDIT_MODELS].join(", ")}`) }],
               isError: true,
             };
           }

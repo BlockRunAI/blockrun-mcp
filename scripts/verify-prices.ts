@@ -113,6 +113,9 @@ const PROBES: Probe[] = [
     expected: estimateImageCost("google/nano-banana-pro", size),
   }))),
   { label: "image gpt-image-2 1024", path: "images/generations", body: { model: "openai/gpt-image-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("openai/gpt-image-2", "1024x1024") },
+  // nano-banana-2 is 1024-only upstream (the gateway 400s any other size), so a
+  // single probe covers its whole price surface.
+  { label: "image nano-banana-2 1024", path: "images/generations", body: { model: "google/nano-banana-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("google/nano-banana-2", "1024x1024") },
 
   // Exa: priced PER URL. The gateway ignores the query string when routing, so
   // `contents?x=1` must price identically to `contents`.
