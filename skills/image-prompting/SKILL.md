@@ -31,6 +31,7 @@ doubles the price ($0.065 → $0.128). Ask for `1536x1024` only when you need it
 | Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` | $0.128 |
 | Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` | $0.065 |
 | Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` | $0.065–0.107 |
+| Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) | $0.0965 |
 | Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | $0.0545 |
 | Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` | $0.0178 |
 | Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | $0.065 at 1024x1024, $0.128 above |
@@ -310,4 +311,4 @@ CONSTRAINTS:
 
 ## Reference
 
-BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-pro`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-pro`
+BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-2`, `google/nano-banana-pro`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-pro`
