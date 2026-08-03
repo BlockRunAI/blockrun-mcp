@@ -2,6 +2,24 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.35.0
+
+`bytedance/seedream-5-pro` in the image tool, with a min-dimension price tier.
+
+- **`feat(image)` — `bytedance/seedream-5-pro` (Seedream 5.0 Pro) in
+  `blockrun_image`.** Eight upstream sizes: $0.045 base covers 1024x1024,
+  1280x720 and 2048x1024 — the cheapest widescreen/banner option in the
+  catalog — and $0.09 covers the four large formats up to 2848x1600.
+  Generate only; the gateway rejects it for edits (and rejects unlisted
+  sizes) before any payment is created. All three boundary sizes are pinned
+  by new `verify:prices` probes.
+- **`fix(image)` — large-size tiers can now key on the smaller dimension.**
+  Seedream's tier boundary is min(w,h) > 1024, probed live across all
+  eight catalog sizes: 2048x1024 bills base while 2048x2048 bills $0.09.
+  The previous max(w,h)-only rule could not express that — either it
+  over-billed 2048x1024 at 2x or under-reserved 2048x2048 past the budget
+  cap. Per-model `LARGE_SIZE_MIN_DIM_MODELS` picks the axis.
+
 ## 0.34.0
 
 `google/nano-banana-2` in the image tool.
