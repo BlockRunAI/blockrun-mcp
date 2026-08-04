@@ -29,8 +29,29 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # publish.yml runs build alongside typecheck and test, and this gate is
+      # meant to move that same trio earlier — the header above says as much —
+      # but build was missing, so a tsup/dts break still only surfaced on main
+      # mid-release.
+      - name: Build
+        run: npm run build
+
       - name: Test
         run: npm test
+
+      # 0.32.3 shipped with sharp imported at the top level. sharp is an
+      # optionalDependency, so wherever it is absent — musl, unusual arch,
+      # offline CI, --no-optional — ESM resolution failed before main() ran and
+      # all 19 tools went with it, while build, typecheck and test stayed green.
+      # Loading the built entrypoint is the only thing that catches that class.
+      #
+      # sharp is deleted rather than installed around with --omit=optional:
+      # that also strips rollup's platform binary, so tsup cannot run at all,
+      # which is a failure of the build toolchain rather than of this package.
+      - name: CLI loads without sharp
+        run: |
+          rm -rf node_modules/sharp
+          test "$(node dist/index.js --version)" = "$(node -p 'require("./package.json").version')"
 
       # Fails when a number in the docs disagrees with brand-numbers.json.
       # Offline by design: it reads the committed snapshot and never fetches, so
