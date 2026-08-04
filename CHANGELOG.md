@@ -2,10 +2,12 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
-## 0.33.1
+## 0.36.0
 
 Live-probes the three pre-payment rules 0.33.0 shipped on inference rather than
-evidence. Two were wrong, and both cost users real money.
+evidence. Two were wrong, and both cost users real money. The paid-call queue
+that shipped alongside them is removed: measured, it protected nothing and cost
+2.68x on concurrent calls.
 
 - **`fix(markets)` — `markets/listings` is blocked again; it is retired
   upstream.** Verified against the live gateway: the route settles a payment and
@@ -25,7 +27,6 @@ evidence. Two were wrong, and both cost users real money.
   data-dependent, so a client-side numeric whitelist both blocks valid calls and
   still lets paid failures through. Only the shape is checkable client-side:
   non-numeric is rejected, integers pass.
-
 - **`perf` — the process-global paid-call queue is removed.** 0.33.0 serialized
   every paid data call on the reasoning that "concurrent authorizations from one
   wallet can race at the settlement layer". Measured, that protects nothing:
@@ -36,12 +37,15 @@ evidence. Two were wrong, and both cost users real money.
   published versions with no distinctness at all and the lockfile pinned the
   oldest of them. Its check-and-add is synchronous on the common path (the
   exhausted-nonce branch does await, which is unreachable below 65 identical
-  payments per blockhash), so it is concurrency-safe without a caller queue. The tools that *did* have a concurrency bug (`chat`'s settled-cost
-  delta) were never in the queue — they use a fresh non-cached client instead.
-  Cost of keeping it, measured on 4 concurrent `markets/search` calls: **+4025ms
-  (2.68x)**, with the unserialized arm returning 4/4 clean. Tracked as #89.
+  payments per blockhash), so it is concurrency-safe without a caller queue. The
+  tools that *did* have a concurrency bug (`chat`'s settled-cost delta) were
+  never in the queue — they use a fresh non-cached client instead. Cost of
+  keeping it, measured on 4 concurrent `markets/search` calls: **+4025ms
+  (2.68x)**, with the unserialized arm returning 4/4 clean. Closes #89.
 
-Tool description and the `prediction-markets` skill corrected to match.
+Tool description and the `prediction-markets` skill corrected to match. 282
+tests, typecheck, build, brand-numbers `--check` and the CLI load smoke green;
+`verify:prices` reports 0 under-reserving routes.
 
 ## 0.35.0
 
