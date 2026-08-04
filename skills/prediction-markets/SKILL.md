@@ -64,7 +64,7 @@ One tool, three params. Method auto-routes: POST when `body` is set, GET otherwi
 ```ts
 blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 
-blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "60" } })
+blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: { interval: "1440" } })
 
 blockrun_markets({ path: "polymarket/wallet/identities", body: {
   addresses: ["0xabc...", "0xdef..."]
@@ -73,8 +73,10 @@ blockrun_markets({ path: "polymarket/wallet/identities", body: {
 
 Paths are relative — no `/api/v1/pm/` prefix. Use `agent_id` to bill a child agent's budget.
 
-Make paid calls sequentially when one wallet is paying. The MCP serializes them
-as a second guard against concurrent x402 payment races.
+Paid calls can run in parallel **on Base**: each EIP-3009 authorization carries
+its own random nonce, so concurrent calls from one wallet cannot collide.
+The Solana payload has no nonce field — distinctness comes from the SDK
+(`@blockrun/llm` >= 3.8.4), so keep that floor if you fan out on Solana.
 
 Current parameter contracts that prevent paid 4xx responses:
 
@@ -84,14 +86,18 @@ Current parameter contracts that prevent paid 4xx responses:
   `q`. Use `status:"open"` rather than Gamma's `active`/`closed`, and `sort`
   rather than `order`/`ascending`. `end_after`/`end_before` are supported
   (Unix seconds).
-- Candlestick `interval` is integer minutes: `0`, `1`, `5`, `15`, `60`, or
-  `1440`. Optional `start_time`/`end_time` are Unix seconds.
+- Candlestick `interval` is integer minutes (`1440`, not `1h`) and is
+  **optional** — the server has a default. Which intervals a market can serve
+  varies: `1440` may work where `60` returns a paid 400. Optional
+  `start_time`/`end_time` are Unix seconds.
 - `polymarket/orderbooks` requires `token_id`, `start_time`, and `end_time`; the
   times are Unix milliseconds.
-- Smart-money calls need at least one cohort filter — `window`, `min_trades`,
-  `min_volume`, `min_roi`, `min_realized_pnl`, `min_total_pnl`, `min_win_rate`,
-  or `min_profit_factor`. For general analysis use
-  `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine too.
+- Smart-money needs a smart-wallet **criterion**: `min_trades`, `min_volume`,
+  `min_roi`, `min_realized_pnl`, `min_total_pnl`, `min_win_rate`, or
+  `min_profit_factor`. `window` only scopes the time range and is **not**
+  sufficient alone (verified: window-only returns a paid 400). Use
+  `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine.
+- `markets/listings` is retired upstream (410 Gone) — the MCP blocks it before payment.
 
 ## Two Pricing Tiers
 
@@ -107,7 +113,6 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 |---|---|---|
 | **Same question across venues** | `markets` | 1 |
 | **Search every venue at once** | `markets/search` | 2 |
-| Venue-native tradable listings | `markets/listings` | 1 |
 | Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
 | **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
 | Active matched pairs | `matching-markets/pairs` | 2 |
@@ -177,7 +182,7 @@ blockrun_markets({ path: "outcomes/PXM-12345" })   // → venue listings + price
 
 ```ts
 blockrun_markets({ path: "polymarket/candlesticks/0xCONDITION_ID", params: {
-  interval: "60", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>"
+  interval: "1440", start_time: "<UNIX_SECONDS>", end_time: "<UNIX_SECONDS>"
 } })
 blockrun_markets({ path: "polymarket/volume-chart/0xCONDITION_ID" })
 blockrun_markets({ path: "polymarket/markets/0xCONDITION_ID/open_interest" })
@@ -284,7 +289,7 @@ Inside the MCP, use `blockrun_markets` above. For standalone scripts:
 from blockrun_llm import setup_agent_wallet   # setup_agent_solana_wallet() on Solana
 client = setup_agent_wallet()
 
-client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="60")
+client.pm("polymarket/candlesticks/0xCONDITION_ID", interval="1440")
 client.pm_query("polymarket/wallet/identities", {"addresses": ["0xabc"]})
 ```
 

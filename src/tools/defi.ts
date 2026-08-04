@@ -7,7 +7,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
@@ -69,7 +68,7 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
         }
         try {
           const client = getClient() as unknown as RawClient;
-          const result = await serializePaidRequest(() => client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`));
+          const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

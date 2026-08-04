@@ -7,7 +7,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { serializePaidRequest } from "../utils/payment-serialization.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
@@ -102,7 +101,7 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
         try {
           const client = getClient() as unknown as RawClient;
           const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
-          const result = await serializePaidRequest(() => client.requestWithPaymentRaw(endpoint, body ?? {}));
+          const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
           recordSpending(budget, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

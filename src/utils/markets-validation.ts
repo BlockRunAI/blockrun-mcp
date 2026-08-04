@@ -1,11 +1,12 @@
-const CANDLE_INTERVALS = new Set(["0", "1", "5", "15", "60", "1440"]);
-// Gamma-only filter names, i.e. params the Polymarket Gamma API accepts but
-// Predexon v2 does not. Kept to exactly that set: `search`, `sort`, `end_after`,
-// and `end_before` ARE spec-backed Predexon filters on polymarket/markets{,/keyset}
-// (see blockrun/src/lib/predexon.ts POLYMARKET_MARKET_PARAMS), so rejecting them
-// here would block valid queries before payment.
-const SMART_MONEY_FILTERS = [
-  "window",
+import { normalizeClassifyPath } from "./path-safety.js";
+
+/**
+ * Smart-wallet CRITERIA — the params that define which wallets count as "smart".
+ * `window` is deliberately absent: it scopes the time range, not the cohort, and
+ * live probing shows `{ window: "7d" }` alone still 400s while
+ * `{ min_trades: "100" }` alone succeeds (window then defaults to all_time).
+ */
+const SMART_MONEY_CRITERIA = [
   "min_trades",
   "min_volume",
   "min_roi",
@@ -14,12 +15,40 @@ const SMART_MONEY_FILTERS = [
   "min_win_rate",
   "min_profit_factor",
 ] as const;
+// Gamma-only filter names, i.e. params the Polymarket Gamma API accepts but
+// Predexon v2 does not. Kept to exactly that set: `search`, `sort`, `end_after`,
+// and `end_before` ARE spec-backed Predexon filters on polymarket/markets{,/keyset}
+// (see blockrun/src/lib/predexon.ts POLYMARKET_MARKET_PARAMS), so rejecting them
+// here would block valid queries before payment.
+
 const GAMMA_ONLY_MARKET_PARAMS = new Set([
   "active",
   "closed",
   "order",
   "ascending",
 ]);
+
+/**
+ * Reduce a caller-supplied path to the slug the gateway will actually route to,
+ * so a rule cannot be stepped around by decorating the path.
+ *
+ * Every rule below matched a bare, exactly-cased slug, which meant
+ * `markets/listings?venue=polymarket`, `Markets/Listings`, `markets//listings`,
+ * and a trailing tab all sailed past and settled a payment for the very failure
+ * the rule exists to prevent. `normalizeClassifyPath` already drops the query
+ * string / fragment, strips outer slashes, and lowercases — the same hazard its
+ * own doc comment describes for the price tables. Two more are needed here:
+ * control characters (the URL parser deletes tab/CR/LF, so `..<TAB>` reaches
+ * the gateway as `..`, which is why `hasPathTraversal` strips them too) and
+ * interior slash runs, which the router collapses and the helper does not.
+ *
+ * NOTE: the price-classification path shares the un-collapsed helper, so a
+ * doubled interior slash can still mis-classify an expensive route as cheap
+ * there. Out of scope for this fix; worth its own change.
+ */
+function normalizeMarketPath(rawPath: string): string {
+  return normalizeClassifyPath(rawPath.replace(/[\t\n\r]/g, "")).replace(/\/{2,}/g, "/");
+}
 
 function numberParam(params: Record<string, string>, key: string): number | undefined {
   if (!(key in params)) return undefined;
@@ -38,8 +67,17 @@ export function validateMarketRequest(
   params: Record<string, string> | undefined,
   body: unknown,
 ): string | null {
-  const path = rawPath.replace(/^\/+|\/+$/g, "");
+  const path = normalizeMarketPath(rawPath);
   const query = params ?? {};
+
+  // Verified live 2026-07-29: this route settles a payment and THEN returns
+  // 410 Gone. The gateway still registers, prices, and advertises it
+  // (blockrun/src/lib/predexon.ts), which is what talked me out of this block in
+  // 0.33.0 — but the gateway only proxies, and Predexon has retired it upstream.
+  // The registry is not evidence that a route still serves.
+  if (path === "markets/listings") {
+    return "Predexon has retired 'markets/listings' — it returns 410 Gone after settling payment. Use 'markets/search' to discover open venue markets, then resolve the selected Polymarket market with 'polymarket/markets/keyset'. No payment was made.";
+  }
 
   if (path === "markets/search" && query.status === "active") {
     return "markets/search uses params.status:'open', not the Gamma-style value 'active'. No payment was made.";
@@ -58,11 +96,20 @@ export function validateMarketRequest(
     if (body !== undefined) {
       return "Polymarket candlesticks is a GET endpoint. Pass query values in params, not body. No payment was made.";
     }
-    // Only validate the VALUE, and only when one is supplied. "1h" is a known
-    // paid failure; whether the endpoint requires `interval` at all is not
-    // established, so omitting it must not be rejected client-side.
-    if (query.interval !== undefined && !CANDLE_INTERVALS.has(query.interval)) {
-      return `Polymarket candlesticks interval '${query.interval}' is not valid. Use integer minutes: '0', '1', '5', '15', '60', or '1440' (so '60', not '1h'). Optional start_time/end_time are Unix seconds. No payment was made.`;
+    // Reject only what is definitively malformed. Verified live: omitting
+    // `interval` succeeds (the server has a default), `1440` succeeds, `1h`
+    // 422s — but `60` returns a paid 400 on a market where `1440` works. Which
+    // integer intervals a given market can serve is data-dependent, so a
+    // client-side whitelist of numeric values would block valid calls on some
+    // markets and still let paid failures through on others. Only the shape is
+    // ours to check.
+    //
+    // Honest limit: ONE market was probed. "Data-dependent" is an inference, not
+    // a finding — "60 is simply unsupported" fits the same evidence. If that is
+    // the true rule, letting integers through under-blocks every hourly request.
+    // Re-probe a second market before treating this as settled.
+    if (query.interval !== undefined && !/^\d+$/.test(query.interval)) {
+      return `Polymarket candlesticks interval '${query.interval}' is not a number. It is integer minutes. The minute-equivalent of '1h' is '60', but '60' was observed returning a paid 400 on a market where '1440' (daily) worked — so '1440' is the safer choice if daily resolution is acceptable, and note it is coarser than hourly. Which intervals a market serves varies. Optional start_time/end_time are Unix seconds. No payment was made.`;
     }
     if ("start" in query || "end" in query) {
       return "Polymarket candlesticks uses params.start_time and params.end_time in Unix seconds, not start/end. No payment was made.";
@@ -81,15 +128,23 @@ export function validateMarketRequest(
     }
   }
 
-  // The observed paid failure was an UNFILTERED smart-money call. Require some
-  // cohort filter, but don't invent magnitudes: thresholds like "min_trades >=
-  // 100" were never verified against the API and would reject legitimate
-  // narrower cohorts (a 20-trade window, a 7d lookback) with no way to override.
+  // Requires a smart-wallet CRITERION, not merely any param. Verified live:
+  // no params 400s, `{ window: "7d" }` alone ALSO 400s, `{ min_trades: "100" }`
+  // alone succeeds. Treating `window` as a cohort filter (0.33.0 did) let a
+  // guaranteed paid 400 straight through.
   if (/^polymarket\/market\/[^/]+\/smart-money$/.test(path)) {
-    const hasCohortFilter = SMART_MONEY_FILTERS.some((key) => key in query);
-    if (!hasCohortFilter) {
-      return "Polymarket smart-money needs at least one cohort filter — an unfiltered call is rejected upstream. A good general default is params { window: '30d', min_trades: '100' }; " +
-        `any of ${SMART_MONEY_FILTERS.map((key) => `'${key}'`).join(", ")} also works. No payment was made.`;
+    // Presence is not enough: `{ min_trades: "" }` is the shape a model emits
+    // when it knows the param name but not a value, and it 400s upstream after
+    // settling exactly like the unfiltered call. The orderbooks rule above
+    // already tests usability this way.
+    const hasCriterion = SMART_MONEY_CRITERIA.some((key) => (query[key] ?? "").trim() !== "");
+    if (!hasCriterion) {
+      const why = "window" in query
+        ? "'window' only scopes the time range — it does not define the cohort, and window-only calls are rejected upstream. "
+        : "An unfiltered call is rejected upstream. ";
+      return `Polymarket smart-money needs a smart-wallet criterion. ${why}` +
+        "Verified working: params { min_trades: '100' } (window then defaults to all_time). " +
+        `Also accepted, by name symmetry rather than probing: ${SMART_MONEY_CRITERIA.slice(1).map((key) => `'${key}'`).join(", ")}. No payment was made.`;
     }
   }
 
