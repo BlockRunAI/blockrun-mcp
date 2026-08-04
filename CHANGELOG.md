@@ -50,9 +50,10 @@ CLOB module and Franklin's port of it share one baseline again.
 
 Neither upgrade adds a transitive dependency: clob-client-v2's dependency set is
 identical between the two versions, and builder-signing-sdk's is strictly
-smaller. 250 tests, typecheck and build green, plus a CLI load smoke
-(`node dist/index.js --version`) since a broken module graph is exactly the class
-of failure 0.32.3 shipped.
+smaller. 282 tests, typecheck, build and brand-numbers `--check` green, plus an
+MCP stdio smoke (20 tools listed) and the CLI load smoke without `sharp` — which
+CI now runs on every pull request rather than only here, since a broken module
+graph is exactly the class of failure 0.32.3 shipped.
 
 ## 0.36.0
 
