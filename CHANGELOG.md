@@ -2,6 +2,59 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.37.0
+
+Takes the two Polymarket SDK majors that had been sitting unreviewed, so the
+CLOB module and Franklin's port of it share one baseline again.
+
+- **`chore(deps)` — `@polymarket/clob-client-v2` 1.0.8 → 1.1.0.** `postOrder`
+  gained `waitForResolvedTrades`: when an order matches, the client now
+  back-fills the settlement transaction hashes of its fills, and the return type
+  tightens from `Promise<any>` to `Promise<OrderResponse>`. `orders.ts` already
+  read `transactionsHashes` and `tradeIDs` off the response, so this makes an
+  existing display path more often correct rather than changing it — `filled` and
+  the `tx:` line now resolve on matched orders instead of only when the server
+  happened to include them.
+
+  Verified against the shipped bundle rather than the release notes, because no
+  test here places an order: an unmatched order returns untouched with zero polls
+  and zero added latency (the resting-limit path is unaffected); a response that
+  already carries hashes short-circuits; `FAILED` trades are filtered out, so a
+  failed fill can never be reported as a settlement hash; and the worst case —
+  `getTrades` failing persistently — was measured end to end at **30.1 s**
+  (`RESOLVE_TRADES_TIMEOUT_MS`, 250 ms poll), after which it degrades and returns
+  the placed order rather than throwing. The added latency lands only on matched
+  orders, and it is bounded.
+
+- **`chore(deps)` — `@polymarket/builder-signing-sdk` 0.0.8 → 1.0.0, with an
+  override.** 1.0.0 is a pure CJS→ESM port: every non-import change in the bundle
+  is `exports.X` → `export` boilerplate, the HMAC signing logic is untouched, and
+  it drops `tslib` plus a stale `@types/node ^18` that should never have been a
+  runtime dependency.
+
+  It needs an `overrides` entry because `@polymarket/builder-relayer-client`
+  still pins `^0.0.8`, and a caret on `0.0.x` is patch-only under npm semver — so
+  without it npm installs a second copy, and both `BuilderConfig` declarations
+  carry a private `ensureValid`, which TypeScript compares nominally. Collapsing
+  to one copy is safe for a specific reason worth recording: relayer-client
+  **never requires the signing SDK at runtime**. It is a type-only dependency,
+  consumed by duck-typing (`builderConfig.generateBuilderHeaders()`,
+  `.isValid()`), with no `instanceof` check anywhere in its bundle, and nothing
+  else in the tree requires it either. The CJS/ESM seam was then exercised for
+  real: a 1.0.0 `BuilderConfig` handed to the CJS `RelayClient` produced correct
+  `POLY_BUILDER_*` headers across the boundary.
+
+  Note that npm `overrides` do not propagate to consumers, so an installed
+  `@blockrun/mcp` gets both copies on disk. That is harmless for the same reason
+  — nothing loads the nested one.
+
+Neither upgrade adds a transitive dependency: clob-client-v2's dependency set is
+identical between the two versions, and builder-signing-sdk's is strictly
+smaller. 282 tests, typecheck, build and brand-numbers `--check` green, plus an
+MCP stdio smoke (20 tools listed) and the CLI load smoke without `sharp` — which
+CI now runs on every pull request rather than only here, since a broken module
+graph is exactly the class of failure 0.32.3 shipped.
+
 ## 0.36.0
 
 Live-probes the three pre-payment rules 0.33.0 shipped on inference rather than
