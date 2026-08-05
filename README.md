@@ -42,7 +42,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**. Authentication is a wallet signature (no API keys); you pay per call in USDC via the [x402](https://x402.org) protocol (no credit cards, no subscriptions). One self-custody wallet on Base or Solana. MIT licensed.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**. Authentication is a wallet signature (no API keys); you pay per call in USDC via the [x402](https://x402.org) protocol (no credit cards, no subscriptions). One self-custody wallet on Base or Solana. MIT licensed.
 
 ## 🏆 First of its kind — the signal → trade loop in Claude Code
 
@@ -203,7 +203,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 
 | Tool | Data source | Cost |
 |------|-------------|------|
-| `blockrun_chat` | <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
+| `blockrun_chat` | <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
 | `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.15 |
 | `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio); RealFace asset → real-person video | $0.05–0.30/sec |
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 video | free; $0.01 to enroll |
@@ -416,7 +416,7 @@ Both. Switch instantly with `blockrun_wallet action:"chain"`. A few media/paid t
 
 BlockRun is agent-native AI infrastructure — one wallet, x402 USDC micropayments, across every surface:
 
-- **⚡ [ClawRouter](https://github.com/BlockRunAI/ClawRouter)** — the agent-native LLM router for OpenClaw. <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible --> models, <1ms local routing, USDC on Base & Solana.
+- **⚡ [ClawRouter](https://github.com/BlockRunAI/ClawRouter)** — the agent-native LLM router for OpenClaw. <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models, <1ms local routing, USDC on Base & Solana.
 - **🤖 [BRCC](https://blockrun.ai/brcc.md)** — BlockRun for Claude Code: smart routing + x402 payments, purpose-built for Claude Code.
 - **🐍 [ClawRouter-Hermes](https://github.com/BlockRunAI/ClawRouter-Hermes)** — Python plugin wiring NousResearch Hermes into the ClawRouter proxy.
 - **📚 [Docs](https://blockrun.ai/docs)** · **[Models & pricing](https://blockrun.ai/models)** — full SDKs, APIs, and the model catalogue.
