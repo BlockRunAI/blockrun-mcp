@@ -6,9 +6,9 @@ description: |
   Start here when you have the BlockRun MCP installed and need to know WHICH tool answers a
   question, how the wallet works, or how to make a first call for free.
   TOOLS: blockrun_chat, blockrun_image, blockrun_video, blockrun_music, blockrun_speech,
-  blockrun_search, blockrun_exa, blockrun_markets, blockrun_polymarket, blockrun_surf,
-  blockrun_price, blockrun_dex, blockrun_defi, blockrun_rpc, blockrun_phone, blockrun_realface,
-  blockrun_modal, blockrun_models, blockrun_wallet.
+  blockrun_search, blockrun_exa, blockrun_markets, blockrun_polymarket_read, blockrun_polymarket,
+  blockrun_surf, blockrun_price, blockrun_dex, blockrun_defi, blockrun_rpc, blockrun_phone,
+  blockrun_realface, blockrun_modal, blockrun_models, blockrun_wallet.
   TRIGGERS: blockrun, x402, use grok, use gpt, use deepseek, compare models, generate image,
   generate video, generate music, text to speech, web search, news search, prediction market,
   crypto price, on-chain data, blockchain rpc, phone call, run code remotely, pay per call
@@ -36,20 +36,29 @@ changed, because each one was a typed copy. Read prices from a live source inste
 
 The tool descriptions in the MCP server carry current prices too; they are generated, not typed.
 
+The same applies to counts. Where a number has a canonical source it is wrapped in a `br:`
+HTML-comment marker in this file, regenerated from `brand-numbers.json` by
+`scripts/sync-brand-numbers.mjs` and enforced in CI by `--check`. Add the marker rather than the
+digits — an unmarked number is invisible to that check, which is exactly how the prices drifted.
+
 ## Getting a first call working
 
-**Free, no wallet, no key.** Six open-weight chat models cost nothing. Use `blockrun_chat` with
-`routing: "free"`, or call the API directly with `api_key="not-needed-for-free-models"`. Do this
-first whenever a language model is all the task needs — it is the shortest path to something
-working, and it costs nothing if it turns out to be the wrong approach.
+**Free, no wallet, no key.** <!-- br:models.free -->8<!-- /br:models.free --> open-weight
+chat models cost nothing. Use `blockrun_chat` with `mode: "free"` — the parameter is `mode`,
+not `routing`, and an unrecognised key is silently dropped, which lands you on the paid
+`balanced` tier instead. Calling the HTTP API directly, a free model needs no wallet and no
+`X-PAYMENT` header at all; it returns `200` on the first request rather than a `402`.
+
+Do this first whenever a language model is all the task needs — it is the shortest path to
+something working, and it costs nothing if it turns out to be the wrong approach.
 
 **When you need the paid catalog**, check the balance with `blockrun_wallet`
 (`action: "status"`). If it is zero:
 
 1. `blockrun_wallet action: "setup"` prints the address and a funding QR.
-2. To fund with a card, `POST https://blockrun.ai/api/v1/onramp/token` with
-   `{"address": "0x..."}`. Free, settles nothing — the x402 signature only proves you control
-   the wallet, so the address must match the signer — and it returns a one-time Coinbase link.
+2. To fund with a card, `blockrun_wallet action: "deposit"` mints a one-time Coinbase Onramp
+   link and opens it. The call itself is free. Base only — on Solana it returns address and QR
+   guidance instead, so fund Solana by transfer.
 3. Or send USDC to the address on Base or Solana.
 
 Do not fund a wallet inside an ephemeral sandbox (Claude Cowork / Desktop / Web). The key lives
@@ -66,17 +75,19 @@ Deeper wallet, budget and x402 mechanics — including calling the HTTP API dire
 | Anything a language model can answer | `blockrun_chat` | See routing modes below |
 | Make an image | `blockrun_image` | Also `/edit` for changes to an existing image |
 | Make a video | `blockrun_video` | Async — submit, then poll |
+| Video of one *specific* real person | `blockrun_realface` | Enroll a face, then pass `real_face_asset_id` to `blockrun_video` |
 | Make music | `blockrun_music` | Full-length tracks |
 | Speak text aloud | `blockrun_speech` | Also sound effects |
 | "What just happened" — news, live web | `blockrun_search` | Freshest; priced per source |
 | Research, papers, competitors, page contents | `blockrun_exa` | Semantic, not keyword |
 | Event odds, betting markets | `blockrun_markets` | Reading only |
-| Actually place a Polymarket bet | `blockrun_polymarket` | Real money — confirm-gated |
+| Polymarket positions, open orders, order preview | `blockrun_polymarket_read` | Reads and previews only — structurally cannot sign |
+| Actually place a Polymarket bet | `blockrun_polymarket` | Real money — confirm-gated. Setup and funds-affecting actions only |
 | Token / FX / commodity price | `blockrun_price` | Crypto, FX and commodities are free |
 | DEX pairs and liquidity | `blockrun_dex` | Free |
 | DeFi TVL, yields | `blockrun_defi` | |
 | On-chain SQL, wallet labels, social mindshare | `blockrun_surf` | The deep crypto tool |
-| Raw JSON-RPC against a chain | `blockrun_rpc` | 40 chains, one gateway |
+| Raw JSON-RPC against a chain | `blockrun_rpc` | <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, one gateway |
 | Phone lookup, buy a number, make an AI call | `blockrun_phone` | Buy the number first |
 | Run code in a remote container / on a GPU | `blockrun_modal` | Prefer local for normal repo work |
 | Which models exist, and what they cost | `blockrun_models` | |
@@ -101,9 +112,11 @@ omitted `mode` resolves to anyway, and it is the right answer for most requests.
 | `cheap` | High volume, low stakes | Fast |
 | `free` | Anything where "good enough and free" wins | Fast |
 
-Two things to know about `free`: it routes to the open-weight tier only, and that path silently
-caps very long inputs — do not send a large document to it and trust the answer covered all of
-it. `mode` is ignored entirely when you pass an explicit `model`.
+Two things to know about `free`: it routes to the open-weight tier only, and that path caps very
+long inputs. Through the MCP the truncation is reported — the response carries a note saying
+roughly what fraction of the prompt never reached the model — but a direct HTTP call gets no
+such warning, so do not send a large document over the free tier and assume the answer covered
+all of it. `mode` is ignored entirely when you pass an explicit `model`.
 
 Name a specific model only when the user names one, or when a task genuinely needs that model's
 quirk. Otherwise a mode is both cheaper and more robust to the catalog moving.

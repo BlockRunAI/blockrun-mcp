@@ -28,7 +28,7 @@ command to run on their own machine.
 |---|---|
 | `status` | Address, USDC balance, session spend. The default. |
 | `setup` | Address plus a funding QR — creates the wallet if there isn't one |
-| `deposit` | Deposit details for the active chain |
+| `deposit` | Card onramp — mints a one-time Coinbase link and opens it. Base only; on Solana it returns address and QR guidance instead |
 | `qr` | Funding QR on its own |
 | `chain` | Switch between `base` and `solana`; omit `chain` to read the current one |
 | `budget` | Session spend cap — `budget_action` is `set`, `check` or `clear` |
@@ -41,10 +41,12 @@ stopped rather than allowed to overspend.
 
 ## Funding
 
-1. **Card / bank.** `POST https://blockrun.ai/api/v1/onramp/token` with `{"address": "0x..."}`.
-   The endpoint is free and settles nothing — the x402 signature is used purely to prove you
-   control the wallet, which is why the funding `address` must equal the address that signed the
-   request. Returns a one-time Coinbase Onramp link. Rate-limited per IP and per wallet.
+1. **Card / bank.** Through the MCP this is `blockrun_wallet action: "deposit"` — do not
+   hand-roll it. Calling the HTTP API directly, it is
+   `POST https://blockrun.ai/api/v1/onramp/token` with `{"address": "0x..."}`. The endpoint is
+   free and settles nothing — the x402 signature is used purely to prove you control the wallet,
+   which is why the funding `address` must equal the address that signed the request. Returns a
+   one-time Coinbase Onramp link. Base only, and rate-limited per IP and per wallet.
 2. **Direct transfer.** Send USDC to the address on Base or Solana.
 3. **Neither.** The free chat tier needs no balance at all.
 
