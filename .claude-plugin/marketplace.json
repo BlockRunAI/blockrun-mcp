@@ -6,9 +6,34 @@
   },
   "plugins": [
     {
+      "name": "blockrun",
+      "source": "./skills/blockrun",
+      "description": "Start here. Pay-per-call access to AI models, real-time data, media generation and multi-chain RPC over x402 — which tool to reach for, how the wallet works, and how to get a first call working without spending anything."
+    },
+    {
       "name": "exa-research",
       "source": "./skills/exa-research",
       "description": "Use when researching products, finding academic papers, discovering competitors, reading webpage content, or getting cited answers grounded in real web sources."
+    },
+    {
+      "name": "search",
+      "source": "./skills/search",
+      "description": "Use when the user wants real-time web or news results with AI-summarized answers and citations — the cheapest path for \"what just happened\" questions where freshness beats semantic ranking."
+    },
+    {
+      "name": "crypto-data",
+      "source": "./skills/crypto-data",
+      "description": "Use for any crypto data question — token prices, FX, commodities, stocks, OHLC history, DEX pairs, DeFi TVL and yields, on-chain SQL, wallet labels and net worth, social mindshare. Routes across five overlapping tools and says which one to use and which are free."
+    },
+    {
+      "name": "surf",
+      "source": "./skills/surf",
+      "description": "Use when the user wants deep crypto data — on-chain SQL, CEX order books, wallet labels and net worth, social mindshare, news and unified search across exchange, on-chain, wallet, social and prediction endpoints."
+    },
+    {
+      "name": "rpc",
+      "source": "./skills/rpc",
+      "description": "Use when the user needs raw blockchain JSON-RPC — contract reads, native balances, blocks, transactions, logs, gas estimates — across 40 chains through one gateway, with no node and no API key."
     },
     {
       "name": "prediction-markets",
@@ -24,6 +49,26 @@
       "name": "signal-to-trade-demo",
       "source": "./skills/signal-to-trade-demo",
       "description": "Build a presentation-ready live Polymarket signal from price, probability history, smart-money, and liquidity evidence, then produce a safe order preview and verify state."
+    },
+    {
+      "name": "image-prompting",
+      "source": "./skills/image-prompting",
+      "description": "Use when generating or editing images — turns a vague request (\"make me a cool poster\") into a structured, text-accurate prompt that renders what was actually asked for."
+    },
+    {
+      "name": "phone",
+      "source": "./skills/phone",
+      "description": "Use when the user wants phone-number intelligence (carrier, line type, SIM-swap and call-forwarding fraud signals), US/CA number provisioning, or outbound AI voice calls."
+    },
+    {
+      "name": "modal",
+      "source": "./skills/modal",
+      "description": "Use when the user needs to run code remotely in a disposable container, wants optional GPU access, or needs a safer place for untrusted or heavy compute."
+    },
+    {
+      "name": "gentech-blockrun",
+      "source": "./skills/gentech-blockrun",
+      "description": "GenTech Labs' integration patterns for BlockRun from Hermes Agent — daily usage patterns, cost-optimized workflows, multi-tool pipelines and error handling across the full toolset."
     }
   ]
 }
