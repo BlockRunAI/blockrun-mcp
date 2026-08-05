@@ -2,6 +2,71 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.37.1
+
+Makes every skill in this repo actually installable, and adds the entry-point
+skill that says which of the twenty tools answers a given question.
+
+- **`feat(skills)` — all thirteen skills are registered.** Nine of them
+  (`crypto-data`, `surf`, `rpc`, `search`, `image-prompting`, `phone`, `modal`,
+  `gentech-blockrun` and the new core skill) sat on disk while
+  `.claude-plugin/marketplace.json` listed only four, so `/plugin marketplace
+  add` could not reach them. No decision was ever taken to withhold them:
+  entries had been added alongside the skill that prompted them, and the rest
+  were never backfilled. Now 13 on disk, 13 registered, no orphans.
+
+  Verified by installing rather than by reading the JSON — `claude plugin
+  marketplace add` against the checkout, then `install` plus `plugin details`
+  on `blockrun`, `search`, `rpc`, `signal-to-trade-demo` and
+  `gentech-blockrun`. Each reports `Skills (1)`. That also settles a standing
+  question about the layout: a plugin directory with `SKILL.md` at its root and
+  no `.claude-plugin/plugin.json` does register its skill, which is what every
+  entry here has always relied on.
+
+- **`feat(skills)` — new `skills/blockrun` core skill.** The entry point the
+  repo lacked: tool routing, how the wallet works, and how to get a first call
+  working for free. Wallet, budget and x402 mechanics live in
+  `rules/wallet-and-payment.md` so `SKILL.md` stays small enough to load on
+  every match — measured at ~405 always-on tokens against ~3.1k on invoke.
+
+  It deliberately carries no price table, and says why: every flat per-call
+  price published in this repo's other skills is one retired `$0.002`
+  transaction fee too high, because each was a typed copy. It points at
+  `blockrun_models`, the `402` itself and `llms.txt` instead.
+
+- **`fix(skills)` — seven claims in the new skill corrected against `src/`.**
+  Found by reviewing it against the code rather than the marketing copy. The
+  worst two were the same failure the skill itself warns about:
+
+  `routing: "free"` is not a parameter — `blockrun_chat` takes `mode`. Because
+  the tool declares a raw zod shape, the SDK strips the unknown key rather than
+  erroring, `mode` falls through to `"balanced"`, and the paragraph headed
+  "Free, no wallet, no key" made a paid frontier call. And "six open-weight
+  chat models" is eight; that count and the RPC chain count are now
+  `br:` markers fed by `brand-numbers.json` and enforced by
+  `sync-brand-numbers --check` in CI, because an unmarked number is invisible
+  to that check — which is precisely how the prices drifted.
+
+  Also: `blockrun_polymarket_read` was missing entirely, so "what are my
+  positions?" routed to the money-moving tool rather than the free read-only
+  one; `blockrun_realface` was listed in the frontmatter but had no row, so it
+  was advertised and unroutable; `action:"deposit"` is the Coinbase card onramp
+  (`launchTopUp`, Base only), not "deposit details", which is why the funding
+  steps hand-rolled `POST /api/v1/onramp/token` instead of calling the tool
+  that does it; `api_key="not-needed-for-free-models"` appears nowhere in this
+  repo or in either SDK and was dropped; and the free tier does not truncate
+  *silently* — `freeTierTruncationNote()` reports the dropped fraction through
+  the MCP, so only the direct HTTP path is silent.
+
+  Tool coverage is now 20/20 against the names registered in `src/`, in both
+  the frontmatter and the routing table, with no orphans in either direction.
+
+Known and not fixed here, each wanting its own pass: the flat prices in the
+other eleven skills are still a fee high, and `skills/prediction-markets` still
+advertises dFlow, whose three paths have returned upstream 404 since
+2026-08-04. A partial sweep would leave those files half-right, which is the
+failure mode that produced the drift in the first place.
+
 ## 0.37.0
 
 Takes the two Polymarket SDK majors that had been sitting unreviewed, so the
