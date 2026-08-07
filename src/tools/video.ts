@@ -54,7 +54,11 @@ const VIDEO_BASE_PRICE_PER_SECOND: Record<string, number> = {
 };
 
 // Token cost scales with output resolution; 21,690 tok/sec is the 720p figure.
-// Area-proportional against 720p=1. Sora/Grok bill per second and ignore this.
+// ABOVE 720p the factors are area-proportional (1080p = 2.25x, 4K = 9x). BELOW
+// it they are NOT — upstream's published multipliers sit above true area (360p
+// is 0.3, not 0.25), and the live 402 agrees with the table, not the geometry.
+// So a new tier must be read off a real quote (`npm run verify:prices`), never
+// derived. Sora/Grok bill per second and ignore this entirely.
 const RESOLUTION_TOKEN_FACTOR: Record<string, number> = {
   "360p": 0.3,
   "480p": 0.5,
@@ -87,9 +91,12 @@ const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "bytedance/seedance-1.5-pro": 5,
   "bytedance/seedance-2.0-fast": 5,
   "bytedance/seedance-2.0": 5,
-  // Upstream defaults 2.5's duration to -1 ("model picks"), which the gateway
-  // must never forward: the 402 is signed BEFORE generation and binds billing
-  // to a stated duration. 5 matches the rest of the family.
+  // token360 defaults 2.5's duration to -1 ("model picks"), which no prepay
+  // gateway can quote — the 402 is signed BEFORE generation and binds billing to
+  // a stated length. The GATEWAY is what pins it: its registry sets
+  // defaultDurationSeconds 5 for 2.5, and a probe with no duration_seconds
+  // quotes exactly the 5s price. This entry mirrors that so the local reserve
+  // matches; the handler still omits duration_seconds when the caller does.
   "bytedance/seedance-2.5": 5,
   "azure/sora-2": 4, // Sora 2 accepts only 4 / 8 / 12s
 };
@@ -106,12 +113,38 @@ const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?:
   "azure/sora-2": { min: 4, max: 12, allowed: [4, 8, 12] },
 };
 
-// Resolutions no model will actually render, gated here because the cost of
-// getting this wrong is asymmetric: token360 bills the requested tier even when
-// it silently downscales. seedance-2.0 is the only SKU that produces true 4K;
-// 2.5 tops out at 720p despite doubling the length ceiling.
-const FOUR_K_MODEL = "bytedance/seedance-2.0";
-const SEEDANCE_25_MAX_RESOLUTIONS = new Set(["360p", "480p", "540p", "720p"]);
+// Which resolutions each Seedance SKU actually accepts. Mirrors the gateway's
+// checkUnsupportedVideoInput (blockrun/src/lib/video-input.ts), which is the
+// authority — it rejects PRE-402, so a mismatch here costs a wasted round trip
+// rather than money. The asymmetry that makes it worth gating anyway: where the
+// gateway DOES quote, token360 bills the tier it was asked for even if it
+// renders lower, so an over-tall request pays 2.25x (1080p) or 9x (4K) for 720p.
+//
+// seedance-2.0 splits on generation mode — token360 400s 360p/540p/1K in
+// text-to-video but accepts them when a first frame is supplied (live-probed
+// upstream 2026-06-26). 4K is real 3840x2160 on 2.0 and on nothing else.
+const RES_LOW = ["360p", "480p", "540p", "720p", "1080p", "1K"];
+const SEEDANCE_RESOLUTIONS: Record<string, { t2v: Set<string>; i2v: Set<string>; note: string }> = {
+  "bytedance/seedance-1.5-pro": { t2v: new Set(RES_LOW), i2v: new Set(RES_LOW), note: "1080p is the ceiling — only bytedance/seedance-2.0 renders true 4K" },
+  "bytedance/seedance-2.0-fast": { t2v: new Set(RES_LOW), i2v: new Set(RES_LOW), note: "1080p is the ceiling — only bytedance/seedance-2.0 renders true 4K" },
+  "bytedance/seedance-2.0": {
+    t2v: new Set(["480p", "720p", "1080p", "4K"]),
+    i2v: new Set([...RES_LOW, "4K"]),
+    note: "text-to-video on 2.0 accepts 480p / 720p / 1080p / 4K only; the lower tiers need an image_url first frame",
+  },
+  // 2.5 trades resolution for length, and this is PROVEN, not inferred: a paid
+  // probe on 2026-08-07 sent 1080p and 1K at both t2v and i2v, and token360
+  // rejected all four — "the parameter resolution specified in the request is
+  // not valid for model dreamina-seedance-2-5". The probe cost $0.00 because
+  // nothing settles on a failed submit.
+  //
+  // Worth knowing why this guard earns its keep: the GATEWAY does not enforce
+  // this. checkUnsupportedVideoInput's `is20` regex does not match "2.5", so 2.5
+  // falls to a permissive fallback and the gateway happily quotes $3.551218 for
+  // 1080p — a 402 signed for a request upstream will refuse. Without this check
+  // the caller signs a payment and gets a 500 the gateway labels "temporary".
+  "bytedance/seedance-2.5": { t2v: new Set(["360p", "480p", "540p", "720p"]), i2v: new Set(["360p", "480p", "540p", "720p"]), note: "2.5 caps at 720p — it trades resolution for length (up to 30s). Use bytedance/seedance-2.0 for 1080p or 4K" },
+};
 
 /**
  * What the budget gate reserves for one video job — the CHARGE, not the base.
@@ -123,17 +156,32 @@ const SEEDANCE_25_MAX_RESOLUTIONS = new Set(["360p", "480p", "540p", "720p"]);
  * paying — reference media (r2v) adds upstream input tokens nothing here can see.
  */
 export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string): number {
-  const seconds = durationSeconds ?? VIDEO_DEFAULT_DURATION[model] ?? 8;
+  // THROW, never default. A model or resolution missing from the tables below
+  // can only mean someone added it to the zod enum and forgot the rate — and a
+  // `?? 0.05` there would price a $0.32/sec render as grok, a 6x under-reserve
+  // delivered silently. Failing the call is strictly cheaper than that. Object
+  // literals also resolve prototype keys ("constructor" yields a function that
+  // survives `!== undefined` and makes the arithmetic NaN, which withTxFee turns
+  // into a $0 reservation the budget gate always allows), so every lookup is
+  // hasOwn-guarded — this is the same fail-open that once poisoned the ledger
+  // via the modal GPU table (see utils/tx-fee.ts).
+  const seconds = durationSeconds
+    ?? (Object.hasOwn(VIDEO_DEFAULT_DURATION, model) ? VIDEO_DEFAULT_DURATION[model] : undefined)
+    ?? 8;
 
-  const perMTokens = SEEDANCE_PRICE_PER_MTOKENS[model];
-  if (perMTokens !== undefined) {
-    const resFactor = RESOLUTION_TOKEN_FACTOR[resolution ?? "720p"] ?? 1;
-    const tokens = seconds * SEEDANCE_TOKENS_PER_SECOND * resFactor;
-    return withTxFee((tokens * perMTokens / 1_000_000) * VIDEO_MARGIN);
+  if (Object.hasOwn(SEEDANCE_PRICE_PER_MTOKENS, model)) {
+    const res = resolution ?? "720p";
+    if (!Object.hasOwn(RESOLUTION_TOKEN_FACTOR, res)) {
+      throw new Error(`No token factor for resolution "${res}" — refusing to reserve at the 720p rate.`);
+    }
+    const tokens = seconds * SEEDANCE_TOKENS_PER_SECOND * RESOLUTION_TOKEN_FACTOR[res];
+    return withTxFee((tokens * SEEDANCE_PRICE_PER_MTOKENS[model] / 1_000_000) * VIDEO_MARGIN);
   }
 
-  const perSecond = VIDEO_BASE_PRICE_PER_SECOND[model] ?? 0.05;
-  return withTxFee(perSecond * seconds * VIDEO_MARGIN);
+  if (!Object.hasOwn(VIDEO_BASE_PRICE_PER_SECOND, model)) {
+    throw new Error(`No price for video model "${model}" — refusing to reserve a guessed rate.`);
+  }
+  return withTxFee(VIDEO_BASE_PRICE_PER_SECOND[model] * seconds * VIDEO_MARGIN);
 }
 
 export function registerVideoTool(server: McpServer, budget: BudgetState): void {
@@ -144,10 +192,10 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
-Models (Seedance renders 720p + synced audio by default; rates are the 720p baseline):
-- azure/sora-2 ($0.10/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.40/clip). No image_url / RealFace.
-- xai/grok-imagine-video ($0.05/sec, 8s default -> $0.40/clip, up to 15s) — stylized, fast
-- bytedance/seedance-1.5-pro (~$0.070/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
+Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
+- azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
+- xai/grok-imagine-video (~$0.053/sec, 8s default -> ~$0.42/clip, 1-15s) — stylized, fast
+- bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
 - bytedance/seedance-2.0 (~$0.227/sec, 4-15s, up to 4K) — highest quality, and the ONLY model that renders true 4K; supports RealFace, first/last-frame and reference media
 - bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and does NOT support RealFace or first/last-frame. Use 2.0 for 1080p/4K or real-person video.
@@ -224,19 +272,18 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
-        // Resolution ceilings. Wrong-but-accepted is the expensive failure mode
-        // here: token360 bills the tier it was asked for even when it renders
-        // lower, so a 1080p request against a 720p-only SKU pays 2.25x for 720p.
-        if (resolution) {
-          if (resolution === "4K" && selectedModel !== FOUR_K_MODEL) {
+        // Resolution ceilings, per model and per generation mode. Only Seedance
+        // is checked: Sora and Grok bill per second and ignore the parameter,
+        // which is what the schema promises — so for them it is DROPPED from the
+        // body below rather than rejected. (Forwarding it earned a gateway 400,
+        // which is the opposite of "ignored".)
+        const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel];
+        if (resolution && seedanceRes) {
+          const imageConditioned = Boolean(image_url || real_face_asset_id || last_frame_url);
+          const allowed = imageConditioned ? seedanceRes.i2v : seedanceRes.t2v;
+          if (!allowed.has(resolution)) {
             return {
-              content: [{ type: "text", text: formatError(`Only ${FOUR_K_MODEL} renders true 4K — ${selectedModel} is billed for 4K but downscales. Switch model, or drop to 1080p.`) }],
-              isError: true,
-            };
-          }
-          if (selectedModel === "bytedance/seedance-2.5" && !SEEDANCE_25_MAX_RESOLUTIONS.has(resolution)) {
-            return {
-              content: [{ type: "text", text: formatError(`bytedance/seedance-2.5 caps at 720p (it trades resolution for length — up to 30s). Use 720p here, or bytedance/seedance-2.0 for ${resolution}.`) }],
+              content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}${imageConditioned ? " for image-conditioned video" : ""}. ${seedanceRes.note}. Supported here: ${[...allowed].join(", ")}.`) }],
               isError: true,
             };
           }
@@ -282,7 +329,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
         if (generate_audio !== undefined) body.generate_audio = generate_audio;
-        if (resolution !== undefined) body.resolution = resolution;
+        // Seedance-only, as documented. Sora/Grok bill per second, and the
+        // gateway 400s a resolution it was sent for them — so honour "ignored"
+        // by not sending it, instead of failing a call over a no-op parameter.
+        if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
 

@@ -84,7 +84,7 @@ export function registerRealfaceTool(server: McpServer, budget: BudgetState): vo
     {
       description: `Enroll a real person's face as a BytePlus RealFace asset, then drive Seedance 2.0 video with it (blockrun_video real_face_asset_id).
 
-A RealFace asset (ta_xxxx) lets Seedance 2.0 / 2.0-fast generate video of a SPECIFIC real person — not a generic seed image. Enrollment is a multi-step flow because BytePlus requires a live phone liveness check (the real person nods + blinks on camera) before a face photo can be uploaded.
+A RealFace asset (ta_xxxx) lets Seedance 2.0 / 2.0-fast generate video of a SPECIFIC real person — not a generic seed image. Only those two models: seedance-2.5 is numerically newer but does NOT accept ta_ assets, and seedance-1.5-pro never did. Enrollment is a multi-step flow because BytePlus requires a live phone liveness check (the real person nods + blinks on camera) before a face photo can be uploaded.
 
 Actions:
 - init: FREE. Create an asset group + a phone H5 link. The tool renders the link as a QR code and opens it; the real person scans it on their phone and completes the ~1 min liveness check. Pass group_id to refresh an expired link.

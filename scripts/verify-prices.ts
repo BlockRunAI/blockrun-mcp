@@ -146,7 +146,14 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-2.0", undefined, "4K"],
     ["bytedance/seedance-2.5", undefined, undefined],
     ["bytedance/seedance-2.5", 30, undefined],
-    ["bytedance/seedance-2.5", 30, "720p"],
+    // Combinations the client-side guards REFUSE, probed anyway because a guard
+    // is a claim about the gateway and this is the only thing that checks it.
+    // 2.5@1080p is the interesting one: the gateway still QUOTES it ($3.55) even
+    // though token360 rejects it at submit (probed 2026-08-07), so this line
+    // tracks a known gateway defect. The day it stops quoting, the gateway has
+    // been fixed and this probe will report `no 402` like 2.0@360p does.
+    ["bytedance/seedance-2.5", undefined, "1080p"],
+    ["bytedance/seedance-2.0", undefined, "360p"],
   ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",
@@ -204,7 +211,12 @@ for (const probe of PROBES) {
     console.log(`  !  ${probe.label.padEnd(26)} reserve $${probe.expected} > charge $${live}  over-reserves by $${delta.toFixed(6)}`);
     over++;
   } else {
-    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}`);
+    // Print the cushion even when it is inside tolerance. Every route currently
+    // over-reserves by exactly the TRANSACTION_FEE_USD gap (local 0.002 vs the
+    // gateway's 0.001), and that gap IS the safety margin — a `✓ exact` that
+    // hides it means the day the fee moves again, the sweep goes from silently
+    // fine to silently short with no visible change in between.
+    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}${delta > 1e-9 ? `  (+$${delta.toFixed(6)} cushion)` : ""}`);
   }
 }
 
