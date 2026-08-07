@@ -2,6 +2,96 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.38.1
+
+Review pass over 0.38.0. The model addition held up; the guards and the tests
+around it did not.
+
+- **`fix(video)` — the 4K guard lied to Sora and Grok, and rejected instead of
+  ignoring.** Both bill per second and never read `resolution` — the schema says
+  so ("Ignored by xAI/Sora"). 0.38.0's guard rejected them anyway, with
+  *"is billed for 4K but downscales"*, which is false for a per-second model, and
+  steered the caller to a 2-6x more expensive Seedance. `resolution` is now
+  **dropped from the body** for those two rather than rejected, which is what
+  "ignored" has to mean: forwarding it earned a gateway 400.
+
+- **`fix(video)` — per-model, per-mode resolution windows replace two ad-hoc
+  rules.** The old pair (global 4K rule + a 2.5 special case) got the order
+  wrong — 2.5 + 4K hit the 4K branch first and advised *"drop to 1080p"*, which
+  the very next line also rejects — and missed `seedance-2.0`'s text-to-video
+  window entirely: 360p / 540p / 1K are rejected upstream in t2v but fine with a
+  seed image. `SEEDANCE_RESOLUTIONS` now mirrors the gateway's own three
+  branches, keyed on whether the call is image-conditioned. Live-probed: 2.0 t2v
+  @360p is a gateway 400, and the guard now catches it before the round trip.
+
+- **`fix(video)` — the estimator throws instead of guessing.** `?? 0.05` priced
+  any model missing from the rate tables as grok — a 6x under-reserve for a
+  Seedance, delivered silently, which is the one direction this repo treats as a
+  release blocker. Same for `?? 1` on an unlisted resolution (a 9x under-reserve
+  at 4K). Both now throw. Lookups are `Object.hasOwn`-guarded: a plain object
+  literal resolves `"constructor"` to a function, which survives `!== undefined`,
+  makes the arithmetic `NaN`, and `withTxFee` turns that into a **$0 reservation
+  the budget gate always allows** — the same fail-open that reached production
+  once via the modal GPU table.
+
+- **`test(video)` — the headline feature was untested and silently revertible.**
+  The test named *"seedance-2.5 accepts 30s"* passed **31**, which the window
+  rejects, and asserted a regex that could not match under any implementation.
+  Proven by mutation: cutting 2.5 back to 4-15s left all 9 tests green. Six
+  mutations are now caught (the 30s window, 4K on 2.0, a reintroduced image
+  discount, the duration floor, the 1080p factor, re-forwarding `resolution` to
+  Sora) — verified by running each one. Three other assertions were vacuous the
+  same way, including one written *in this review* whose price regex matched the
+  budget limit rather than the estimate.
+
+  The suite now proves acceptance, not just rejection: a sentinel `fetch` mock
+  catches anything that reaches the network, and a tiny budget makes the gate
+  report the number it was asked to reserve.
+
+- **`fix(docs)` — prices in the tool description mixed two conventions.** 0.38.0
+  converted Seedance to the charged rate and left Sora and Grok quoting the
+  *base* ($0.10 and $0.05/sec, "$0.40/clip") in the same bullet list, next to a
+  test pinning both at $0.421001 — the base-as-price confusion the 0.38.0 entry
+  claims to have eliminated. Both now quote the charge, as does README's range.
+  `blockrun_realface` and its README row now say RealFace assets do **not** work
+  with 2.5, which nothing said before.
+
+- **`fix(changelog)` — 0.38.0's `2K` rationale was wrong.** It said no SKU honors
+  2K and it "bills anyway". The gateway 400s 2K for every model before quoting,
+  so it was never billable. Corrected in place.
+
+- **`fix(video)` — the 2.5 720p ceiling is now PROVEN, and the gateway is wrong
+  about it.** 0.38.0 blocked 1080p/1K on 2.5 from a registry comment, with no
+  probe behind it — a guess that could have deleted a real capability. Settled by
+  a paid probe: 1080p and 1K were submitted at **both** t2v and i2v, and token360
+  refused all four (*"the parameter resolution specified in the request is not
+  valid for model dreamina-seedance-2-5"*). It cost **$0.00** — nothing settles on
+  a failed submit, only on a completed poll.
+
+  The gateway does NOT enforce this. `checkUnsupportedVideoInput`'s `is20` regex
+  never matches `2.5`, so it falls to a permissive fallback and quotes
+  **$3.551218** for a 1080p render upstream will reject — a 402 signed against a
+  doomed request, surfaced as a 500 the error path calls *"temporary — try again
+  in a few minutes"*. Any non-MCP caller can still hit this. Reported, not fixed
+  here; it belongs in the gateway.
+
+- **`test(prices)` — the sweep now probes combinations the guards REFUSE, and
+  prints the cushion.** A guard is a claim about the gateway; the only thing that
+  checks it is a probe. `seedance-2.5 @1080p` is pinned precisely because it
+  still quotes — the day it returns `no 402`, the gateway defect above is fixed.
+  Separately, all 13 video
+  probes printed `✓ exact` while over-reserving by exactly $0.001 — the local
+  `TRANSACTION_FEE_USD` (0.002) against the gateway's current 0.001. That gap
+  **is** the entire safety margin, and the fee has moved twice; it is now printed
+  rather than swallowed by the tolerance.
+
+**Known and unfixed:** an unparseable 402 `amount` skips the re-reserve, pays the
+raw quote, and books only the estimate — the last remaining way past the cap
+(pre-existing). `image_url` / `last_frame_url` get no SSRF guard here though
+`blockrun_image` applies one (pre-existing). And a malformed *completed* poll
+throws after the gateway has settled, releasing the reservation without booking
+the spend (pre-existing).
+
 ## 0.38.0
 
 Seedance 2.5 lands on the gateway, so `blockrun_video` offers it — and probing
@@ -55,8 +145,11 @@ Seedance or not, reserved less than the gateway charges.
   Seedance ceiling; the real windows are 1.5-pro 4-12s, 2.0/2.0-fast 4-15s,
   2.5 4-30s, sora-2 exactly 4/8/12, grok 1-15s. All are now checked before the
   request, with a message naming the model that *can* do it. `2K` left the
-  resolution enum: no Seedance SKU has ever honored it — it downscales to 720p
-  and bills anyway.
+  resolution enum: no Seedance SKU renders it, and the gateway 400s it for every
+  model *before* quoting — so it was never billable, only a guaranteed round
+  trip. (An earlier draft of this entry said it "bills anyway"; a live probe says
+  otherwise, and the fee-shaped claim was wrong in the direction that flatters
+  the change.)
 
 - **`test(prices)` — video joined `npm run verify:prices`.** Video was the last
   paid estimator the live-402 probe did not cover, which is how a 30-40% stale
