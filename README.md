@@ -169,7 +169,7 @@ with the [Stanford runbook](docs/stanford-trading-demo.md).
 
 Run `blockrun_wallet` to see your address. The server pays on **Base** by default — send USDC on Base (Coinbase → USDC → Base network → paste address, or bridge via [bridge.base.org](https://bridge.base.org)).
 
-**$5 covers** ~525 market queries · ~500 Exa searches · ~250 image generations · ~10 Seedance 1.5-pro clips.
+**$5 covers** ~525 market queries · ~500 Exa searches · ~250 image generations · ~14 Seedance 1.5-pro clips.
 
 Prefer Solana? See [Fund your wallet](#fund-your-wallet) — two tool calls, no restart.
 
@@ -205,7 +205,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 |------|-------------|------|
 | `blockrun_chat` | <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
 | `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.15 |
-| `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast (720p + audio); RealFace asset → real-person video | $0.05–0.30/sec |
+| `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0/2.0-fast/2.5 (720p + audio; 4K on 2.0, up to 30s on 2.5); RealFace asset → real-person video | $0.05–0.32/sec |
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 video | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
@@ -282,7 +282,7 @@ Run `blockrun_wallet` to see your address. The server pays on **Base** by defaul
 | Coinbase | Send → USDC → Base network → paste address |
 | Bridge from Ethereum | [bridge.base.org](https://bridge.base.org) |
 
-$5 covers ~525 market queries, ~500 Exa searches, ~250 image generations, or ~10 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.46 each).
+$5 covers ~525 market queries, ~500 Exa searches, ~250 image generations, or ~14 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.35 each).
 
 ### Pay on Solana
 

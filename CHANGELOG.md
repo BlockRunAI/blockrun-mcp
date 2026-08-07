@@ -2,6 +2,72 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.38.0
+
+Seedance 2.5 lands on the gateway, so `blockrun_video` offers it — and probing
+its price for the first time showed that every video estimate in this server,
+Seedance or not, reserved less than the gateway charges.
+
+- **`feat(video)` — `bytedance/seedance-2.5`.** Long-form Seedance: **4-30s**
+  against 2.0's 15s ceiling, multilingual, ~$0.315/sec. It is deliberately NOT
+  presented as an upgrade over 2.0, because it isn't one — it trades resolution
+  for length. 2.5 caps at **720p** where 2.0 renders true 4K, and it supports
+  neither RealFace nor first-and-last-frame interpolation. Both models stay
+  listed and the tool description says which to reach for.
+
+  The capability flags are conservative on purpose, and enforced client-side:
+  `real_face_asset_id`, `last_frame_url` and any resolution above 720p are
+  rejected before the 402 rather than after payment. That asymmetry is the
+  whole point — token360 bills the tier it was ASKED for even when it silently
+  downscales, so a wrong "yes" here is a charge for output you didn't get.
+  Upstream also defaults 2.5's `duration` to `-1` ("model picks the length"),
+  which a prepay gateway can never forward; the MCP always states 5s unless the
+  caller asks otherwise.
+
+- **`fix(video)` — every video model under-reserved, by the margin and the fee.**
+  The per-second table held the BASE price. The gateway charges base × 1.05
+  (margin) + the flat transaction fee, so the budget gate reserved short on all
+  nine model/duration combinations — $0.021 on a 30s clip, and 9× short had
+  anyone requested 4K, which the estimate did not model at all. This is the
+  fourth time in this repo that reading a base as a price has cost money, and
+  the first time on the most expensive route it has.
+
+  `estimateVideoCost()` now mirrors the gateway's own formula — duration ×
+  tokens/sec × resolution factor × per-1M rate × margin, then `withTxFee()` —
+  and takes `resolution`, so 1080p (~2.25×) and 4K (~9×) are priced up front
+  instead of only at the 402. Live-verified against the gateway: 13 video
+  probes, 0 under-reserving.
+
+- **`fix(video)` — Seedance repriced; the image-to-video discount never existed.**
+  token360 cut its per-1M rates (1.5-pro 4.32→3.108, 2.0-fast 11.2→7.252,
+  2.0 14→9.9715) and this table never followed, so the base was *also* 30-40%
+  high — two errors in opposite directions, which is exactly why neither showed
+  up as an obviously wrong bill. Per-second, at 720p: **1.5-pro $0.070**
+  (was $0.092), **2.0-fast $0.165** (was $0.238), **2.0 $0.227** (was $0.298),
+  **2.5 $0.315**.
+
+  Separately, the "image-to-video tier" ($0.140/$0.183 per second) is not a
+  thing upstream — only *video*-to-video is discounted. Image jobs were gated at
+  ~60% of their real cost. One rate per model now, matching the registry.
+
+- **`fix(video)` — duration and resolution windows are enforced client-side.**
+  The schema advertised 1-60s for every model and the description claimed a 10s
+  Seedance ceiling; the real windows are 1.5-pro 4-12s, 2.0/2.0-fast 4-15s,
+  2.5 4-30s, sora-2 exactly 4/8/12, grok 1-15s. All are now checked before the
+  request, with a message naming the model that *can* do it. `2K` left the
+  resolution enum: no Seedance SKU has ever honored it — it downscales to 720p
+  and bills anyway.
+
+- **`test(prices)` — video joined `npm run verify:prices`.** Video was the last
+  paid estimator the live-402 probe did not cover, which is how a 30-40% stale
+  rate table and a missing margin both survived in the single most expensive
+  call this server can make. Thirteen probes now pin all three pricing axes
+  (model, duration, resolution). Probing stays free — no payment is attached.
+
+  `test/video-models.test.ts` pins the same figures as literals *read off the
+  live 402*, not recomputed from the estimator's own constants; a test that
+  re-derived the formula would have passed while all nine models under-reserved.
+
 ## 0.37.1
 
 Makes every skill in this repo actually installable, and adds the entry-point
