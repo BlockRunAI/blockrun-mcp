@@ -99,5 +99,12 @@ test("completed video output includes the settled Cost line (full output printed
 
   assert.match(text, /Cost: \$0\.4000/);
   assert.equal(res.structuredContent.cost_usd, 0.4);
-  assert.equal(budget.spent, 0.4);
+  // The ledger books the settled amount, but only after reserve-then-release of
+  // a DIFFERENT number (the estimate), so binary float leaves sub-microdollar
+  // dust: spent = 0.422001 + 0.4 - 0.422001 = 0.39999999999999997. Exact equality
+  // held here only while the estimate happened to equal the settled price, which
+  // stopped being true once the estimator started including the gateway's margin
+  // and transaction fee. A tolerance well under one microdollar is the real
+  // invariant — anything larger would mean the reservation didn't fully release.
+  assert.ok(Math.abs(budget.spent - 0.4) < 1e-9, `booked ${budget.spent}, expected ~0.4`);
 });

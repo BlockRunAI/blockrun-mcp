@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
@@ -21,30 +22,64 @@ const BLOCKRUN_API = "https://blockrun.ai/api";
 const TOTAL_BUDGET_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
 
-// Seedance models are token-priced upstream (token360). Display fallback per-second
-// rates are derived from 20,256 tokens/sec × per-1M-token rate × 1.05 margin —
-// the videos route now defaults Seedance to 720p + generate_audio=true (t2v),
-// roughly doubling token throughput vs. the historical 480p baseline.
-// Source: blockrun/src/lib/models.ts VIDEO_MODELS.
-const VIDEO_PRICE_PER_SECOND: Record<string, number> = {
+// Video pricing mirrors the gateway's calculateVideoPrice() + addTransactionFee()
+// (blockrun/src/lib/models.ts). Two regimes:
+//
+//   Seedance (token360)   duration x tokens/sec x resolutionFactor x $/1M-tokens
+//   Sora / Grok           duration x $/sec
+//
+// both then x the 5% margin, plus the flat x402 transaction fee, once.
+//
+// The margin and the fee are the part this table used to omit — the estimate was
+// the BASE, so every video model under-reserved (verify:prices, 2026-08-07: 9/9
+// short, up to $0.021 on a 30s clip). Do not store a display per-second rate
+// here: /v1/models publishes those FLOORED to 3dp, which is exactly the wrong
+// direction for a budget gate.
+const VIDEO_MARGIN = 1.05;
+
+// Rate card. Seedance per-1M-token rates were cut by token360 and repriced
+// upstream on 2026-08-07 alongside the 2.5 launch (1.5-pro 4.32→3.108,
+// 2.0-fast 11.2→7.252, 2.0 14→9.9715); the MCP table had never followed, so
+// Seedance estimates were also 30-40% high on the base before the margin.
+const SEEDANCE_TOKENS_PER_SECOND = 21_690; // 720p + audio baseline
+const SEEDANCE_PRICE_PER_MTOKENS: Record<string, number> = {
+  "bytedance/seedance-1.5-pro": 3.108,
+  "bytedance/seedance-2.0-fast": 7.252,
+  "bytedance/seedance-2.0": 9.9715,
+  "bytedance/seedance-2.5": 13.8565,
+};
+const VIDEO_BASE_PRICE_PER_SECOND: Record<string, number> = {
   "xai/grok-imagine-video": 0.05,
-  "bytedance/seedance-1.5-pro": 0.092,
-  "bytedance/seedance-2.0-fast": 0.238,
-  "bytedance/seedance-2.0": 0.298,
   "azure/sora-2": 0.10,
 };
 
-// Image-to-video tier (seed image or RealFace asset). Lower per-second token
-// throughput than text-to-video, so cheaper. Source: blockrun models.ts.
-const VIDEO_PRICE_PER_SECOND_IMAGE: Record<string, number> = {
-  "bytedance/seedance-2.0-fast": 0.140,
-  "bytedance/seedance-2.0": 0.183,
+// Token cost scales with output resolution; 21,690 tok/sec is the 720p figure.
+// Area-proportional against 720p=1. Sora/Grok bill per second and ignore this.
+const RESOLUTION_TOKEN_FACTOR: Record<string, number> = {
+  "360p": 0.3,
+  "480p": 0.5,
+  "540p": 0.7,
+  "720p": 1,
+  "1080p": 2.25,
+  "1K": 2.25,
+  "4K": 9,
 };
 
 // Models that accept a BytePlus RealFace asset (real_face_asset_id).
+// 2.5 is NOT on this list: RealFace is absent from its upstream parameter
+// schema and it has not been probed, so we reject client-side rather than
+// let the caller pay for a request token360 drops.
 const REALFACE_MODELS = new Set([
   "bytedance/seedance-2.0",
   "bytedance/seedance-2.0-fast",
+]);
+
+// Models that accept first-and-last-frame interpolation (last_frame_url).
+// Same reasoning as RealFace for 2.5.
+const FIRST_LAST_FRAME_MODELS = new Set([
+  "bytedance/seedance-1.5-pro",
+  "bytedance/seedance-2.0-fast",
+  "bytedance/seedance-2.0",
 ]);
 
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
@@ -52,8 +87,54 @@ const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "bytedance/seedance-1.5-pro": 5,
   "bytedance/seedance-2.0-fast": 5,
   "bytedance/seedance-2.0": 5,
+  // Upstream defaults 2.5's duration to -1 ("model picks"), which the gateway
+  // must never forward: the 402 is signed BEFORE generation and binds billing
+  // to a stated duration. 5 matches the rest of the family.
+  "bytedance/seedance-2.5": 5,
   "azure/sora-2": 4, // Sora 2 accepts only 4 / 8 / 12s
 };
+
+// Per-model duration windows. The gateway rejects out-of-range durations with a
+// 400 before quoting, so this costs nothing upstream — it just turns a round
+// trip into an immediate, specific message. Source: models.ts min/max/allowed.
+const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?: number[] }> = {
+  "xai/grok-imagine-video": { min: 1, max: 15 },
+  "bytedance/seedance-1.5-pro": { min: 4, max: 12 },
+  "bytedance/seedance-2.0-fast": { min: 4, max: 15 },
+  "bytedance/seedance-2.0": { min: 4, max: 15 },
+  "bytedance/seedance-2.5": { min: 4, max: 30 },
+  "azure/sora-2": { min: 4, max: 12, allowed: [4, 8, 12] },
+};
+
+// Resolutions no model will actually render, gated here because the cost of
+// getting this wrong is asymmetric: token360 bills the requested tier even when
+// it silently downscales. seedance-2.0 is the only SKU that produces true 4K;
+// 2.5 tops out at 720p despite doubling the length ceiling.
+const FOUR_K_MODEL = "bytedance/seedance-2.0";
+const SEEDANCE_25_MAX_RESOLUTIONS = new Set(["360p", "480p", "540p", "720p"]);
+
+/**
+ * What the budget gate reserves for one video job — the CHARGE, not the base.
+ *
+ * Exported so `npm run verify:prices` can probe it against the live 402: video
+ * is the priciest call this server can issue and was the last paid estimator the
+ * script did not cover, which is how a 30-40% stale Seedance table and a missing
+ * margin both survived. The handler still re-reserves from the 402 before
+ * paying — reference media (r2v) adds upstream input tokens nothing here can see.
+ */
+export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string): number {
+  const seconds = durationSeconds ?? VIDEO_DEFAULT_DURATION[model] ?? 8;
+
+  const perMTokens = SEEDANCE_PRICE_PER_MTOKENS[model];
+  if (perMTokens !== undefined) {
+    const resFactor = RESOLUTION_TOKEN_FACTOR[resolution ?? "720p"] ?? 1;
+    const tokens = seconds * SEEDANCE_TOKENS_PER_SECOND * resFactor;
+    return withTxFee((tokens * perMTokens / 1_000_000) * VIDEO_MARGIN);
+  }
+
+  const perSecond = VIDEO_BASE_PRICE_PER_SECOND[model] ?? 0.05;
+  return withTxFee(perSecond * seconds * VIDEO_MARGIN);
+}
 
 export function registerVideoTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -63,27 +144,30 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
-Models (Seedance defaults bumped to 720p + synced audio on the gateway):
+Models (Seedance renders 720p + synced audio by default; rates are the 720p baseline):
 - azure/sora-2 ($0.10/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.40/clip). No image_url / RealFace.
-- xai/grok-imagine-video ($0.05/sec, 8s default -> $0.40/clip) — stylized, fast
-- bytedance/seedance-1.5-pro (~$0.092/sec, 720p + audio t2v, 5s default up to 10s) — cheapest Seedance, token-priced upstream
-- bytedance/seedance-2.0-fast (~$0.238/sec text · ~$0.140/sec image-to-video, 720p + audio, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
-- bytedance/seedance-2.0 (~$0.298/sec text · ~$0.183/sec image-to-video, 720p + audio Pro) — highest quality; supports BytePlus RealFace assets
+- xai/grok-imagine-video ($0.05/sec, 8s default -> $0.40/clip, up to 15s) — stylized, fast
+- bytedance/seedance-1.5-pro (~$0.070/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
+- bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
+- bytedance/seedance-2.0 (~$0.227/sec, 4-15s, up to 4K) — highest quality, and the ONLY model that renders true 4K; supports RealFace, first/last-frame and reference media
+- bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and does NOT support RealFace or first/last-frame. Use 2.0 for 1080p/4K or real-person video.
 
-RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with a Seedance 2.0 model. Mutually exclusive with image_url.
+Image-to-video is NOT cheaper than text-to-video on Seedance — same per-second rate. Higher resolutions ARE more expensive (token-priced: 1080p ~2.25x, 4K ~9x the 720p rate); the 402 quote is authoritative and is what gets charged.
+
+RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with seedance-2.0 or seedance-2.0-fast. Mutually exclusive with image_url.
 
 Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
       annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         prompt: z.string().describe("Text description of the video to generate. E.g. 'a red apple slowly spinning on a wooden table', 'a hummingbird hovering near a red flower, ultra slow motion'"),
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
-        real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only. Mutually exclusive with image_url."),
-        duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for (defaults to the model's default — 8s for xAI, 5s for Seedance; Seedance supports up to 10s)."),
+        real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only (NOT 2.5). Mutually exclusive with image_url."),
+        duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance, 4s Sora). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast 4-15s · seedance-2.5 4-30s · sora-2 exactly 4, 8 or 12 · grok-imagine-video 1-15s."),
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
-        resolution: z.enum(["360p", "480p", "540p", "720p", "1080p", "1K", "2K", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream) — the final price is set by the 402 challenge, so the up-front estimate may understate 1080p/4K. Ignored by xAI/Sora."),
+        resolution: z.enum(["360p", "480p", "540p", "720p", "1080p", "1K", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream, ~2.25x at 1080p and ~9x at 4K) — the final price comes from the 402 challenge, so the up-front estimate understates 1080p/4K. 4K is bytedance/seedance-2.0 only; seedance-2.5 caps at 720p. Ignored by xAI/Sora."),
         aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21"]).optional().describe("Seedance only: output aspect ratio, e.g. '9:16' for vertical/mobile, '16:9' for landscape. Defaults to the model's own default. Ignored by xAI/Sora."),
-        last_frame_url: z.string().url().optional().describe("Seedance only: first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id. Priced as image-to-video."),
-        model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
+        last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast only (NOT 2.5): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
+        model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
@@ -120,6 +204,12 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // first-and-last-frame interpolation needs a first frame (image_url) and
         // can't be combined with a RealFace seed.
         if (last_frame_url) {
+          if (!FIRST_LAST_FRAME_MODELS.has(selectedModel)) {
+            return {
+              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support first-and-last-frame interpolation (last_frame_url). Use bytedance/seedance-2.0, bytedance/seedance-2.0-fast or bytedance/seedance-1.5-pro.`) }],
+              isError: true,
+            };
+          }
           if (!image_url) {
             return {
               content: [{ type: "text", text: formatError("last_frame_url (first-and-last-frame interpolation) requires image_url as the first frame.") }],
@@ -134,13 +224,47 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
+        // Resolution ceilings. Wrong-but-accepted is the expensive failure mode
+        // here: token360 bills the tier it was asked for even when it renders
+        // lower, so a 1080p request against a 720p-only SKU pays 2.25x for 720p.
+        if (resolution) {
+          if (resolution === "4K" && selectedModel !== FOUR_K_MODEL) {
+            return {
+              content: [{ type: "text", text: formatError(`Only ${FOUR_K_MODEL} renders true 4K — ${selectedModel} is billed for 4K but downscales. Switch model, or drop to 1080p.`) }],
+              isError: true,
+            };
+          }
+          if (selectedModel === "bytedance/seedance-2.5" && !SEEDANCE_25_MAX_RESOLUTIONS.has(resolution)) {
+            return {
+              content: [{ type: "text", text: formatError(`bytedance/seedance-2.5 caps at 720p (it trades resolution for length — up to 30s). Use 720p here, or bytedance/seedance-2.0 for ${resolution}.`) }],
+              isError: true,
+            };
+          }
+        }
+
         const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;
-        // Image-input (seed image or RealFace) uses the cheaper image-to-video tier.
-        const hasImageInput = Boolean(image_url || real_face_asset_id);
-        const perSecond = (hasImageInput ? VIDEO_PRICE_PER_SECOND_IMAGE[selectedModel] : undefined)
-          ?? VIDEO_PRICE_PER_SECOND[selectedModel]
-          ?? 0.05;
-        const estimatedCost = perSecond * billedSeconds;
+
+        // Duration window — the gateway 400s these before quoting, so failing
+        // here just replaces a round trip with a specific message.
+        const range = VIDEO_DURATION_RANGE[selectedModel];
+        if (range) {
+          if (range.allowed && !range.allowed.includes(billedSeconds)) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} accepts duration_seconds of exactly ${range.allowed.join(", ")} — got ${billedSeconds}.`) }],
+              isError: true,
+            };
+          }
+          if (billedSeconds < range.min || billedSeconds > range.max) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} supports ${range.min}-${range.max}s — got duration_seconds=${billedSeconds}.${range.max < 30 ? " For longer clips use bytedance/seedance-2.5 (up to 30s)." : ""}`) }],
+              isError: true,
+            };
+          }
+        }
+
+        // Image input is NOT discounted upstream on Seedance (only video-to-video
+        // is), so text-to-video and image-to-video share one per-second rate.
+        const estimatedCost = estimateVideoCost(selectedModel, billedSeconds, resolution);
         gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {

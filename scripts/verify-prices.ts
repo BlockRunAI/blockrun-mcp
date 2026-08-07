@@ -28,6 +28,7 @@ import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateCost as estimateImageCost } from "../src/tools/image.js";
 import { estimateExaCost } from "../src/tools/exa.js";
 import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
+import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 
@@ -124,6 +125,39 @@ const PROBES: Probe[] = [
     body: { model: "bytedance/seedream-5-pro", prompt: "a cube", size },
     expected: estimateImageCost("bytedance/seedream-5-pro", size),
   }))),
+
+  // Video: the single most expensive call the MCP can make, and until 0.38.0 the
+  // only paid estimator this script never probed — the Seedance table sat 30-40%
+  // above the gateway for weeks because nothing checked it. Priced per model AND
+  // per second, so pin both axes: each model at its own default, plus the length
+  // ceilings (2.5 goes to 30s, where a stale rate is 6x the money of a 5s clip).
+  // Resolution is the third axis and the steepest: 4K is 9x the 720p token rate,
+  // so a table that only knows 720p is 9x short on the most expensive call here.
+  ...([
+    ["xai/grok-imagine-video", undefined, undefined],
+    ["azure/sora-2", undefined, undefined],
+    ["bytedance/seedance-1.5-pro", undefined, undefined],
+    ["bytedance/seedance-1.5-pro", 12, undefined],
+    ["bytedance/seedance-1.5-pro", undefined, "480p"],
+    ["bytedance/seedance-2.0-fast", undefined, undefined],
+    ["bytedance/seedance-2.0", undefined, undefined],
+    ["bytedance/seedance-2.0", 15, undefined],
+    ["bytedance/seedance-2.0", undefined, "1080p"],
+    ["bytedance/seedance-2.0", undefined, "4K"],
+    ["bytedance/seedance-2.5", undefined, undefined],
+    ["bytedance/seedance-2.5", 30, undefined],
+    ["bytedance/seedance-2.5", 30, "720p"],
+  ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
+    label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
+    path: "videos/generations",
+    body: {
+      model,
+      prompt: "a cube rotating",
+      ...(seconds ? { duration_seconds: seconds } : {}),
+      ...(resolution ? { resolution } : {}),
+    },
+    expected: estimateVideoCost(model, seconds, resolution),
+  })),
 
   // Exa: priced PER URL. The gateway ignores the query string when routing, so
   // `contents?x=1` must price identically to `contents`.
