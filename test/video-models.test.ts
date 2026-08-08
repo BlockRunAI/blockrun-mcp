@@ -211,15 +211,26 @@ test("4K is refused on every model but seedance-2.0 — and 2.0 keeps it", async
   assert.equal(estimate, "$10.22", `4K must reserve the 9x factor: ${text}`);
 });
 
-test("seedance-2.0 mirrors the gateway's t2v/i2v resolution split", async () => {
-  // Text-to-video on 2.0 rejects 360p/540p/1K upstream; image-conditioned accepts
-  // them. Getting this wrong is only a wasted round trip, which is precisely what
-  // these guards exist to remove.
-  assert.match(
-    await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "360p" }),
-    /does not render 360p/,
-  );
-  await reservedFor({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "360p", image_url: "https://example.com/a.png" });
+test("off-schema resolutions are refused per model, in BOTH modes", async () => {
+  // 2026-08-07 probes killed the t2v/i2v split: token360's schema is per-model,
+  // and 540p/1K hard-reject upstream even image-conditioned. 360p passes
+  // upstream validation image-conditioned but is off-schema — and off-schema
+  // acceptance is the "bill the tier, render 720p" trap — so it is refused
+  // here too, with or without an image.
+  for (const args of [{}, { image_url: "https://example.com/a.png" }]) {
+    assert.match(
+      await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "360p", ...args }),
+      /does not render 360p/,
+    );
+  }
+  // 2.0-fast tops out at 720p (schema) — 1080p passes upstream validation but
+  // is exactly the trap shape, so it must be refused with the pointer to 2.0.
+  const fast = await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0-fast", resolution: "1080p" });
+  assert.match(fast, /does not render 1080p/);
+  assert.match(fast, /seedance-2\.0/);
+  // ...while the schema-listed sets still clear the gate.
+  await reservedFor({ prompt: "a cube", model: "bytedance/seedance-1.5-pro", resolution: "1080p" });
+  await reservedFor({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "480p" });
 });
 
 test("resolution is ignored, not rejected, on the per-second models", async () => {
@@ -245,7 +256,7 @@ test("every resolution the schema accepts has a token factor — no silent 1x", 
   // enum and the factor table cannot drift apart in the first place.
   const { config } = makeHarness();
   const base = estimateVideoCost("bytedance/seedance-2.0", 5, "720p");
-  for (const r of ["360p", "480p", "540p", "720p", "1080p", "1K", "4K"]) {
+  for (const r of ["480p", "720p", "1080p", "4K"]) {
     assert.equal(config.inputSchema.resolution.parse(r), r, `${r} must be in the enum`);
     if (r === "720p") continue;
     assert.notEqual(estimateVideoCost("bytedance/seedance-2.0", 5, r), base, `${r} prices at the 720p factor`);

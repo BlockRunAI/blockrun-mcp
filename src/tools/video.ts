@@ -59,13 +59,12 @@ const VIDEO_BASE_PRICE_PER_SECOND: Record<string, number> = {
 // is 0.3, not 0.25), and the live 402 agrees with the table, not the geometry.
 // So a new tier must be read off a real quote (`npm run verify:prices`), never
 // derived. Sora/Grok bill per second and ignore this entirely.
+// 360p/540p/1K trimmed 2026-08-07: token360's schema lists them for no model,
+// so they left the enum too; estimateVideoCost throws on anything missing here.
 const RESOLUTION_TOKEN_FACTOR: Record<string, number> = {
-  "360p": 0.3,
   "480p": 0.5,
-  "540p": 0.7,
   "720p": 1,
   "1080p": 2.25,
-  "1K": 2.25,
   "4K": 9,
 };
 
@@ -113,37 +112,35 @@ const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?:
   "azure/sora-2": { min: 4, max: 12, allowed: [4, 8, 12] },
 };
 
-// Which resolutions each Seedance SKU actually accepts. Mirrors the gateway's
-// checkUnsupportedVideoInput (blockrun/src/lib/video-input.ts), which is the
-// authority — it rejects PRE-402, so a mismatch here costs a wasted round trip
-// rather than money. The asymmetry that makes it worth gating anyway: where the
-// gateway DOES quote, token360 bills the tier it was asked for even if it
-// renders lower, so an over-tall request pays 2.25x (1080p) or 9x (4K) for 720p.
+// Which resolutions each Seedance SKU actually accepts — token360's OWN
+// published parameter schema (GET /v1/models/{id} -> parameter_schema), verified
+// live 2026-08-07. The gateway's checkUnsupportedVideoInput now derives from
+// the same source (blockrun PR #353), so the two sides cannot drift apart.
 //
-// seedance-2.0 splits on generation mode — token360 400s 360p/540p/1K in
-// text-to-video but accepts them when a first frame is supplied (live-probed
-// upstream 2026-06-26). 4K is real 3840x2160 on 2.0 and on nothing else.
-const RES_LOW = ["360p", "480p", "540p", "720p", "1080p", "1K"];
-const SEEDANCE_RESOLUTIONS: Record<string, { t2v: Set<string>; i2v: Set<string>; note: string }> = {
-  "bytedance/seedance-1.5-pro": { t2v: new Set(RES_LOW), i2v: new Set(RES_LOW), note: "1080p is the ceiling — only bytedance/seedance-2.0 renders true 4K" },
-  "bytedance/seedance-2.0-fast": { t2v: new Set(RES_LOW), i2v: new Set(RES_LOW), note: "1080p is the ceiling — only bytedance/seedance-2.0 renders true 4K" },
-  "bytedance/seedance-2.0": {
-    t2v: new Set(["480p", "720p", "1080p", "4K"]),
-    i2v: new Set([...RES_LOW, "4K"]),
-    note: "text-to-video on 2.0 accepts 480p / 720p / 1080p / 4K only; the lower tiers need an image_url first frame",
+// No t2v/i2v split: the schema is per-model, and probing shows everything it
+// lists passes in both modes, while 540p/1K hard-reject upstream even
+// image-conditioned. We allow exactly the schema, nothing more — a few
+// off-schema values PASS submit validation (2.0-fast 1080p, 1.5-pro 540p) but
+// "passes validation" is not "renders": 1.5-pro historically echoed 2K/4K,
+// billed the requested tier, and rendered 720p. Off-schema acceptance can
+// silently downscale while billing the higher tier, so it stays out.
+const SEEDANCE_RESOLUTIONS: Record<string, { resolutions: Set<string>; note: string }> = {
+  "bytedance/seedance-1.5-pro": {
+    resolutions: new Set(["480p", "720p", "1080p"]),
+    note: "1080p is the ceiling — only bytedance/seedance-2.0 renders true 4K",
   },
-  // 2.5 trades resolution for length, and this is PROVEN, not inferred: a paid
-  // probe on 2026-08-07 sent 1080p and 1K at both t2v and i2v, and token360
-  // rejected all four — "the parameter resolution specified in the request is
-  // not valid for model dreamina-seedance-2-5". The probe cost $0.00 because
-  // nothing settles on a failed submit.
-  //
-  // Worth knowing why this guard earns its keep: the GATEWAY does not enforce
-  // this. checkUnsupportedVideoInput's `is20` regex does not match "2.5", so 2.5
-  // falls to a permissive fallback and the gateway happily quotes $3.551218 for
-  // 1080p — a 402 signed for a request upstream will refuse. Without this check
-  // the caller signs a payment and gets a 500 the gateway labels "temporary".
-  "bytedance/seedance-2.5": { t2v: new Set(["360p", "480p", "540p", "720p"]), i2v: new Set(["360p", "480p", "540p", "720p"]), note: "2.5 caps at 720p — it trades resolution for length (up to 30s). Use bytedance/seedance-2.0 for 1080p or 4K" },
+  "bytedance/seedance-2.0-fast": {
+    resolutions: new Set(["480p", "720p"]),
+    note: "720p is the ceiling on 2.0-fast — use bytedance/seedance-2.0 for 1080p or 4K",
+  },
+  "bytedance/seedance-2.0": {
+    resolutions: new Set(["480p", "720p", "1080p", "4K"]),
+    note: "the only model that renders true 4K (3840x2160)",
+  },
+  "bytedance/seedance-2.5": {
+    resolutions: new Set(["480p", "720p"]),
+    note: "2.5 caps at 720p — it trades resolution for length (up to 30s). Use bytedance/seedance-2.0 for 1080p or 4K",
+  },
 };
 
 /**
@@ -212,8 +209,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast only (NOT 2.5). Mutually exclusive with image_url."),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance, 4s Sora). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast 4-15s · seedance-2.5 4-30s · sora-2 exactly 4, 8 or 12 · grok-imagine-video 1-15s."),
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
-        resolution: z.enum(["360p", "480p", "540p", "720p", "1080p", "1K", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream, ~2.25x at 1080p and ~9x at 4K) — the final price comes from the 402 challenge, so the up-front estimate understates 1080p/4K. 4K is bytedance/seedance-2.0 only; seedance-2.5 caps at 720p. Ignored by xAI/Sora."),
-        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21"]).optional().describe("Seedance only: output aspect ratio, e.g. '9:16' for vertical/mobile, '16:9' for landscape. Defaults to the model's own default. Ignored by xAI/Sora."),
+        resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream, ~2.25x at 1080p and ~9x at 4K). Per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast and 2.5 480p/720p only. Ignored by xAI/Sora (dropped from the request)."),
+        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Seedance only: output aspect ratio, e.g. '9:16' for vertical/mobile, '16:9' for landscape. Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it.) Ignored by xAI/Sora."),
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast only (NOT 2.5): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
@@ -278,15 +275,11 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // body below rather than rejected. (Forwarding it earned a gateway 400,
         // which is the opposite of "ignored".)
         const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel];
-        if (resolution && seedanceRes) {
-          const imageConditioned = Boolean(image_url || real_face_asset_id || last_frame_url);
-          const allowed = imageConditioned ? seedanceRes.i2v : seedanceRes.t2v;
-          if (!allowed.has(resolution)) {
-            return {
-              content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}${imageConditioned ? " for image-conditioned video" : ""}. ${seedanceRes.note}. Supported here: ${[...allowed].join(", ")}.`) }],
-              isError: true,
-            };
-          }
+        if (resolution && seedanceRes && !seedanceRes.resolutions.has(resolution)) {
+          return {
+            content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}. ${seedanceRes.note}. Supported: ${[...seedanceRes.resolutions].join(", ")}.`) }],
+            isError: true,
+          };
         }
 
         const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;

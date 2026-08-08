@@ -162,14 +162,15 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-2.0", undefined, "4K"],
     ["bytedance/seedance-2.5", undefined, undefined],
     ["bytedance/seedance-2.5", 30, undefined],
-    // Combinations the client-side guards REFUSE, probed anyway because a guard
-    // is a claim about the gateway and this is the only thing that checks it.
-    // 2.5@1080p is the interesting one: the gateway still QUOTES it ($3.55) even
-    // though token360 rejects it at submit (probed 2026-08-07), so this line
-    // tracks a known gateway defect. The day it stops quoting, the gateway has
-    // been fixed and this probe will report `no 402` like 2.0@360p does.
+    // A combination the client-side guard REFUSES, probed anyway because a
+    // guard is a claim about the gateway and this is the only thing checking
+    // it: the gateway still QUOTES 2.5@1080p ($3.55) even though token360
+    // rejects it at submit (probed 2026-08-07) — a known gateway defect, fixed
+    // by blockrun PR #353. Once that deploys, this probe reports `no 402` and
+    // the guard is vindicated. (2.0@360p left the matrix: 360p is out of the
+    // schema for every model and out of this client's enum, so the estimator
+    // now throws on it — it can no longer even be expressed from here.)
     ["bytedance/seedance-2.5", undefined, "1080p"],
-    ["bytedance/seedance-2.0", undefined, "360p"],
   ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",
