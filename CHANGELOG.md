@@ -65,6 +65,18 @@ forwards it to xAI).
 
 303 tests pass; live gate: 0 under-reserving.
 
+Also shipping in 0.39.0 (landed on main as #97, recorded here because
+releases are cut from this file): the price sweep now probes BOTH gateways —
+Base charges base + $0.001, Solana base + $0.000, and a Solana price DEARER
+than Base fails the gate since an agent can switch chains mid-session;
+`blockrun_defi`/`blockrun_modal` gained the Base-only chain guard six other
+tools already had; eleven skills' flat prices were re-read off the live 402;
+and dFlow left the catalog (all three routes 404 at the gateway). The
+dual-gateway sweep also gives the 2.5@1080p fleet-consistency probe its
+other half for free: Solana already 400s it (blockrun-sol#130's cap) while
+Base still quotes it — one line of output now shows the split until
+blockrun#353 deploys.
+
 ## 0.38.1
 
 Review pass over 0.38.0. The model addition held up; the guards and the tests
