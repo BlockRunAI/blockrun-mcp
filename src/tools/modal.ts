@@ -10,7 +10,7 @@ import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
-import { buildClientWithTimeout } from "../utils/wallet.js";
+import { buildClientWithTimeout, getChain } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -125,6 +125,17 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
     },
     async ({ path, body, agent_id }) => {
       try {
+        // sol.blockrun.ai returns 503 for every /v1/modal/* route — the sandbox
+        // backend is Base-only. Probed 2026-08-07 by the dual-chain sweep in
+        // scripts/verify-prices.ts (all six modal probes, create and exec). A
+        // raw 503 reads as "the service is down" rather than "wrong chain", so
+        // say which it is before spending the round trip.
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_modal is served on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
         body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/modal\//, "");
         if (hasPathTraversal(cleanPath)) {
