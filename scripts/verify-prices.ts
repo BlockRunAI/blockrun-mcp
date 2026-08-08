@@ -289,10 +289,14 @@ console.log(
 );
 if (solCheaper) {
   console.log(
-    "  Solana charges no transaction fee, so it is cheaper by exactly that amount.\n" +
-      "  Safe for the budget gate (we reserve the Base figure), but every flat price\n" +
-      "  published in skills/ and the tool descriptions quotes ONE number, which is\n" +
-      "  the Base one. Align the gateways or qualify the docs — do not leave both.",
+    "  Solana charges no transaction fee — DELIBERATE pricing (owner decision,\n" +
+      "  2026-08-08): Solana is meant to run ~$0.001 cheaper per call as an\n" +
+      "  incentive to settle there. Do not \"fix\" this by aligning the gateways.\n" +
+      "  Safe for the budget gate (we reserve the Base figure, the higher one).\n" +
+      "  Published flat prices are Base prices, qualified once in skills/blockrun.\n" +
+      "  The invariant this sweep enforces is direction only: Solana DEARER than\n" +
+      "  Base is a bug and fails the gate, because an agent can switch chains\n" +
+      "  mid-session while the estimators reserve the Base figure.",
   );
 }
 if (solMissing) {
