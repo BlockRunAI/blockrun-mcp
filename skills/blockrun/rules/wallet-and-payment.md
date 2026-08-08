@@ -39,6 +39,28 @@ command to run on their own machine.
 Budgets are enforced, not advisory: an agent that exhausts its delegated allowance is hard
 stopped rather than allowed to overspend.
 
+## What `action: "chain"` actually changes
+
+It repoints every paid call at a different deployment — `blockrun.ai` becomes
+`sol.blockrun.ai` — and those two do not serve the same catalog at the same prices.
+Verified against both, 2026-08-07:
+
+- **The per-transaction fee.** Base adds a flat fee to every non-zero price; Solana adds
+  nothing. Same route, same base price, ~$0.001 apart. Nothing in the response says which
+  convention you just paid under, so a figure that looks a tenth of a cent off is usually
+  the chain, not a reprice.
+- **Coverage.** `/v1/defillama/*` is absent on Solana (`404`) and `/v1/modal/*` is present
+  but unconfigured (`503` on create, exec, status and terminate — eight probes, all four
+  actions plus the GPU tiers). `blockrun_defi` and `blockrun_modal` guard against this and
+  refuse with a message naming the chain; every other tool works on both.
+- **Onramp.** Card funding is Base-only, so `action: "deposit"` degrades to address + QR
+  guidance on Solana. Fund a Solana wallet by transfer.
+
+The budget gate reserves the **Base** figure on both chains. That over-reserves on Solana,
+which is the safe direction — it can refuse an affordable call, but it can never let one
+past the cap. `scripts/verify-prices.ts` probes both gateways and fails the build if
+Solana ever becomes the dearer one, because then the same reserve would be short.
+
 ## Funding
 
 1. **Card / bank.** Through the MCP this is `blockrun_wallet action: "deposit"` — do not
