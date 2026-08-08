@@ -2,6 +2,42 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.39.1
+
+Closes the three money-path holes 0.38.1 documented as "known and unfixed" —
+all in `blockrun_video`, all pre-existing, all now pinned by
+`test/video-money-path.test.ts`.
+
+- **`fix(budget)` — an unreadable 402 amount aborts BEFORE signing.** When the
+  quote's `amount` failed to parse (missing, non-numeric, non-positive), the
+  old path skipped the re-reserve, signed a payment authorization for the raw
+  unvalidated value, and booked only the estimate — the last remaining way
+  past the budget cap. Now: fail closed with "no charge was made", nothing
+  signed, reservation fully released. Never sign what you could not read.
+
+- **`fix(ssrf)` — `image_url` / `last_frame_url` get the guard `blockrun_image`
+  already had.** Scheme check (zod's `.url()` accepts `file://` et al.) plus
+  resolved-host check via `isBlockedFetchHostResolved` — resolved, not
+  literal, so wildcard-DNS names like `127.0.0.1.nip.io` are caught. This
+  process never fetches these URLs (the gateway's fetcher does), so the guard
+  is defense-in-depth plus a saved round trip: a private/metadata address was
+  previously forwarded, quoted, and paid for before failing server-side.
+
+- **`fix(budget)` — a malformed "completed" poll can no longer un-book a real
+  charge.** Settlement happens server-side on the first poll the gateway
+  answers with `status:"completed"` — the USDC is gone the moment the client
+  observes it. The old path validated the payload first: a completed body with
+  no clip URL threw, the catch returned an error, and `finally` released the
+  reservation — a real charge the ledger never saw, silently raising the cap
+  by the lost amount. The spend is now booked at the instant "completed" is
+  observed, before any payload validation; the caller still gets the error.
+
+  The first draft of this fix double-booked the happy path (poll site AND the
+  old tail call) — caught by the new test's exactly-once assertion, which is
+  why it asserts on the ledger, not on the error text.
+
+309 tests pass.
+
 ## 0.39.0
 
 The Seedance capability tables, re-derived from token360's OWN published

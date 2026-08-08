@@ -9,6 +9,7 @@ import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -275,6 +276,32 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
+        // SSRF guard on caller-supplied URLs, mirroring blockrun_image
+        // (src/tools/image.ts). This process never fetches these URLs — the
+        // GATEWAY's fetcher does — so this is defense-in-depth plus a saved
+        // round trip: a URL pointing at localhost / the metadata endpoint /
+        // the private network was previously forwarded, quoted, and PAID for
+        // before failing (or worse, succeeding) server-side. Resolved, not
+        // literal: wildcard-DNS names like 127.0.0.1.nip.io are public strings
+        // that map to private addresses. zod's .url() accepts any scheme, so
+        // file:// etc. are rejected here too.
+        for (const [name, value] of [["image_url", image_url], ["last_frame_url", last_frame_url]] as const) {
+          if (!value) continue;
+          const parsed = new URL(value);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return {
+              content: [{ type: "text", text: formatError(`${name} must be an http(s) URL — got scheme "${parsed.protocol}"`) }],
+              isError: true,
+            };
+          }
+          if (await isBlockedFetchHostResolved(parsed.hostname)) {
+            return {
+              content: [{ type: "text", text: formatError(`${name} resolves to a private/loopback/link-local address (${parsed.hostname}) — refusing to forward it to the gateway.`) }],
+              isError: true,
+            };
+          }
+        }
+
         // Resolution ceilings, per model. Only Seedance
         // is checked: Sora and Grok bill per second and ignore the parameter,
         // which is what the schema promises — so for them it is DROPPED from the
@@ -356,13 +383,24 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // 1080p/4K can far exceed the per-second table estimate). Book THIS, not
         // the estimate, so the budget cap reflects what was actually settled.
         const settledUsd = amountToUsd(details.amount);
+        // FAIL CLOSED on a quote we cannot price. amountToUsd returns null for
+        // a missing / non-numeric / non-positive amount — and the old path then
+        // SKIPPED the re-reserve, signed a payment for the raw unvalidated
+        // amount, and booked only the estimate: the last remaining way past the
+        // budget cap. Never sign what we could not read.
+        if (settledUsd === null) {
+          return {
+            content: [{ type: "text", text: formatError(`The gateway's 402 quote carried an unreadable amount (${JSON.stringify(details.amount)}). Refusing to sign a payment for an amount that could not be validated — no charge was made. This is a gateway fault; retry, and report it if it persists.`) }],
+            isError: true,
+          };
+        }
 
         // The 402 carries the REAL price; Seedance/Sora are token-priced, so a
         // 1080p/4K render can far exceed the per-second estimate reserved at
         // the gate. Re-reserve against the cap BEFORE paying so a single high-res
         // call can't settle past the budget (and concurrent jobs hold the true
         // amount, not the low estimate, for the whole polling window).
-        if (settledUsd !== null && settledUsd > estimatedCost) {
+        if (settledUsd > estimatedCost) {
           gate?.release();
           gate = reserveBudget(budget, agent_id, settledUsd);
           if (!gate.allowed) {
@@ -425,6 +463,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         const startedAt = Date.now();
         let lastStatus = submitData.status || "queued";
+        let spendBooked = false;
         let completed: {
           url: string;
           source_url?: string;
@@ -457,6 +496,20 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           };
 
           lastStatus = pollData.status || lastStatus;
+
+          // Settlement happens SERVER-SIDE on the first poll the gateway
+          // answers with status "completed" — the USDC is gone the moment we
+          // observe it, regardless of what the rest of the payload looks like.
+          // Book immediately: the old path validated the payload first, so a
+          // malformed completed body threw, the catch returned an error, and
+          // finally released the reservation — a real charge the ledger never
+          // saw, silently raising the cap by the lost amount.
+          if (lastStatus === "completed" && !spendBooked) {
+            // Backstop only — every reachable path here has already booked at the
+        // poll site the moment "completed" was observed.
+        if (!spendBooked) recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+            spendBooked = true;
+          }
 
           if (pollResp.status === 202 && (lastStatus === "queued" || lastStatus === "in_progress")) {
             continue;
@@ -506,7 +559,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),
           ...(completed.txHash ? [`Tx: ${completed.txHash}`] : []),
         ];
-        recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+        // Backstop only — every reachable path here has already booked at the
+        // poll site the moment "completed" was observed.
+        if (!spendBooked) recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
