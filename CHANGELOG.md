@@ -2,6 +2,81 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.39.0
+
+The Seedance capability tables, re-derived from token360's OWN published
+parameter schema (GET /v1/models/{id} → parameter_schema) — a source nobody
+had ever read; every table in every repo predated knowing it existed. Sibling
+of blockrun PR #353 and blockrun-sol PR #133, which land the same truth in the
+gateways, so client and server can no longer disagree.
+
+- **`fix(video)` — per-model resolution sets tightened to the schema.** 0.38.1
+  (yesterday) tightened toward the gateway's tables; live probing shows those
+  tables were themselves wrong, in both directions:
+
+  | model | 0.38.1 allowed | schema truth |
+  |---|---|---|
+  | 1.5-pro | 360p-1K | **480p / 720p / 1080p** |
+  | 2.0-fast | 360p-1K | **480p / 720p** |
+  | 2.0 | t2v narrow · i2v 360p-1K+4K | **480p / 720p / 1080p / 4K, both modes** |
+  | 2.5 | 360p-720p | **480p / 720p** |
+
+  The t2v/i2v split is gone — the schema is per-model, everything it lists
+  passes in both modes, and 540p/1K hard-reject upstream even image-conditioned
+  (the pay-then-lose path the 0.38.1 guard half-closed). A few off-schema
+  values do pass upstream validation (2.0-fast 1080p, 1.5-pro 540p) and stay
+  blocked anyway: "passes validation" is not "renders" — 1.5-pro historically
+  echoed 2K/4K, billed the requested tier, and rendered 720p.
+
+- **`fix(video)` — `360p`/`540p`/`1K` leave the resolution enum, `9:21` leaves
+  the aspect-ratio enum.** No Seedance model lists any of them, and 9:21 is
+  rejected upstream for the whole family. Probed at $0: token360 validates
+  duration → resolution → ratio → other params, so a deliberately invalid
+  LATER parameter (ratio "9:99"; output_format "avi" when testing ratios)
+  guarantees rejection after the parameter under test is judged, and a failed
+  submit never creates a task or bills. RESOLUTION_TOKEN_FACTOR drops the same
+  tiers — the estimator throws on anything missing, so a stale entry is a loud
+  failure, not a silent 720p-baseline reserve.
+
+- **`fix(video)` — the resolution guard's advice now names the real ceiling.**
+  2.0-fast is told 720p is its ceiling (0.38.1 wrongly offered it 1080p/1K —
+  the exact bill-high-render-low trap shape).
+
+- **`test(video)` — the t2v/i2v split test became the no-split test**, and the
+  factor-coverage test iterates the trimmed enum. verify:prices drops the
+  2.0@360p tracking probe (inexpressible from this client now) and keeps
+  2.5@1080p: the gateway still quotes $3.55 for a render token360 refuses —
+  the defect blockrun PR #353 fixes — so that probe reports the moment the
+  fleet is consistent.
+
+Breaking (deliberately — hence a minor bump, not a patch): a stale caller
+sending `resolution:"360p"` or `aspect_ratio:"9:21"` now gets a zod enum
+error instead of a paid round trip or an upstream 400. For Sora/Grok
+callers, removed `resolution` values were accepted no-ops; `9:21` was NOT a
+no-op on Sora — it selected portrait orientation — and `9:16` is the exact
+replacement. One removed value did produce billed output before this
+release — seedance-2.0 image-conditioned 360p passed every layer — but it
+is exactly the off-schema shape that can silently downscale while billing
+the requested tier, which is why the schema is the line. The
+`aspect_ratio` description also stops claiming Sora/Grok both ignore it:
+the handler forwards it for every model, SORA uses it to pick portrait vs
+landscape, and Grok is the one that truly ignores it (the gateway never
+forwards it to xAI).
+
+303 tests pass; live gate: 0 under-reserving.
+
+Also shipping in 0.39.0 (landed on main as #97, recorded here because
+releases are cut from this file): the price sweep now probes BOTH gateways —
+Base charges base + $0.001, Solana base + $0.000, and a Solana price DEARER
+than Base fails the gate since an agent can switch chains mid-session;
+`blockrun_defi`/`blockrun_modal` gained the Base-only chain guard six other
+tools already had; eleven skills' flat prices were re-read off the live 402;
+and dFlow left the catalog (all three routes 404 at the gateway). The
+dual-gateway sweep also gives the 2.5@1080p fleet-consistency probe its
+other half for free: Solana already 400s it (blockrun-sol#130's cap) while
+Base still quotes it — one line of output now shows the split until
+blockrun#353 deploys.
+
 ## 0.38.1
 
 Review pass over 0.38.0. The model addition held up; the guards and the tests

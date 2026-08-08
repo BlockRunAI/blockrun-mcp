@@ -42,7 +42,7 @@ mock.module("../src/utils/wallet.js", {
   },
 });
 
-const { registerVideoTool, estimateVideoCost } = await import("../src/tools/video.js");
+const { registerVideoTool, estimateVideoCost, SEEDANCE_RESOLUTIONS } = await import("../src/tools/video.js");
 
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
@@ -211,15 +211,58 @@ test("4K is refused on every model but seedance-2.0 — and 2.0 keeps it", async
   assert.equal(estimate, "$10.22", `4K must reserve the 9x factor: ${text}`);
 });
 
-test("seedance-2.0 mirrors the gateway's t2v/i2v resolution split", async () => {
-  // Text-to-video on 2.0 rejects 360p/540p/1K upstream; image-conditioned accepts
-  // them. Getting this wrong is only a wasted round trip, which is precisely what
-  // these guards exist to remove.
+test("off-schema resolutions are refused per model, in BOTH modes — with reachable inputs", async () => {
+  // The load-bearing cases use ENUM-VALID values (1080p, 4K): a revert that
+  // re-adds an image-conditioned wider set expressed in enum values is the
+  // production-reachable "bill the tier, render 720p" trap, and mutation
+  // testing showed the old 360p-only version missed it entirely.
+  for (const args of [{}, { image_url: "https://example.com/a.png" }]) {
+    assert.match(await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0-fast", resolution: "1080p", ...args }), /does not render 1080p/);
+    assert.match(await errorText({ prompt: "a cube", model: "bytedance/seedance-2.5", resolution: "1080p", ...args }), /does not render 1080p/);
+    assert.match(await errorText({ prompt: "a cube", model: "bytedance/seedance-1.5-pro", resolution: "4K", ...args }), /does not render 4K/);
+  }
+  // The 2.0-fast note must point somewhere REAL. Anchored on the note's own
+  // phrasing — a bare /seedance-2\.0/ was self-matching ("seedance-2.0-fast"
+  // contains it), the fourth vacuous assertion this file has grown.
+  const fast = await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0-fast", resolution: "1080p" });
+  assert.match(fast, /for 1080p use bytedance\/seedance-1\.5-pro/);
+  // Defense-in-depth only: 360p left the zod enum in this release, so real MCP
+  // callers get the enum error and never reach this guard message — the direct
+  // handler call here pins the backstop for unvalidated invocation paths.
   assert.match(
     await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "360p" }),
     /does not render 360p/,
   );
-  await reservedFor({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "360p", image_url: "https://example.com/a.png" });
+});
+
+test("every schema-listed (model, resolution) pair is ACCEPTED — the whole table, positively", async () => {
+  // Mutation testing proved the acceptance side was silently revertible:
+  // emptying 2.0-fast's set left the suite green. The expected pairs are
+  // HARDCODED here — iterating the exported table would test the mutation
+  // against itself (a first draft of this test did exactly that and the same
+  // two mutations still passed). This literal map IS the spec: token360's
+  // published parameter schema, verified live 2026-08-07.
+  const EXPECTED: Record<string, string[]> = {
+    "bytedance/seedance-1.5-pro": ["480p", "720p", "1080p"],
+    "bytedance/seedance-2.0-fast": ["480p", "720p"],
+    "bytedance/seedance-2.0": ["480p", "720p", "1080p", "4K"],
+    "bytedance/seedance-2.5": ["480p", "720p"],
+  };
+  // The shipped table must equal the spec exactly — both directions.
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(SEEDANCE_RESOLUTIONS).map(([m, s]) => [m, [...s.resolutions].sort()])),
+    Object.fromEntries(Object.entries(EXPECTED).map(([m, r]) => [m, [...r].sort()])),
+  );
+  for (const [model, resolutions] of Object.entries(EXPECTED)) {
+    for (const resolution of resolutions) {
+      const { text } = await reservedFor({ prompt: "a cube", model, resolution });
+      assert.doesNotMatch(text, /does not render/, `${model} must accept ${resolution}`);
+      // Every accepted resolution must also be expressible by real callers and
+      // priced by a real factor (estimateVideoCost throws on a missing one).
+      assert.equal(makeHarness().config.inputSchema.resolution.parse(resolution), resolution);
+      estimateVideoCost(model, 5, resolution);
+    }
+  }
 });
 
 test("resolution is ignored, not rejected, on the per-second models", async () => {
@@ -245,7 +288,7 @@ test("every resolution the schema accepts has a token factor — no silent 1x", 
   // enum and the factor table cannot drift apart in the first place.
   const { config } = makeHarness();
   const base = estimateVideoCost("bytedance/seedance-2.0", 5, "720p");
-  for (const r of ["360p", "480p", "540p", "720p", "1080p", "1K", "4K"]) {
+  for (const r of ["480p", "720p", "1080p", "4K"]) {
     assert.equal(config.inputSchema.resolution.parse(r), r, `${r} must be in the enum`);
     if (r === "720p") continue;
     assert.notEqual(estimateVideoCost("bytedance/seedance-2.0", 5, r), base, `${r} prices at the 720p factor`);
