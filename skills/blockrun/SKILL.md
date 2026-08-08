@@ -32,15 +32,33 @@ changed, because each one was a typed copy. Read prices from a live source inste
 |------|-------|
 | Per-token model pricing | `blockrun_models` |
 | What a call will actually cost | the `402` response — it carries the real amount |
-| Full endpoint catalog with prices | <https://blockrun.ai/llms.txt> |
+| Full endpoint catalog with prices | <https://blockrun.ai/llms.txt> (Base) · <https://sol.blockrun.ai/llms.txt> (Solana) |
 
 The tool descriptions in the MCP server carry current prices too; they are generated, not typed.
 
-**Every price in these skills is the Base price.** Base and Solana are separate
-gateways: Base adds a flat per-transaction fee, Solana currently adds none, so the same
-call runs about $0.001 cheaper on Solana. `blockrun_defi` and `blockrun_modal` are not
-served on Solana at all. Read the 402 on the chain you are actually on, and check
-`blockrun_wallet action: "chain"` if a figure looks off by a tenth of a cent.
+## The two chains are not the same gateway
+
+`blockrun.ai` and `sol.blockrun.ai` are separate deployments, and
+`blockrun_wallet action: "chain"` switches between them mid-session. Two consequences,
+both easy to miss because nothing announces the switch:
+
+**Prices differ.** Every figure in these skills is the **Base** price. Base adds a flat
+per-transaction fee; Solana currently adds none, so the same call runs about $0.001
+cheaper there. Each gateway's own `llms.txt` quotes its own convention — read the one for
+the chain you are on, or just read the 402.
+
+**Some tools do not exist on Solana at all.** Verified against both gateways
+2026-08-07:
+
+| Tool | On Solana | What you get |
+|---|---|---|
+| `blockrun_defi` | ✗ not served | `404` — reads like a bad path, but the path is fine |
+| `blockrun_modal` | ✗ not served | `503` on all four sandbox actions — reads like an outage |
+| everything else | ✓ | ~$0.001 cheaper than the figure printed here |
+
+Both tools now refuse before the round trip and tell you to switch, so you should never
+see the raw `404`/`503` through the MCP. If you are calling the HTTP API directly you
+will, and neither status says "wrong chain" — check the chain first.
 
 The same applies to counts. Where a number has a canonical source it is wrapped in a `br:`
 HTML-comment marker in this file, regenerated from `brand-numbers.json` by
