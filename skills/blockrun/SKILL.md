@@ -36,6 +36,12 @@ changed, because each one was a typed copy. Read prices from a live source inste
 
 The tool descriptions in the MCP server carry current prices too; they are generated, not typed.
 
+**Every price in these skills is the Base price.** Base and Solana are separate
+gateways: Base adds a flat per-transaction fee, Solana currently adds none, so the same
+call runs about $0.001 cheaper on Solana. `blockrun_defi` and `blockrun_modal` are not
+served on Solana at all. Read the 402 on the chain you are actually on, and check
+`blockrun_wallet action: "chain"` if a figure looks off by a tenth of a cent.
+
 The same applies to counts. Where a number has a canonical source it is wrapped in a `br:`
 HTML-comment marker in this file, regenerated from `brand-numbers.json` by
 `scripts/sync-brand-numbers.mjs` and enforced in CI by `--check`. Add the marker rather than the

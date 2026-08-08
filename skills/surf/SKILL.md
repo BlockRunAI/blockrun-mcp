@@ -1,6 +1,6 @@
 ---
 name: surf
-description: Use when the user wants crypto data — token prices, on-chain SQL, prediction-market positions, CEX order books, wallet labels/net-worth, social mindshare, news, or unified search. 83 endpoints across exchange, on-chain, wallet, social, prediction, news and search — one API, flat $0.0095/call in USDC via x402. Settles directly to Surf's Base treasury; no Surf account needed.
+description: Use when the user wants crypto data — token prices, on-chain SQL, prediction-market positions, CEX order books, wallet labels/net-worth, social mindshare, news, or unified search. 83 endpoints across exchange, on-chain, wallet, social, prediction, news and search — one API, flat $0.0085/call in USDC via x402. Settles directly to Surf's Base treasury; no Surf account needed.
 triggers:
   - "surf"
   - "asksurf"
@@ -53,9 +53,9 @@ blockrun_surf({ path: "wallet/labels/batch", params: { addresses: "0xabc,0xdef" 
 
 ## Pricing — one flat rate
 
-**$0.0095 per call. Every endpoint, no tiers, including raw on-chain SQL.**
+**$0.0085 per call. Every endpoint, no tiers, including raw on-chain SQL.**
 
-Verified against the gateway's own `payment-required` header, which is free to request — send any call with no payment header and it quotes the exact charge. All of `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines`, `search/web` **and `onchain/sql`** return the same $0.0095 (`SURF_TIER_1/2/3_PRICE` are all identical upstream).
+Verified against the gateway's own `payment-required` header, which is free to request — send any call with no payment header and it quotes the exact charge. All of `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines`, `search/web` **and `onchain/sql`** return the same $0.0085 (`SURF_TIER_1/2/3_PRICE` are all identical upstream).
 
 Ignore any "premium tier" pricing you may have seen — SQL used to cost more and no longer does.
 
@@ -69,9 +69,9 @@ Predexon used to be 7.5× cheaper; since 2026-07-15 both bill the same flat rate
 
 | | Predexon (`blockrun_markets`) | Surf |
 |---|---|---|
-| Polymarket / Kalshi markets | $0.0095 | $0.0095 (same) |
+| Polymarket / Kalshi markets | $0.0085 | $0.0085 (same) |
 | Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
-| Limitless, Opinion, Predict.Fun, dFlow, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
+| Limitless, Opinion, Predict.Fun, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
 
 The only Surf prediction-market endpoint with no Predexon equivalent is `prediction-market/category-metrics`. Everything else is a strictly worse buy. See [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 
@@ -139,7 +139,7 @@ The only Surf prediction-market endpoint with no Predexon equivalent is `predict
 ```ts
 blockrun_surf({ path: "market/price", params: { symbol: "BTC" } })
 ```
-**Cost: $0.0095.** Returns price history; latest point = current price.
+**Cost: $0.0085.** Returns price history; latest point = current price.
 
 ### 2. "Top 10 tokens by DEX volume on Ethereum in the last 24h"
 
@@ -158,7 +158,7 @@ blockrun_surf({
   }
 })
 ```
-**Cost: $0.0095.** Raw ClickHouse — same query language Surf's own UI uses, at the same flat rate as any other Surf read.
+**Cost: $0.0085.** Raw ClickHouse — same query language Surf's own UI uses, at the same flat rate as any other Surf read.
 
 ### 3. "Is this whale wallet labeled? What does it hold?"
 
@@ -173,7 +173,7 @@ blockrun_surf({ path: "wallet/protocols", params: { address: "0xabc..." } })
 // Step 3 — net-worth time series
 blockrun_surf({ path: "wallet/net-worth", params: { address: "0xabc..." } })
 ```
-**Cost: 4 × $0.0095 = $0.038.** Replaces a Nansen subscription for one-off lookups.
+**Cost: 4 × $0.0085 = $0.034.** Replaces a Nansen subscription for one-off lookups.
 
 ### 4. "What's the market saying about the 2028 election?"
 
@@ -203,7 +203,7 @@ blockrun_surf({ path: "market/fear-greed" })
 blockrun_surf({ path: "exchange/funding-history",  params: { pair: "BTC-USDT" } })
 blockrun_surf({ path: "exchange/long-short-ratio", params: { pair: "BTC-USDT" } })
 ```
-**Cost: 4 × $0.0095 = $0.038.**
+**Cost: 4 × $0.0085 = $0.034.**
 
 ## Method Routing — When to Use `body`
 

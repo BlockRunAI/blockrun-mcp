@@ -33,22 +33,22 @@ blockrun_exa({ path: "find-similar", body: { url: "https://arxiv.org/abs/2401.12
 
 ## Quick Decision Table
 
-Costs below are what you are actually CHARGED — the $0.002 transaction fee is
+Costs below are what you are actually CHARGED — the $0.001 transaction fee is
 already included (it applies once per call, not per result).
 
 | User wants... | Path | Body | Cost |
 |--------------|------|------|------|
-| Relevant URLs on a topic | `search` | `{ query, numResults?, category? }` | $0.0120/call |
-| Cited answer to a question | `answer` | `{ query }` | $0.0120/call |
-| Full text of URLs | `contents` | `{ urls: [...] }` | $0.002/URL + $0.002 → 1 URL $0.0040, 3 URLs $0.0080 |
-| Pages like a given URL | `find-similar` | `{ url, numResults? }` | $0.0120/call |
-| Recent news | `search` + `category: "news"` | – | $0.0120/call |
-| Academic papers | `search` + `category: "research paper"` | – | $0.0120/call |
-| Company info | `search` + `category: "company"` | – | $0.0120/call |
+| Relevant URLs on a topic | `search` | `{ query, numResults?, category? }` | $0.0110/call |
+| Cited answer to a question | `answer` | `{ query }` | $0.0110/call |
+| Full text of URLs | `contents` | `{ urls: [...] }` | $0.002/URL + $0.001 → 1 URL $0.0030, 3 URLs $0.0070 |
+| Pages like a given URL | `find-similar` | `{ url, numResults? }` | $0.0110/call |
+| Recent news | `search` + `category: "news"` | – | $0.0110/call |
+| Academic papers | `search` + `category: "research paper"` | – | $0.0110/call |
+| Company info | `search` + `category: "company"` | – | $0.0110/call |
 
 `contents` bills per URL, so batching URLs into ONE call is markedly cheaper than
-one call each: 3 URLs together cost $0.0080, but three separate calls cost
-$0.0120 — you pay the flat fee three times instead of once.
+one call each: 3 URLs together cost $0.0070, but three separate calls cost
+$0.0090 — you pay the flat fee three times instead of once.
 
 Valid `category` values for `search`: `"news"`, `"research paper"`, `"company"`, `"tweet"`, `"github"`, `"pdf"`.
 
