@@ -171,6 +171,14 @@ const PROBES: Probe[] = [
     // schema for every model and out of this client's enum, so the estimator
     // now throws on it — it can no longer even be expressed from here.)
     ["bytedance/seedance-2.5", undefined, "1080p"],
+    // Each model probed at (or near) its ceiling and floor tier, so a gateway
+    // whose capability surface diverges from SEEDANCE_RESOLUTIONS — in either
+    // direction — shows up here as `no 402` or a price mismatch. 1.5-pro@1080p
+    // was the only above-720p schema tier with no live pin anywhere until the
+    // 0.39.0 review probed it: charge $0.797311 vs reserve $0.798311.
+    ["bytedance/seedance-1.5-pro", undefined, "1080p"],
+    ["bytedance/seedance-2.0-fast", undefined, "480p"],
+    ["bytedance/seedance-2.5", undefined, "480p"],
   ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",

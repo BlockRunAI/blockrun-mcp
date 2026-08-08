@@ -2,7 +2,7 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
-## 0.38.2
+## 0.39.0
 
 The Seedance capability tables, re-derived from token360's OWN published
 parameter schema (GET /v1/models/{id} → parameter_schema) — a source nobody
@@ -49,10 +49,19 @@ gateways, so client and server can no longer disagree.
   the defect blockrun PR #353 fixes — so that probe reports the moment the
   fleet is consistent.
 
-Breaking (deliberately): a stale caller sending `resolution:"360p"` or
-`aspect_ratio:"9:21"` now gets a zod enum error instead of a paid round trip
-or an upstream 400 — values that never produced output are no longer
-accepted. 302 tests pass; live gate: 0 under-reserving.
+Breaking (deliberately — hence a minor bump, not a patch): a stale caller
+sending `resolution:"360p"` or `aspect_ratio:"9:21"` now gets a zod enum
+error instead of a paid round trip or an upstream 400. That includes
+Sora/Grok callers for whom those values were previously accepted no-ops.
+One removed value did produce billed output before this release —
+seedance-2.0 image-conditioned 360p passed every layer — but it is exactly
+the off-schema shape that can silently downscale while billing the
+requested tier, which is why the schema is the line. The `aspect_ratio`
+description also stops claiming Sora/Grok ignore it: the handler forwards
+it for every model and the gateway uses it to pick portrait vs landscape
+on the per-second models.
+
+302 tests pass; live gate: 0 under-reserving.
 
 ## 0.38.1
 
