@@ -42,10 +42,11 @@ The tool descriptions in the MCP server carry current prices too; they are gener
 `blockrun_wallet action: "chain"` switches between them mid-session. Two consequences,
 both easy to miss because nothing announces the switch:
 
-**Prices differ.** Every figure in these skills is the **Base** price. Base adds a flat
-per-transaction fee; Solana currently adds none, so the same call runs about $0.001
-cheaper there. Each gateway's own `llms.txt` quotes its own convention — read the one for
-the chain you are on, or just read the 402.
+**Prices differ, on purpose.** Every figure in these skills is the **Base** price. Base
+adds a flat per-transaction fee; Solana deliberately adds none — the ~$0.001-per-call gap
+is pricing policy (an incentive to settle on Solana), not drift, so do not expect it to be
+"fixed". Each gateway's own `llms.txt` quotes its own convention — read the one for the
+chain you are on, or just read the 402.
 
 **Some tools do not exist on Solana at all.** Verified against both gateways
 2026-08-07:
