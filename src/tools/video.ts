@@ -114,9 +114,11 @@ const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?:
 
 // Which resolutions each Seedance SKU actually accepts — token360's OWN
 // published parameter schema (GET /v1/models/{id} -> parameter_schema), verified
-// live 2026-08-07. The gateway's checkUnsupportedVideoInput derives from the
-// same probe run (blockrun PR #353, machine-written snapshot); THIS table is a
-// hand-copy of it — re-check here whenever the gateway resyncs its snapshot.
+// live 2026-08-07. The gateway's checkUnsupportedVideoInput will derive from
+// the same source once blockrun PR #353 lands (machine-written snapshot);
+// until it deploys, production still runs the OLD wide tables and this client
+// is the only gate. THIS table is a hand-copy of that probe run — re-check it
+// whenever the gateway resyncs its snapshot.
 // The verify:prices matrix probes each model at its ceiling tier, so a gateway
 // that starts quoting (or stops quoting) a tier this table disagrees with
 // shows up in the free 402 sweep.
@@ -214,7 +216,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance, 4s Sora). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast 4-15s · seedance-2.5 4-30s · sora-2 exactly 4, 8 or 12 · grok-imagine-video 1-15s."),
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
         resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream, ~2.25x at 1080p and ~9x at 4K). Per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast and 2.5 480p/720p only. Ignored by xAI/Sora (dropped from the request)."),
-        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora/Grok use it only to pick portrait vs landscape (9:16 / 3:4 -> portrait). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
+        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora uses it only to pick portrait vs landscape (9:16 / 3:4 -> portrait); Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast only (NOT 2.5): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),

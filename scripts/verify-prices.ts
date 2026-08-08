@@ -179,6 +179,7 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-1.5-pro", undefined, "1080p"],
     ["bytedance/seedance-2.0-fast", undefined, "480p"],
     ["bytedance/seedance-2.5", undefined, "480p"],
+    ["bytedance/seedance-2.0", undefined, "480p"],
   ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",
