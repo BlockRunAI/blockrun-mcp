@@ -24,19 +24,19 @@ Most image failures are prompt failures. This skill gives the MCP agent a repeat
 
 Costs are what you are actually CHARGED, verified live. **Size is the biggest
 lever:** any dimension above 1024 moves GPT Image 2 to the large tier and roughly
-doubles the price ($0.065 → $0.128). Ask for `1536x1024` only when you need it.
+doubles the price ($0.064 → $0.127). Ask for `1536x1024` only when you need it.
 
 | User wants... | Model | Mode | Size | Cost |
 |---|---|---|---|---|
-| Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` | $0.128 |
-| Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` | $0.065 |
-| Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` | $0.065–0.107 |
-| Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) | $0.0965 |
-| Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | $0.0545 |
-| Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` | $0.0178 |
-| Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` | $0.0493 ($0.0965 when both sides >1024) |
-| Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | $0.065 at 1024x1024, $0.128 above |
-| Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target | $0.065 at 1024x1024, $0.128 above |
+| Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` | $0.127 |
+| Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` | $0.064 |
+| Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` | $0.064–0.106 |
+| Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) | $0.0955 |
+| Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | $0.0535 |
+| Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` | $0.01675 |
+| Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` | $0.04825 ($0.0955 when both sides >1024) |
+| Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | $0.064 at 1024x1024, $0.127 above |
+| Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target | $0.064 at 1024x1024, $0.127 above |
 
 **Valid GPT Image 2 sizes:** `1024x1024` (square), `1536x1024` (landscape ~3:2), `1024x1536` (portrait ~2:3).
 

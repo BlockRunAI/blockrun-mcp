@@ -1,10 +1,9 @@
 ---
 name: prediction-markets
-description: "Use when the user asks about event probabilities, prediction market odds, what people are betting on, Polymarket/Kalshi prices, sports markets — or about the things you CANNOT get from a public API: historical price/volume/orderbook time series, smart-money positioning, whale leaderboards, wallet P&L, wallet identity and on-chain clustering, and canonical IDs matching the same question across venues. 58 endpoints over Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle. Pay-per-call in USDC via x402 — no Predexon account, no API key."
+description: "Use when the user asks about event probabilities, prediction market odds, what people are betting on, Polymarket/Kalshi prices, sports markets — or about the things you CANNOT get from a public API: historical price/volume/orderbook time series, smart-money positioning, whale leaderboards, wallet P&L, wallet identity and on-chain clustering, and canonical IDs matching the same question across venues. 55 endpoints over Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, Binance Futures, sports, and the UMA oracle. Pay-per-call in USDC via x402 — no Predexon account, no API key."
 triggers:
   - "polymarket"
   - "kalshi"
-  - "dflow"
   - "limitless"
   - "predict.fun"
   - "predexon"
@@ -48,7 +47,7 @@ triggers:
 
 # Prediction Markets (Predexon)
 
-58 endpoints across Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, sports, and the UMA oracle — one x402 gateway, no Predexon account or API key.
+55 endpoints across Polymarket, Kalshi, Limitless, Opinion, Predict.Fun, Binance Futures, sports, and the UMA oracle — one x402 gateway, no Predexon account or API key.
 
 **What is worth paying for.** Current market lists are free from public APIs. These are not, and cannot be backfilled after the fact:
 
@@ -103,7 +102,7 @@ Current parameter contracts that prevent paid 4xx responses:
 
 | Tier | Price | What |
 |---|---|---|
-| **All endpoints** | $0.0095 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
+| **All endpoints** | $0.0085 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
 
 Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base treasury.
 
@@ -157,8 +156,6 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 | Equivalent sports outcomes | `sports/outcomes/{predexon_id}` | 1 |
 | Limitless / Opinion / Predict.Fun markets | `limitless/markets`, `opinion/markets`, `predictfun/markets` | 1 |
 | Their historical orderbook snapshots | `limitless/orderbooks`, `opinion/orderbooks`, `predictfun/orderbooks` | 1 |
-| dFlow trades | `dflow/trades` | 1 |
-| dFlow wallet positions / P&L | `dflow/wallet/positions/{w}`, `dflow/wallet/pnl/{w}` | 2 |
 | Binance candles / ticks | `binance/candles/{symbol}`, `binance/ticks/{symbol}` | 2 |
 
 ## Worked Examples

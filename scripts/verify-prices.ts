@@ -32,7 +32,23 @@ import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 
+// TWO gateways, and they do not agree. Base and Solana are separate deployments
+// with separate env, and TRANSACTION_FEE_USD is env-overridable in the gateway —
+// so the fee can move on one chain and not the other, silently.
+//
+// It already has. Probed 2026-08-07, every comparable route: Base charges
+// base + $0.001, Solana charges base + $0.000. Solana adds no transaction fee at
+// all. `blockrun_wallet action:"chain"` lets one agent switch chains mid-session,
+// so "the price" is not a single number until those two agree.
+//
+// This script probed ONLY Base until now, which means the divergence was
+// invisible to the one tool whose entire job is catching price drift — the same
+// shape of gap as a marketplace check that never looked at the skills directory.
+// Direction matters for severity: Solana cheaper means we over-reserve there
+// (safe). Solana DEARER would mean every estimator under-reserves for Solana
+// users, which is a release blocker exactly like a Base shortfall.
 const BASE = "https://blockrun.ai/api/v1/";
+const SOL = "https://sol.blockrun.ai/api/v1/";
 
 type Probe = {
   label: string;
@@ -45,8 +61,8 @@ type Probe = {
   allowOver?: boolean;
 };
 
-async function quote(path: string, body?: unknown): Promise<number | string> {
-  const res = await fetch(BASE + path, {
+async function quote(host: string, path: string, body?: unknown): Promise<number | string> {
+  const res = await fetch(host + path, {
     method: body === undefined ? "GET" : "POST",
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
@@ -190,25 +206,57 @@ const EPSILON = 1e-9;
 let short = 0;
 let over = 0;
 let unreachable = 0;
+// Cross-chain accounting, kept separate from the estimator verdict above: these
+// say the two GATEWAYS disagree, not that a local estimator is wrong.
+let solShort = 0; // Solana charges MORE than we reserve -> release blocker
+let solCheaper = 0; // Solana charges LESS than Base -> safe, but the docs quote one number
+let solMissing = 0; // route not served on Solana at all
+const solNotes: string[] = [];
 
-console.log(`Verifying ${PROBES.length} routes against live 402 quotes (free — no payment attached)\n`);
+console.log(`Verifying ${PROBES.length} routes against live 402 quotes on BOTH gateways (free — no payment attached)\n`);
 
 for (const probe of PROBES) {
-  const live = await quote(probe.path, probe.body);
+  // Both chains at once so adding the second gateway costs no wall-clock.
+  const [live, solLive] = await Promise.all([
+    quote(BASE, probe.path, probe.body),
+    quote(SOL, probe.path, probe.body),
+  ]);
+
+  // Compare the chains before judging the estimator, so a Solana-only problem is
+  // still reported when the Base probe itself is unreachable.
+  let solTag = "";
+  if (typeof solLive === "string") {
+    solMissing++;
+    solTag = "  [sol: not served]";
+    solNotes.push(`${probe.label}: Solana ${solLive}`);
+  } else if (typeof live === "number") {
+    const chainDelta = solLive - live;
+    if (chainDelta > EPSILON) {
+      // Solana dearer than Base. Every estimator is built off Base, so this is
+      // an under-reserve for anyone on Solana — same severity as `✗`.
+      solShort++;
+      solTag = `  [sol: $${solLive.toFixed(6)} DEARER by $${chainDelta.toFixed(6)}]`;
+      solNotes.push(`${probe.label}: Solana charges $${solLive.toFixed(6)} vs Base $${live.toFixed(6)}`);
+    } else if (chainDelta < -EPSILON) {
+      solCheaper++;
+      solTag = `  [sol: $${solLive.toFixed(6)}, -$${(-chainDelta).toFixed(6)}]`;
+    }
+  }
+
   if (typeof live === "string") {
-    console.log(`  ?  ${probe.label.padEnd(26)} ${live}`);
+    console.log(`  ?  ${probe.label.padEnd(26)} ${live}${solTag}`);
     unreachable++;
     continue;
   }
   const delta = probe.expected - live;
   if (delta < -EPSILON) {
     // The only genuinely dangerous direction: we reserve less than we pay.
-    console.log(`  ✗  ${probe.label.padEnd(26)} reserve $${probe.expected} < charge $${live}  UNDER-RESERVES by $${(-delta).toFixed(6)}`);
+    console.log(`  ✗  ${probe.label.padEnd(26)} reserve $${probe.expected} < charge $${live}  UNDER-RESERVES by $${(-delta).toFixed(6)}${solTag}`);
     short++;
   } else if (probe.allowOver && delta >= -EPSILON) {
-    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}  (reserve $${probe.expected.toFixed(6)}, intentionally conservative)`);
+    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}  (reserve $${probe.expected.toFixed(6)}, intentionally conservative)${solTag}`);
   } else if (delta > 0.001) {
-    console.log(`  !  ${probe.label.padEnd(26)} reserve $${probe.expected} > charge $${live}  over-reserves by $${delta.toFixed(6)}`);
+    console.log(`  !  ${probe.label.padEnd(26)} reserve $${probe.expected} > charge $${live}  over-reserves by $${delta.toFixed(6)}${solTag}`);
     over++;
   } else {
     // Print the cushion even when it is inside tolerance. Every route currently
@@ -216,7 +264,7 @@ for (const probe of PROBES) {
     // gateway's 0.001), and that gap IS the safety margin — a `✓ exact` that
     // hides it means the day the fee moves again, the sweep goes from silently
     // fine to silently short with no visible change in between.
-    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}${delta > 1e-9 ? `  (+$${delta.toFixed(6)} cushion)` : ""}`);
+    console.log(`  ✓  ${probe.label.padEnd(26)} $${live}${delta > 1e-9 ? `  (+$${delta.toFixed(6)} cushion)` : ""}${solTag}`);
   }
 }
 
@@ -225,9 +273,29 @@ console.log(
     `${PROBES.length - short - over - unreachable} exact`,
 );
 if (unreachable) console.log("Unreachable routes were NOT verified — treat them as unknown, not as passing.");
-// Under-reserving is a release blocker: it means the budget cap is a lie.
+
+console.log(
+  `Solana: ${solShort} dearer than Base, ${solCheaper} cheaper, ${solMissing} not served`,
+);
+if (solCheaper) {
+  console.log(
+    "  Solana charges no transaction fee, so it is cheaper by exactly that amount.\n" +
+      "  Safe for the budget gate (we reserve the Base figure), but every flat price\n" +
+      "  published in skills/ and the tool descriptions quotes ONE number, which is\n" +
+      "  the Base one. Align the gateways or qualify the docs — do not leave both.",
+  );
+}
+if (solMissing) {
+  console.log("  Not served on Solana — an agent that switched chains gets a 404/503, not a cheaper call:");
+  for (const n of solNotes) console.log(`    ${n}`);
+}
+// Under-reserving is a release blocker: it means the budget cap is a lie. That is
+// true per CHAIN — an estimator built off Base is a lie on Solana the moment
+// Solana costs more, and nothing else in the repo would notice.
 // Over-reserving only blocks affordable calls, so it warns without failing.
-if (short) {
-  console.log("\nFAIL: an estimator reserves less than the gateway charges. Fix it before publishing.");
+if (short || solShort) {
+  console.log(
+    `\nFAIL: an estimator reserves less than the gateway charges${solShort ? " (on Solana)" : ""}. Fix it before publishing.`,
+  );
   process.exit(1);
 }

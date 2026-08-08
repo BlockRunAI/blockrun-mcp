@@ -10,7 +10,7 @@ import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
-import { getClient } from "../utils/wallet.js";
+import { getClient, getChain } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -54,6 +54,16 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
     },
     async ({ path, agent_id }) => {
       try {
+        // sol.blockrun.ai does not serve /v1/defillama/* at all — it 404s, which
+        // reaches the agent as a bare "Not Found" with nothing to act on. Probed
+        // 2026-08-07 by the dual-chain sweep in scripts/verify-prices.ts. Fail
+        // fast and name the fix, the way music/video/image/speech already do.
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_defi is served on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/defillama\//, "").replace(/^api\/v1\/defillama\//, "");
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };

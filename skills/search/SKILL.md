@@ -15,7 +15,7 @@ triggers:
 
 # Live Search (Grok)
 
-Real-time web + news search with AI-summarized results and citations. **PRICED PER SOURCE and expensive by default: $0.025 × `max_results`, +5% +$0.002 → default 10 settles $0.2645 per call.** Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
+Real-time web + news search with AI-summarized results and citations. **PRICED PER SOURCE and expensive by default: $0.025 × `max_results`, +5% +$0.001 → default 10 settles $0.2635 per call.** Best for *fresh* queries; for semantic / neural research use `blockrun_exa` instead.
 
 ## How to Call from MCP
 
@@ -53,14 +53,14 @@ blockrun_search({ body: {
 ```ts
 blockrun_search({ body: { query: "Ethereum ETF approval SEC", sources: ["news","web"], max_results: 8 } })
 ```
-**Cost: ~$0.2120** (8 sources: $0.025 × 8 × 1.05 + $0.002).
+**Cost: ~$0.2110** (8 sources: $0.025 × 8 × 1.05 + $0.001).
 
 ### 2. "What is X saying about Solana's latest outage?"
 
 ```ts
 blockrun_search({ body: { query: "Solana outage today", sources: ["x"], max_results: 15 } })
 ```
-**Cost: ~$0.3958** (15 sources: $0.025 × 15 × 1.05 + $0.002).
+**Cost: ~$0.3948** (15 sources: $0.025 × 15 × 1.05 + $0.001).
 
 ### 3. "Background on Pectra upgrade, last 90 days only"
 
@@ -71,7 +71,7 @@ blockrun_search({ body: {
   from_date: "2026-02-17"
 }})
 ```
-**Cost: $0.2645** (10 sources, the default — verified live).
+**Cost: $0.2635** (10 sources, the default — verified live).
 
 ## search vs exa — Pick the Right Tool
 
@@ -85,7 +85,7 @@ blockrun_search({ body: {
 ## Notes
 
 - Returns AI-summarized text + a list of sources with URLs. The summary is one paragraph; sources let you drill in.
-- **Price is per result, not per source.** `max_results: 20` with one source or three sources both charge **$0.527** ($0.025 × 20 × 1.05 + $0.002 — verified live). Pass a smaller `max_results` to cap spend.
+- **Price is per result, not per source.** `max_results: 20` with one source or three sources both charge **$0.526** ($0.025 × 20 × 1.05 + $0.001 — verified live). Pass a smaller `max_results` to cap spend.
 - Date filters are strict — results outside the window are dropped, not down-ranked.
 
 ## Reference

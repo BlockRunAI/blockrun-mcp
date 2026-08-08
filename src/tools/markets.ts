@@ -73,7 +73,6 @@ SPORTS (Tier 1):
 
 KALSHI: kalshi/markets, kalshi/trades, kalshi/orderbooks
 LIMITLESS / OPINION / PREDICT.FUN: {platform}/markets, {platform}/orderbooks
-DFLOW: dflow/trades, dflow/wallet/positions/:wallet, dflow/wallet/pnl/:wallet
 BINANCE FUTURES: binance/candles/:symbol, binance/ticks/:symbol
 
 CROSS-PLATFORM:

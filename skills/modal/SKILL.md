@@ -26,10 +26,10 @@ That makes `timeout` the single most expensive field in this MCP:
 
 | what you ask for | what you pay |
 |---|---|
-| `{ timeout: 300 }` | **$0.0120** |
-| `{ timeout: 300, gpu: "A100" }` | **$0.2020** |
-| `{ timeout: 600, gpu: "A100" }` | **$0.6687** |
-| `{ timeout: 86400, gpu: "H100" }` | **$192.0020** |
+| `{ timeout: 300 }` | **$0.0110** |
+| `{ timeout: 300, gpu: "A100" }` | **$0.2010** |
+| `{ timeout: 600, gpu: "A100" }` | **$0.6677** |
+| `{ timeout: 86400, gpu: "H100" }` | **$192.0010** |
 
 All four are live-verified quotes. A 24h H100 sandbox costs **$192 upfront, non-refundable**, even if your job finishes in a minute.
 
@@ -38,7 +38,7 @@ All four are live-verified quotes. A 24h H100 sandbox costs **$192 upfront, non-
 ## How to Call from MCP
 
 ```ts
-// 1. Create — timeout: 300 keeps you on the FLAT rate ($0.0120, or $0.2020 with A100).
+// 1. Create — timeout: 300 keeps you on the FLAT rate ($0.0110, or $0.2010 with A100).
 //    Anything above 300 bills hourly for the full requested lifetime, no refund.
 blockrun_modal({ path: "sandbox/create", body: {
   image: "python:3.11",
@@ -63,9 +63,9 @@ blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: "sb_abc..." } })
 | Path | Method | Body | Price |
 |---|---|---|---|
 | `sandbox/create` | POST | `{ image?, timeout?, cpu?, memory?, gpu?, setup_commands? }` | **depends on `timeout` + `gpu` — see below** |
-| `sandbox/exec` | POST | `{ sandbox_id, command: ["python","-c","..."], timeout? }` | $0.0030 |
-| `sandbox/status` | POST | `{ sandbox_id }` | $0.0030 |
-| `sandbox/terminate` | POST | `{ sandbox_id }` | $0.0030 |
+| `sandbox/exec` | POST | `{ sandbox_id, command: ["python","-c","..."], timeout? }` | $0.0020 |
+| `sandbox/status` | POST | `{ sandbox_id }` | $0.0020 |
+| `sandbox/terminate` | POST | `{ sandbox_id }` | $0.0020 |
 
 ### `sandbox/create` pricing is bimodal
 
@@ -73,27 +73,27 @@ blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: "sb_abc..." } })
 
 | gpu | price |
 |---|---|
-| *(none, CPU)* | $0.0120 |
-| `T4` | $0.0520 |
-| `L4` | $0.0820 |
-| `A10G` | $0.1020 |
-| `A100` | $0.2020 |
-| `H100` | $0.4020 |
+| *(none, CPU)* | $0.0110 |
+| `T4` | $0.0510 |
+| `L4` | $0.0810 |
+| `A10G` | $0.1010 |
+| `A100` | $0.2010 |
+| `H100` | $0.4010 |
 
 **`timeout > 300s` — per-hour × the full requested lifetime, upfront, no refund:**
 
 | gpu | per hour | 1h | 24h (max) |
 |---|---|---|---|
-| *(none, CPU)* | $0.10 | $0.1020 | $2.4020 |
-| `T4` | $1.50 | $1.5020 | $36.0020 |
-| `L4` | $2.00 | $2.0020 | $48.0020 |
-| `A10G` | $2.50 | $2.5020 | $60.0020 |
-| `A100` | $4.00 | $4.0020 | $96.0020 |
-| `H100` | $8.00 | $8.0020 | **$192.0020** |
+| *(none, CPU)* | $0.10 | $0.1010 | $2.4010 |
+| `T4` | $1.50 | $1.5010 | $36.0010 |
+| `L4` | $2.00 | $2.0010 | $48.0010 |
+| `A10G` | $2.50 | $2.5010 | $60.0010 |
+| `A100` | $4.00 | $4.0010 | $96.0010 |
+| `H100` | $8.00 | $8.0010 | **$192.0010** |
 
-Hours are exact, not rounded up — `timeout: 1800` on `A100` is 0.5h = $2.0020. Every figure above includes the $0.002 flat transaction fee. Max `timeout` is 86400 (24h).
+Hours are exact, not rounded up — `timeout: 1800` on `A100` is 0.5h = $2.0010. Every figure above includes the $0.001 flat transaction fee. Max `timeout` is 86400 (24h).
 
-One quirk worth knowing: `timeout: 300` costs $0.0120 (flat) but `timeout: 301` costs $0.0104 (CPU-hourly) — just past the cliff is briefly *cheaper* on CPU. It stops being cheaper around 432s.
+One quirk worth knowing: `timeout: 300` costs $0.0110 (flat) but `timeout: 301` costs $0.0094 (CPU-hourly) — just past the cliff is briefly *cheaper* on CPU. It stops being cheaper at 360s.
 
 ## Field Reference
 
@@ -119,7 +119,7 @@ await blockrun_modal({ path: "sandbox/exec", body: {
 }})
 await blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: sb.sandbox_id } })
 ```
-**Cost: $0.0180** — create $0.0120 + exec $0.0030 + terminate $0.0030. Every call carries the $0.002 transaction fee, so three calls pay it three times; batch your work into one `exec` rather than several.
+**Cost: $0.0150** — create $0.0110 + exec $0.0020 + terminate $0.0020. Every call carries the $0.001 transaction fee, so three calls pay it three times; batch your work into one `exec` rather than several.
 
 ### 2. GPU inference, A100, with deps pre-installed
 
@@ -134,7 +134,7 @@ blockrun_modal({ path: "sandbox/create", body: {
 ```
 Then `sandbox/exec` with your inference command.
 
-**Cost: $1.3413** — create $1.3353 + exec $0.0030 + terminate $0.0030. `timeout: 1200` is above the 300s flat tier, so the A100 bills hourly for the full 20 minutes you asked for: $4.00/h × (1200/3600) = $1.3333, + the $0.002 fee. It is **charged upfront and never refunded** — it does NOT auto-evict when idle, and terminating after 30 seconds still costs the full $1.3353. Ask for the time you actually need.
+**Cost: $1.3383** — create $1.3343 + exec $0.0020 + terminate $0.0020. `timeout: 1200` is above the 300s flat tier, so the A100 bills hourly for the full 20 minutes you asked for: $4.00/h × (1200/3600) = $1.3333, + the $0.001 fee. It is **charged upfront and never refunded** — it does NOT auto-evict when idle, and terminating after 30 seconds still costs the full $1.3343. Ask for the time you actually need.
 
 ### 3. Test untrusted code Claude generated
 
