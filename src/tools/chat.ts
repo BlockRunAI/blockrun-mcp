@@ -118,7 +118,7 @@ export function estimateChatCost(
   // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
   // single model, can settle at a price we can't know up front — reserve
   // conservatively. balanced[0] = openai/gpt-5.6-terra and coding[0] =
-  // anthropic/claude-opus-4.8 (see MODEL_TIERS), the same frontier primaries as
+  // anthropic/claude-opus-5 (see MODEL_TIERS), the same frontier primaries as
   // reasoning/powerful, and a no-mode chat resolves to "balanced" (see the
   // routing loop below) — so undefined counts too. Reserving the cheap heuristic
   // for these let a near-exhausted budget authorize a frontier completion, and
@@ -163,21 +163,21 @@ export function registerChatTool(server: McpServer, budget: BudgetState): void {
       description: `Get a second opinion from another AI model, or use a specialized model for a specific task.
 
 Notable modes:
-- mode:"powerful" → Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
-- mode:"reasoning" → Claude Opus 4.8, GPT-5.6-sol, Kimi K3, Grok 4.3, deepseek-v4-pro
-- mode:"coding" → Claude Opus 4.8, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
-- mode:"cheap" → deepseek-v4-pro, MiniMax M3, GLM-5, NVIDIA free
-- mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (cheap, strong at coding)
+- mode:"powerful" → Claude Opus 5, Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
+- mode:"reasoning" → Claude Opus 5, GPT-5.6-sol, Kimi K3, Grok 4.3, deepseek-v4-pro
+- mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
+- mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Tencent Hy3
+- mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
 - mode:"free" → NVIDIA models (no cost)
 
-Pick directly: model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"anthropic/claude-opus-4.8", model:"xai/grok-4.5", model:"nvidia/deepseek-v4-flash" (free).
+Pick directly: model:"anthropic/claude-opus-5", model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"xai/grok-4.5", model:"nvidia/gpt-oss-120b" (free).
 
 Run blockrun_models to see all available models with pricing.`,
       annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'moonshot/kimi-k3', 'openai/gpt-5.6-sol', 'zai/glm-5')"),
-        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 4.8, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (cheap, great for coding), cheap = budget models, free = NVIDIA only (ignored if model specified)"),
+        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = NVIDIA only (ignored if model specified)"),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
@@ -359,7 +359,7 @@ Run blockrun_models to see all available models with pricing.`,
 
       // Only the free tier gets a deadline. Paid tiers are frontier/reasoning
       // models where a multi-minute completion is the job, not a fault; free
-      // models fail by crawling and there are eight of them to fall through.
+      // models fail by crawling and there are seven of them to fall through.
       // See FREE_MODEL_TIMEOUT_MS for the measurements behind the numbers.
       const freeClient = routingMode === "free" ? buildClientWithTimeout(FREE_MODEL_TIMEOUT_MS) : null;
       const routingClient = freeClient ?? llm();
@@ -378,7 +378,7 @@ Run blockrun_models to see all available models with pricing.`,
           // Paid tiers stream (frontier primaries can generate for minutes —
           // same 524 class as the explicit-model path). The free tier stays on
           // the non-streaming client whose short timeout the deadline loop
-          // depends on to fail fast through its eight candidates.
+          // depends on to fail fast through its seven candidates.
           const { result: response, settledUsd } = await withSettledCost(routingClient, async () => {
             if (!freeClient && supportsStreaming(routingClient)) {
               return streamChatText(routingClient, m, [

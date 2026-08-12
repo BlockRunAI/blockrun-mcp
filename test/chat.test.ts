@@ -23,10 +23,10 @@ test("estimateChatCost reserves for the extended-thinking budget, not just max_t
 
 test("estimateChatCost keeps genuinely-free paths at $0", () => {
   assert.equal(estimateChatCost(1024, "free", undefined), 0);
-  assert.equal(estimateChatCost(1024, undefined, "nvidia/deepseek-v4-flash"), 0);
+  assert.equal(estimateChatCost(1024, undefined, "nvidia/gpt-oss-120b"), 0);
 });
 
-// ── balanced/coding tiers have FRONTIER primaries (gpt-5.6-terra / claude-opus-4.8),
+// ── balanced/coding tiers have FRONTIER primaries (gpt-5.6-terra / claude-opus-5),
 //    so the gate must reserve the frontier worst-case — not the cheap heuristic ──
 test("estimateChatCost reserves the frontier worst-case for balanced/coding (their primary is a frontier model)", () => {
   const frontier = estimateChatCost(1024, "reasoning", undefined);
