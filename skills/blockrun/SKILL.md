@@ -68,7 +68,7 @@ digits — an unmarked number is invisible to that check, which is exactly how t
 
 ## Getting a first call working
 
-**Free, no wallet, no key.** <!-- br:models.free -->6<!-- /br:models.free --> open-weight
+**Free, no wallet, no key.** <!-- br:models.free -->5<!-- /br:models.free --> open-weight
 chat models cost nothing. Use `blockrun_chat` with `mode: "free"` — the parameter is `mode`,
 not `routing`, and an unrecognised key is silently dropped, which lands you on the paid
 `balanced` tier instead. Calling the HTTP API directly, a free model needs no wallet and no

@@ -2,6 +2,62 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.40.0
+
+Catalog sync against the live `GET /v1/models` (2026-08-12, 91 models on both
+chains). The July snapshot had drifted: two free-tier models died by aliasing
+(one of them still routed in `mode:"cheap"`), and the gateway had shipped a
+new Seedance SKU, a new TTS provider, and nine new chat models.
+
+- **feat(chat) — catalog and tiers resynced.** `anthropic/claude-opus-5` now
+  leads powerful/reasoning/coding (live-probed); `qwen/qwen3.7-flash`
+  ($0.03/$0.13 — the cheapest paid model in the catalogue) and `tencent/hy3`
+  join cheap; `openai/gpt-5.6-luna` (cut to $0.2/$1.2) and
+  `google/gemini-3.5-flash-lite` join fast. Documented new arrivals: the
+  gpt-5.6-`*-pro` reasoning trio (terra-pro at $1/$6 is deliberately HALF the
+  standard Terra rate — gateway registry, not a pricing bug), gpt-5.5-pro,
+  chat-latest, gemini-3.6-flash, qwen3.7-plus, xiaomi/mimo-v2.5-pro. Prices
+  refreshed throughout (terra $2/$12; glm-5 RAISED to $1/$3.2 — Z.AI raised
+  its list, so it leaves the cheap tier; gemini-3.5-flash $1.5/$9).
+
+- **fix(free) — dead aliases removed from the routing loop.**
+  `nvidia/deepseek-v4-flash` (which also sat in `cheap[]`) and
+  `nvidia/seed-oss-36b` now answer as `nvidia/gpt-oss-120b` on BOTH chains
+  (probed 2026-08-12 with a realistic prompt): routing to them was a slower
+  spelling of free[0], billed as a model the caller did not choose. Removed.
+  `nemotron-3-nano-omni-30b-a3b-reasoning` no longer aliases on Base (0.97s,
+  serves itself) and is promoted into `free[]`; `mistral-nemotron` demoted
+  below step-3.7-flash (24.9s on sol vs the 1.7-12s healthy band).
+
+- **feat(video) — `bytedance/seedance-2.0-mini`** ($3.5/M tokens ≈ $0.080/sec
+  at 720p, 4-15s, 5s default, 480p/720p only; supports RealFace and
+  first/last-frame). Estimator pinned against the live 402 at all three probed
+  tiers — each quote sits exactly the known $0.001 fee gap under the reserve.
+
+- **feat(speech) — `bytedance/seed-audio-1.0`**, prompt-directed audio
+  (describe the voice/emotion/staging in the input text; the `voice` param is
+  ignored). Billed per estimated output second: $0.003/sec, CJK-aware
+  chars→seconds (0.105s Latin / 0.225s CJK per char), 120s cap, and NO 5%
+  margin on top — the per-second rate is final retail. Mirrors the gateway's
+  `estimateSpeechSeconds` exactly; verified against the live 402 and pinned by
+  `test/speech-cost.test.ts`.
+
+- **fix(music) — `minimax/music-2.5` removed from the enum.** The gateway
+  delisted it on purpose: same price as 2.5+, but upstream rejects
+  `is_instrumental` on it (MiniMax error 2013) and this tool defaults
+  `instrumental:true`, so every default call to it would 400. Pinned old
+  callers are remapped to 2.5+ server-side.
+
+- Known and external, NOT fixed here: the sol gateway still serves
+  pre-2026-08-07 prices for the gpt-5.6 tiers (the cut IS in blockrun-sol's
+  repo — deployment lag), and its repo has not taken the DeepSeek cut or the
+  Z.AI glm-5 raise, so deepseek-chat/reasoner are DEARER on sol than Base (a
+  direction the pricing policy defines as a bug) and glm-5 sells below COGS
+  there. `verify:prices` fails its Solana direction gate on exactly this until
+  sol ships; every MCP reserve still covers the sol charge (we reserve the
+  Base figure and the chat gate is deliberately conservative), so the budget
+  gate is safe meanwhile.
+
 ## 0.39.1
 
 Closes the three money-path holes 0.38.1 documented as "known and unfixed" —
