@@ -1,12 +1,14 @@
 // src/tools/speech.ts
 //
-// ElevenLabs voice via BlockRun x402 — text-to-speech, sound effects, and
-// free voice discovery. Mirrors the music.ts manual-402 pattern (Base only).
+// AI voice via BlockRun x402 — text-to-speech (ElevenLabs + ByteDance Seed
+// Audio), sound effects, and free voice discovery. Mirrors the music.ts
+// manual-402 pattern (Base only).
 //
-// Pricing mirrors the server exactly: (chars / 1000) × rate × 1.05 margin,
-// minimum $0.001 per request. Sound effects are flat $0.05 × 1.05 = $0.0525.
-// Price is deterministic from input length, so the budget pre-check records
-// the same amount the server settles.
+// Pricing mirrors the server exactly. ElevenLabs: (chars / 1000) × rate × 1.05
+// margin, minimum $0.001 per request; sound effects flat $0.05 × 1.05 =
+// $0.0525. Seed Audio bills per estimated output second instead — see
+// SEED_AUDIO. Price is deterministic from input length, so the budget
+// pre-check records the same amount the server settles.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
@@ -42,7 +44,32 @@ const SPEECH_MODELS: Record<string, { pricePer1kChars: number; maxInputChars: nu
   "elevenlabs/turbo-v2.5": { pricePer1kChars: 0.05, maxInputChars: 40_000 },
   "elevenlabs/multilingual-v2": { pricePer1kChars: 0.1, maxInputChars: 10_000 },
   "elevenlabs/v3": { pricePer1kChars: 0.1, maxInputChars: 5_000 },
+  // Display-only $/1k for seed-audio: it actually bills by ESTIMATED OUTPUT
+  // SECONDS — see SEED_AUDIO below. This entry exists so the maxInputChars
+  // check and the `?? flash` fallback lookup treat it like any other model.
+  "bytedance/seed-audio-1.0": { pricePer1kChars: 0.3, maxInputChars: 3_000 },
 };
+
+// bytedance/seed-audio-1.0 (added 2026-08-12) is priced per SECOND of output,
+// estimated from input length before generation: seconds = latinChars x 0.105
+// + cjkChars x 0.225, capped at 120s of output, x $0.003/sec. Mirrors
+// estimateSpeechSeconds()/calculateSpeechPrice() in the gateway EXACTLY,
+// including two deliberate asymmetries vs the ElevenLabs formula:
+//   - the $0.003/sec rate is FINAL RETAIL — the gateway does NOT apply the 5%
+//     margin on top, so neither do we (MARGIN would over-reserve 5%);
+//   - CJK codepoints speak slower per character (~4.7 vs ~10 chars/sec
+//     measured on Seed Audio), so a CJK prompt quotes ~2x its Latin length.
+// The 402's quoted amount still wins for billing; this only feeds the gate.
+const SEED_AUDIO = {
+  model: "bytedance/seed-audio-1.0",
+  pricePerSecond: 0.003,
+  secondsPerCharLatin: 0.105,
+  secondsPerCharCJK: 0.225,
+  maxOutputSeconds: 120,
+};
+
+// Gateway's CJK_RE verbatim (Han, Hiragana/Katakana, Hangul + width forms).
+const CJK_RE = /[\u2E80-\u2FDF\u3000-\u303F\u3040-\u30FF\u31C0-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/g;
 
 // Built-in voice aliases — duplicated from the gateway so action:"voices"
 // stays useful even when the free /v1/audio/voices endpoint is down.
@@ -57,9 +84,17 @@ const VOICE_ALIASES: Array<{ alias: string; description: string }> = [
   { alias: "harry", description: "Fierce warrior" },
 ];
 
-function speechCost(model: string, charCount: number): number {
+export function speechCost(model: string, input: string): number {
+  if (model === SEED_AUDIO.model) {
+    const cjkCount = (input.match(CJK_RE) || []).length;
+    const estSeconds = Math.min(
+      (input.length - cjkCount) * SEED_AUDIO.secondsPerCharLatin + cjkCount * SEED_AUDIO.secondsPerCharCJK,
+      SEED_AUDIO.maxOutputSeconds,
+    );
+    return withTxFee(Math.max(estSeconds * SEED_AUDIO.pricePerSecond, MIN_PAYMENT_USD));
+  }
   const m = SPEECH_MODELS[model];
-  const raw = (charCount / 1000) * (m?.pricePer1kChars ?? 0.05) * MARGIN;
+  const raw = (input.length / 1000) * (m?.pricePer1kChars ?? 0.05) * MARGIN;
   // MIN_PAYMENT_USD mirrors the server's BASE floor, not its charge: the gateway
   // adds a flat $0.002 tx fee on top, and its own route says so —
   // "Price = (characters / 1000) x model rate, minimum $0.003/request"
@@ -72,16 +107,16 @@ export function registerSpeechTool(server: McpServer, budget: BudgetState): void
   server.registerTool(
     "blockrun_speech",
     {
-      description: `ElevenLabs voice via BlockRun x402 — speak text aloud, generate sound effects, list voices.
+      description: `AI voice via BlockRun x402 — speak text aloud (ElevenLabs or ByteDance Seed Audio), generate sound effects, list voices.
 
 Actions:
 - speak (default): text-to-speech. E.g. "speak this with the sarah voice". Price = chars/1000 × rate (min $0.001), quoted before payment.
 - sound_effect: cinematic sound effects from a text prompt, up to 22s ($0.0525/clip)
 - voices: list available voices (free)
 
-Models (speak): elevenlabs/flash-v2.5 ($0.05/1k chars, ~75ms, default), elevenlabs/turbo-v2.5 ($0.05/1k), elevenlabs/multilingual-v2 ($0.10/1k, narration), elevenlabs/v3 ($0.10/1k, most expressive)
+Models (speak): elevenlabs/flash-v2.5 ($0.05/1k chars, ~75ms, default), elevenlabs/turbo-v2.5 ($0.05/1k), elevenlabs/multilingual-v2 ($0.10/1k, narration), elevenlabs/v3 ($0.10/1k, most expressive), bytedance/seed-audio-1.0 (~$0.003/sec of output, est. from input length; max 3k chars in / 120s out) — prompt-DIRECTED audio: describe the voice, emotion, and sound staging in the input text itself ("a tired detective mutters, rain in the background: ..."); the voice parameter is ignored.
 
-Voice aliases: sarah (default), george, laura, charlie, river, roger, callum, harry — or any raw ElevenLabs voice_id.
+Voice aliases (ElevenLabs models only): sarah (default), george, laura, charlie, river, roger, callum, harry — or any raw ElevenLabs voice_id.
 
 Returns a hosted audio URL — download immediately if you need to keep the file.`,
       annotations: TOOL_ANNOTATIONS.generative,
@@ -89,7 +124,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         action: z.enum(["speak", "sound_effect", "voices"]).optional().default("speak").describe("speak: text-to-speech (default). sound_effect: generate a sound effect. voices: list voices (free)."),
         input: z.string().optional().describe("speak: text to synthesize. sound_effect: description of the sound, e.g. 'rain on a tin roof, distant thunder' (max 1000 chars)."),
         voice: z.string().optional().describe("Voice alias (sarah, george, laura, charlie, river, roger, callum, harry) or raw ElevenLabs voice_id. Default: sarah."),
-        model: z.enum(["elevenlabs/flash-v2.5", "elevenlabs/turbo-v2.5", "elevenlabs/multilingual-v2", "elevenlabs/v3"]).optional().default("elevenlabs/flash-v2.5").describe("Speech model (speak only)"),
+        model: z.enum(["elevenlabs/flash-v2.5", "elevenlabs/turbo-v2.5", "elevenlabs/multilingual-v2", "elevenlabs/v3", "bytedance/seed-audio-1.0"]).optional().default("elevenlabs/flash-v2.5").describe("Speech model (speak only). seed-audio-1.0 is prompt-directed: voice/emotion/staging go in the input text, the voice param is ignored, and billing is per estimated second of output."),
         response_format: z.enum(["mp3", "opus", "pcm", "wav"]).optional().default("mp3").describe("Audio format"),
         speed: z.number().min(0.7).max(1.2).optional().describe("Playback speed 0.7-1.2 (speak only)"),
         duration_seconds: z.number().min(0.5).max(22).optional().describe("Sound effect length in seconds (sound_effect only; default: auto)"),
@@ -149,7 +184,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           endpoint = `${BLOCKRUN_API}/v1/audio/speech`;
           body = { model, input, voice: voice || "sarah", response_format };
           if (speed !== undefined) body.speed = speed;
-          cost = speechCost(model, input.length);
+          cost = speechCost(model, input);
         }
 
         gate = reserveBudget(budget, agent_id, cost);
