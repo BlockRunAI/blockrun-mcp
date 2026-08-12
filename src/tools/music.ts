@@ -37,7 +37,7 @@ tool submits the job and, for slower tracks, polls until it is ready; payment
 settles only when a finished track is returned — if it fails or times out, you
 are not charged.
 
-Models: minimax/music-2.5+ ($0.1575), minimax/music-2.5 ($0.1575)
+Model: minimax/music-2.5+ ($0.1575/track, up to ~4 min)
 
 Returns a permanent BlockRun-hosted URL.`,
       annotations: TOOL_ANNOTATIONS.generative,
@@ -45,7 +45,12 @@ Returns a permanent BlockRun-hosted URL.`,
         prompt: z.string().describe("Music style, mood, or description. E.g. 'upbeat synthwave with neon pads', 'chill lo-fi beats', 'epic orchestral film score'"),
         instrumental: z.boolean().optional().default(true).describe("Generate without vocals (default: true)"),
         lyrics: z.string().optional().describe("Custom lyrics. Cannot be used with instrumental: true"),
-        model: z.enum(["minimax/music-2.5+", "minimax/music-2.5"]).optional().default("minimax/music-2.5+").describe("Music model to use"),
+        // music-2.5 (no plus) removed 2026-08-12: the gateway dropped it from the
+        // catalogue on purpose — same price as 2.5+, but upstream rejects
+        // is_instrumental on it (MiniMax error 2013), and our schema defaults
+        // instrumental:true, so every default call to it would 400. Old callers
+        // pinned to "minimax/music-2.5" are remapped to 2.5+ server-side anyway.
+        model: z.enum(["minimax/music-2.5+"]).optional().default("minimax/music-2.5+").describe("Music model to use"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
