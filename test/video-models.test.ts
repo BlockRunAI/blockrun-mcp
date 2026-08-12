@@ -109,6 +109,11 @@ const LIVE_CHARGE: Array<[string, number | undefined, string | undefined, number
   ["bytedance/seedance-1.5-pro", undefined, undefined, 0.354916],
   ["bytedance/seedance-1.5-pro", 12, undefined, 0.850398],
   ["bytedance/seedance-1.5-pro", undefined, "480p", 0.177958],
+  // mini rows probed 2026-08-12 (model added that day); each sits exactly the
+  // $0.001 fee gap under the local reserve, same as every other row.
+  ["bytedance/seedance-2.0-mini", undefined, undefined, 0.399554],
+  ["bytedance/seedance-2.0-mini", 15, undefined, 1.196662],
+  ["bytedance/seedance-2.0-mini", undefined, "480p", 0.200277],
   ["bytedance/seedance-2.0-fast", undefined, undefined, 0.826804],
   ["bytedance/seedance-2.0", undefined, undefined, 1.13648],
   ["bytedance/seedance-2.0", 15, undefined, 3.407439],
@@ -202,7 +207,7 @@ test("seedance-2.5 caps at 720p — 1080p is refused, not silently billed", asyn
 });
 
 test("4K is refused on every model but seedance-2.0 — and 2.0 keeps it", async () => {
-  for (const m of ["bytedance/seedance-2.0-fast", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.5"]) {
+  for (const m of ["bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.5"]) {
     assert.match(await errorText({ prompt: "a cube", model: m, resolution: "4K" }), /does not render 4K/, m);
   }
   // The other half, which had no coverage: narrowing the guard to reject 4K
@@ -241,9 +246,12 @@ test("every schema-listed (model, resolution) pair is ACCEPTED — the whole tab
   // HARDCODED here — iterating the exported table would test the mutation
   // against itself (a first draft of this test did exactly that and the same
   // two mutations still passed). This literal map IS the spec: token360's
-  // published parameter schema, verified live 2026-08-07.
+  // published parameter schema, verified live 2026-08-07; 2.0-mini added
+  // 2026-08-12 from the gateway registry's 2026-08-11 probe (480p/720p only)
+  // and pinned against the live 402 the same day.
   const EXPECTED: Record<string, string[]> = {
     "bytedance/seedance-1.5-pro": ["480p", "720p", "1080p"],
+    "bytedance/seedance-2.0-mini": ["480p", "720p"],
     "bytedance/seedance-2.0-fast": ["480p", "720p"],
     "bytedance/seedance-2.0": ["480p", "720p", "1080p", "4K"],
     "bytedance/seedance-2.5": ["480p", "720p"],
