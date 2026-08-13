@@ -4,10 +4,16 @@ All notable changes to BlockRun MCP will be documented in this file.
 
 ## 0.40.1
 
-An audit release: no new features, seven confirmed defects fixed, every one of
-them found by probing the live gateway rather than by reading the code. Five
-touch money. Two were introduced by 0.40.0 itself, and one was introduced by
-this very audit and caught by its own second pass.
+An audit release: no new features, eleven confirmed defects fixed, nearly all of
+them found by probing the live gateway rather than by reading the code. Seven
+touch money directly.
+
+Provenance is worth stating plainly, because it is the argument for auditing in
+rounds. Two came in with 0.40.0. Six were older — one of them a guard that had
+been inverted since 0.33, under a comment mandating the opposite order. And
+three were introduced by THIS AUDIT's own first round and caught by its second,
+including a $0 budget reservation and an incomplete version of the very fix
+below it. Every fix here was re-attacked before it shipped.
 
 **Budget gate**
 
