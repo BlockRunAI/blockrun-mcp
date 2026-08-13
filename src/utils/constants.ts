@@ -137,6 +137,124 @@ export const MODEL_TIERS = {
 export type RoutingMode = keyof typeof MODEL_TIERS;
 
 /**
+ * $/M input and output for every model a routing tier can resolve to, plus every
+ * catalog model priced ABOVE the DEFAULT_CHAT_PRICE an explicit `model` falls
+ * back to. Read off the live GET /v1/models on 2026-08-13.
+ *
+ * This exists because the budget gate used to reserve chat against two hardcoded
+ * constants — "$5/M input" and "4 chars per token" — and BOTH were wrong at the
+ * top of the catalog, in the same direction:
+ *
+ *   model                 charged (100k-char prompt)   old reserve   short by
+ *   openai/gpt-5.4-pro            $1.460020             $0.147480      9.90x
+ *   openai/gpt-5.5-pro            $1.460020             $0.147480      9.90x
+ *   openai/gpt-5.2-pro            $1.026640             $0.147480      6.96x
+ *   openai/o1                     $0.727420             $0.147480      4.93x
+ *   anthropic/claude-fable-5      $0.486310             $0.147480      3.30x
+ *   openai/gpt-5.6-sol            $0.244171             $0.147480      1.66x
+ *   anthropic/claude-opus-5       $0.243655             $0.147480      1.65x   <- powerful[0]
+ *   google/gemini-3.5-flash       $0.073951             $0.030072      2.46x   <- fast[0]
+ *   zai/glm-5                     $0.049346             $0.030072      1.64x   <- glm[0]
+ *
+ * (Live unpaid 402 quotes, 2026-08-13. Every frontier model was under-reserved,
+ * including the DEFAULT primary of mode:"powerful" — this is the same defect
+ * class as the 11.4x under-reserve 0.32.3 was released to fix, which the comment
+ * in chat.ts still describes as solved. It was solved only for the middle of the
+ * price range.)
+ *
+ * Keep this in step with MODEL_TIERS: a tier member with no entry here reserves
+ * DEFAULT_CHAT_PRICE, which is correct for everything at or below $5/$30 and
+ * SHORT for the five models above it. `npm run verify:prices` probes one row per
+ * tier against the live 402 so drift shows up as a failure, not as a surprise
+ * invoice.
+ */
+export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: number }> = {
+  // Above the default — the five that made the gate unsafe. Reachable as an
+  // explicit `model` as well as through powerful/reasoning.
+  "openai/gpt-5.4-pro": { input: 30, output: 180 },
+  "openai/gpt-5.5-pro": { input: 30, output: 180 },
+  "openai/gpt-5.2-pro": { input: 21, output: 168 },
+  "openai/o1": { input: 15, output: 60 },
+  "anthropic/claude-fable-5": { input: 10, output: 50 },
+  // At or below the default — listed so the CHEAP tiers reserve their own real
+  // rate instead of the $5/$30 worst case, which would price a qwen3.7-flash
+  // call like a frontier one and lock small budgets out of the cheap path.
+  "anthropic/claude-opus-5": { input: 5, output: 25 },
+  "anthropic/claude-opus-4.8": { input: 5, output: 25 },
+  "anthropic/claude-sonnet-5": { input: 3, output: 15 },
+  "openai/gpt-5.6-sol": { input: 5, output: 30 },
+  "openai/gpt-5.5": { input: 5, output: 30 },
+  "openai/gpt-5.6-terra": { input: 2, output: 12 },
+  "openai/gpt-5.3-codex": { input: 1.75, output: 14 },
+  "openai/gpt-5-mini": { input: 0.25, output: 2 },
+  "openai/gpt-5.6-luna": { input: 0.2, output: 1.2 },
+  "openai/gpt-5.4-nano": { input: 0.2, output: 1.25 },
+  "google/gemini-3.1-pro": { input: 2, output: 12 },
+  "google/gemini-3.5-flash": { input: 1.5, output: 9 },
+  "google/gemini-3-flash-preview": { input: 0.5, output: 3 },
+  "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
+  "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
+  "moonshot/kimi-k3": { input: 3, output: 15 },
+  "xai/grok-4.5": { input: 2.5, output: 9 },
+  "xai/grok-4.3": { input: 1.5, output: 4 },
+  "xai/grok-build-0.1": { input: 1.5, output: 3 },
+  "qwen/qwen3.7-max": { input: 1.475, output: 4.425 },
+  "qwen/qwen3.7-flash": { input: 0.03, output: 0.13 },
+  "zai/glm-5.2": { input: 1.4, output: 4.4 },
+  "zai/glm-5.1": { input: 1.4, output: 4.4 },
+  "zai/glm-5-turbo": { input: 1.2, output: 4 },
+  "zai/glm-5": { input: 1, output: 3.2 },
+  "deepseek/deepseek-v4-pro": { input: 0.435, output: 0.87 },
+  "deepseek/deepseek-chat": { input: 0.14, output: 0.28 },
+  "deepseek/deepseek-reasoner": { input: 0.14, output: 0.28 },
+  "minimax/minimax-m3": { input: 0.3, output: 1.2 },
+  "tencent/hy3": { input: 0.132, output: 0.528 },
+};
+
+/**
+ * What an UNKNOWN explicit model reserves. $5/$30 is the ceiling of the catalog
+ * excluding the five outliers above, so a model added upstream between releases
+ * is covered unless it is priced in the pro tier — and those five are listed.
+ */
+export const DEFAULT_CHAT_PRICE = { input: 5, output: 30 } as const;
+
+/**
+ * Characters per input token, as the GATEWAY counts them for a quote.
+ *
+ * Measured 2026-08-13: a 100,000-character prompt quotes ~48,000 input tokens
+ * across every model probed (2.08 chars/token). The estimator assumed 4, so it
+ * halved the input bill before the price error even applied.
+ *
+ * It is a CHARACTER count on the gateway too, not a real tokenizer: the same
+ * 100k chars of CJK and of ASCII quote the identical amount ($0.098269 on
+ * gpt-5.6-terra), so this ratio holds across alphabets. Rounded DOWN to 2 —
+ * fewer chars per token means more tokens means a larger reserve, the safe
+ * direction.
+ */
+export const GATEWAY_CHARS_PER_TOKEN = 2;
+
+/**
+ * The most expensive model each tier can settle at. Derived, not hand-written,
+ * so adding a model to a tier cannot leave the gate reserving the old maximum.
+ *
+ * Worst-member (not first-member) is the right bound: the routing loop falls
+ * through to a later model whenever an earlier one fails BEFORE taking payment,
+ * so any member can be the one that settles.
+ */
+export const TIER_WORST_PRICE: Record<RoutingMode, { input: number; output: number }> =
+  Object.fromEntries(
+    (Object.keys(MODEL_TIERS) as RoutingMode[]).map((mode) => {
+      const rates = MODEL_TIERS[mode].map(
+        (id: string) => CHAT_PRICE_PER_MTOKEN[id] ?? (id.startsWith("nvidia/") ? { input: 0, output: 0 } : DEFAULT_CHAT_PRICE),
+      );
+      return [mode, {
+        input: Math.max(...rates.map((r) => r.input)),
+        output: Math.max(...rates.map((r) => r.output)),
+      }];
+    }),
+  ) as Record<RoutingMode, { input: number; output: number }>;
+
+/**
  * Per-model and whole-loop deadlines for the mode:"free" routing fallback.
  *
  * Free NVIDIA models do not fail by erroring, they fail by CRAWLING — the

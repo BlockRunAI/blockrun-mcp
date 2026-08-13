@@ -6,7 +6,17 @@ import { buildClient, buildClientWithTimeout, getAnthropicClient, baseOnlyMessag
 import { streamChatText, supportsStreaming, type StreamChatMessage } from "../utils/chat-stream.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
-import { MODEL_TIERS, FREE_MODEL_TIMEOUT_MS, FREE_TIER_DEADLINE_MS, FREE_TIER_MAX_PROMPT_CHARS, type RoutingMode } from "../utils/constants.js";
+import {
+  MODEL_TIERS,
+  FREE_MODEL_TIMEOUT_MS,
+  FREE_TIER_DEADLINE_MS,
+  FREE_TIER_MAX_PROMPT_CHARS,
+  CHAT_PRICE_PER_MTOKEN,
+  DEFAULT_CHAT_PRICE,
+  TIER_WORST_PRICE,
+  GATEWAY_CHARS_PER_TOKEN,
+  type RoutingMode,
+} from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { ApiClient } from "../utils/wallet.js";
@@ -97,46 +107,39 @@ export function estimateChatCost(
   // Fold it into the reserved output size so the gate can't be bypassed by a
   // tiny max_tokens + a huge budget_tokens.
   const out = Math.max((maxTokens ?? 1024) + (thinkingBudget ?? 0), 256);
-  // ~$20 / 1M output tokens — a conservative upper bound covering premium
-  // frontier output, floored so tiny completions still reserve something real.
-  // withTxFee: the gateway charges base + $0.002 (see src/utils/tx-fee.ts). The
-  // reserve must cover the CHARGE, not the base. Rounded to micro-dollars because
-  // the raw float drifts — (1024/1e6)*20 is 0.020479999999999998, which then
-  // surfaces verbatim in budget messages.
-  // INPUT counts too. Until 0.32.3 the reserve was derived from output alone,
-  // so a large pasted document reserved the same as a one-line question: a
-  // 100k-word prompt settled $0.2557 against a $0.0225 reserve (11.4x short),
-  // and break-even was only ~15 KB of prompt — an ordinary pasted file. A
-  // BLOCKRUN_BUDGET_LIMIT was then blown several times over by ONE approved
-  // call, and concurrency multiplied it. ~4 chars/token, priced at a frontier
-  // input rate; over-reserving only tightens the gate, the ledger still books
-  // the real settled cost via recordActualSpend().
-  const inTokens = Math.ceil((promptChars ?? 0) / 4);
-  const inputReserve = (rate: number) => Math.round((inTokens / 1_000_000) * rate * 1e6) / 1e6;
-  const frontierReserve = withTxFee(Math.max(0.01, Math.round((out / 1_000_000) * 20 * 1e6) / 1e6) + inputReserve(5));
 
-  // Any tier whose FIRST-CHOICE model is a frontier model, plus any explicit
-  // single model, can settle at a price we can't know up front — reserve
-  // conservatively. balanced[0] = openai/gpt-5.6-terra and coding[0] =
-  // anthropic/claude-opus-5 (see MODEL_TIERS), the same frontier primaries as
-  // reasoning/powerful, and a no-mode chat resolves to "balanced" (see the
-  // routing loop below) — so undefined counts too. Reserving the cheap heuristic
-  // for these let a near-exhausted budget authorize a frontier completion, and
-  // let N concurrent default calls each pass the gate and collectively blow the
-  // cap (the exact TOCTOU that reserveBudget exists to close).
-  const effectiveMode = mode ?? "balanced";
-  if (
-    effectiveMode === "reasoning" ||
-    effectiveMode === "powerful" ||
-    effectiveMode === "balanced" ||
-    effectiveMode === "coding"
-  ) {
-    return frontierReserve;
-  }
-  if (model) return frontierReserve;
+  // Reserve at the REAL rate of what this call can settle at — the named model's
+  // own price, or the most expensive member of the tier it will route through.
+  //
+  // Until 0.40.1 this was two hardcoded constants ($5/M input, 4 chars/token)
+  // for everything "frontier" and ($1/M, $3/M) for everything "cheap". Both were
+  // wrong at both ends of the catalog and always in the same direction: live 402
+  // quotes for a 100k-char prompt showed gpt-5.4-pro short by 9.90x, o1 by 4.93x,
+  // claude-opus-5 — the DEFAULT primary of mode:"powerful" — by 1.65x, and
+  // gemini-3.5-flash (fast[0]) by 2.46x. See CHAT_PRICE_PER_MTOKEN for the table
+  // and the measurements. Until 0.32.3 the input term was missing entirely
+  // (11.4x short); this is the same defect, surviving in the coefficients.
+  //
+  // Over-reserving only tightens the gate and is released immediately after the
+  // call; recordActualSpend() then books the REAL settled cost. Under-reserving
+  // is what lets one approved call blow a cap, so where the two disagree this
+  // rounds toward reserving more (worst tier member, 2 chars/token).
+  const effectiveMode = (mode ?? "balanced") as RoutingMode;
+  const rate = model
+    ? (CHAT_PRICE_PER_MTOKEN[model] ?? DEFAULT_CHAT_PRICE)
+    : (TIER_WORST_PRICE[effectiveMode] ?? DEFAULT_CHAT_PRICE);
 
-  // Only the explicitly-cheap tiers (cheap/fast/glm) pick budget models.
-  return withTxFee(Math.max(0.002, Math.round((out / 1_000_000) * 3 * 1e6) / 1e6) + inputReserve(1));
+  const inTokens = Math.ceil((promptChars ?? 0) / GATEWAY_CHARS_PER_TOKEN);
+  // Rounded to micro-dollars because the raw float drifts — (1024/1e6)*20 is
+  // 0.020479999999999998, which then surfaces verbatim in budget messages.
+  const micro = (usd: number) => Math.round(usd * 1e6) / 1e6;
+  const inputReserve = micro((inTokens / 1_000_000) * rate.input);
+  const outputReserve = micro((out / 1_000_000) * rate.output);
+
+  // Floor: a tiny prompt still costs the flat transaction fee, and a $0 reserve
+  // would make the gate a no-op for it. withTxFee adds the fee on top — the
+  // reserve must cover the CHARGE, not the base (see src/utils/tx-fee.ts).
+  return withTxFee(Math.max(inputReserve + outputReserve, 0.001));
 }
 
 /**
@@ -145,15 +148,31 @@ export function estimateChatCost(
  * which the SDK increments with the REAL on-chain amount per call. Returns the
  * result plus the booked cost so callers can record actual spend, falling back
  * to the estimate when the delta is unavailable (0/NaN).
+ *
+ * A THROW DOES NOT MEAN A REFUND. x402 settles when the gateway answers 200 —
+ * the SDK increments its counter at that moment, before the body is read — and
+ * every paid path here STREAMS, so the call can still fail afterwards: a
+ * mid-stream error event, an idle stall, an empty completion. Until 0.40.1 the
+ * delta was computed only after `run()` resolved, so on that path the USDC left
+ * the wallet, `budget.spent` never moved, and the `finally` released the
+ * reservation — the ledger recorded a free call. `onSettledThrow` is how the
+ * charge still gets booked; it fires only when the delta is real (> 0), so an
+ * ordinary pre-payment failure (400, timeout, refusal) still books nothing.
  */
 async function withSettledCost<T>(
   client: ApiClient,
   run: () => Promise<T>,
+  onSettledThrow?: (settledUsd: number) => void,
 ): Promise<{ result: T; settledUsd: number }> {
   const before = client.getSpending().totalUsd;
-  const result = await run();
-  const settledUsd = client.getSpending().totalUsd - before;
-  return { result, settledUsd };
+  try {
+    const result = await run();
+    return { result, settledUsd: client.getSpending().totalUsd - before };
+  } catch (error) {
+    const settledUsd = client.getSpending().totalUsd - before;
+    if (Number.isFinite(settledUsd) && settledUsd > 0) onSettledThrow?.(settledUsd);
+    throw error;
+  }
 }
 
 export function registerChatTool(server: McpServer, budget: BudgetState): void {
@@ -311,7 +330,7 @@ Run blockrun_models to see all available models with pricing.`,
               stop,
             });
             return r.choices?.[0]?.message?.content || "";
-          });
+          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, targetModel);
           return {
@@ -342,7 +361,7 @@ Run blockrun_models to see all available models with pricing.`,
               responseFormat,
               stop,
             });
-          });
+          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return { content: [{ type: "text", text: `${response}${freeTierTruncationNote(promptChars, model) ?? ""}` }] };
         } catch (error) {
@@ -367,6 +386,8 @@ Run blockrun_models to see all available models with pricing.`,
 
       let lastError: unknown = null;
       let deadlineHit = false;
+      // USDC that already left the wallet on a failed attempt in this loop.
+      let settledOnFailure = 0;
       for (const m of models) {
         // Stop starting NEW attempts once the loop has burned its whole budget —
         // otherwise the bound would be per-model only and would grow with the list.
@@ -393,6 +414,11 @@ Run blockrun_models to see all available models with pricing.`,
               responseFormat,
               stop,
             });
+          }, (usd) => {
+            // Settled, then failed. Book it and remember that this tool call has
+            // already cost the caller money — see the break below.
+            recordActualSpend(budget, usd, estimatedCost, agent_id);
+            settledOnFailure = usd;
           });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, m);
@@ -402,6 +428,14 @@ Run blockrun_models to see all available models with pricing.`,
           };
         } catch (error) {
           lastError = error;
+          // ONE RESERVATION MEANS ONE SETTLEMENT. The fallback loop exists for
+          // models that refuse before taking payment (400, refusal, timeout) —
+          // there, trying the next model costs nothing and is the whole point.
+          // But a model that settled and THEN failed has already charged the
+          // caller, and continuing would settle a second payment for the same
+          // tool call under the same reserved amount, unbounded by the gate.
+          // Free models settle $0, so mode:"free" still falls through as designed.
+          if (settledOnFailure > 0) break;
           continue;
         }
       }
@@ -411,9 +445,14 @@ Run blockrun_models to see all available models with pricing.`,
       // last-error would have blamed whichever model happened to be slowest.
       const errorMessage = deadlineHit
         ? `The free tier did not answer within ${Math.round(FREE_TIER_DEADLINE_MS / 1000)}s. Free NVIDIA capacity is usually saturated when this happens — retry shortly, or pass an explicit model (or a paid mode) to skip the free tier.`
-        : lastError
-          ? extractErrorMessage(lastError)
-          : "All models failed";
+        : settledOnFailure > 0
+          // Say it plainly: the payment settled before the failure, so the
+          // charge stands and no fallback was attempted. An agent that reads
+          // "failed" as "free" would retry in a loop and pay each time.
+          ? `${extractErrorMessage(lastError)}\n\nNote: payment had already settled when this failed, so the charge stands ($${settledOnFailure.toFixed(6)}) and it has been recorded against your budget. No fallback model was tried — retrying will incur a second charge.`
+          : lastError
+            ? extractErrorMessage(lastError)
+            : "All models failed";
       return {
         content: [{ type: "text", text: formatError(errorMessage) }],
         isError: true,

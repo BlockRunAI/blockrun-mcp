@@ -213,6 +213,46 @@ const PROBES: Probe[] = [
       allowOver: true,
     };
   })),
+
+  // ONE ROW PER TIER, probed at that tier's most expensive MEMBER — the model
+  // the routing loop can fall through to and settle at.
+  //
+  // This script probed only `balanced`/gpt-5.6-terra for four releases, which is
+  // precisely why nothing caught the reserve going 9.9x short on gpt-5.4-pro
+  // (mode:"powerful") or 2.46x on gemini-3.5-flash (mode:"fast", after 0.40.0
+  // recorded its 3x reprice without moving the estimator). A tier whose primary
+  // is cheap can still settle expensive; a tier table and a price table that
+  // drift apart are invisible until an invoice says otherwise.
+  ...([
+    ["powerful", "openai/gpt-5.4-pro"],
+    ["reasoning", "openai/gpt-5.6-sol"],
+    ["coding", "anthropic/claude-opus-5"],
+    ["fast", "google/gemini-3.5-flash"],
+    ["glm", "zai/glm-5.2"],
+    ["cheap", "deepseek/deepseek-v4-pro"],
+  ] as Array<[string, string]>).map(([mode, worstMember]) => {
+    const message = "word ".repeat(20_000); // 100k chars
+    return {
+      label: `chat ${mode} 100k (${worstMember.split("/")[1]})`,
+      path: "chat/completions",
+      body: { model: worstMember, messages: [{ role: "user", content: message }], max_tokens: 1024 },
+      expected: estimateChatCost(1024, mode, undefined, undefined, promptCharSize(message)),
+      allowOver: true,
+    };
+  }),
+
+  // The five models priced ABOVE the $5/$30 default an unknown model falls back
+  // to. Reachable as an explicit `model`, where no tier bound applies at all.
+  ...(["openai/gpt-5.5-pro", "openai/gpt-5.2-pro", "openai/o1", "anthropic/claude-fable-5"].map((model) => {
+    const message = "word ".repeat(20_000);
+    return {
+      label: `chat explicit ${model.split("/")[1]} 100k`,
+      path: "chat/completions",
+      body: { model, messages: [{ role: "user", content: message }], max_tokens: 1024 },
+      expected: estimateChatCost(1024, undefined, model, undefined, promptCharSize(message)),
+      allowOver: true,
+    };
+  })),
 ];
 
 const EPSILON = 1e-9;
@@ -221,7 +261,14 @@ let over = 0;
 let unreachable = 0;
 // Cross-chain accounting, kept separate from the estimator verdict above: these
 // say the two GATEWAYS disagree, not that a local estimator is wrong.
-let solShort = 0; // Solana charges MORE than we reserve -> release blocker
+// TWO different questions, kept apart because they come apart on any probe with
+// allowOver. Conflating them made the sweep cry wolf: after the chat estimators
+// were rebuilt on real per-model rates (0.40.1) they reserve well above BOTH
+// chains, yet 11 chat rows still tripped the blocker purely for being dearer on
+// Solana than on Base — a pricing-policy fact, not a budget-safety one. A gate
+// that fails on something safe is a gate people learn to ignore.
+let solShort = 0; // reserve < what SOLANA charges -> genuine under-reserve, blocker
+let solDearer = 0; // Solana dearer than Base but still covered -> policy note only
 let solCheaper = 0; // Solana charges LESS than Base -> safe, but the docs quote one number
 let solMissing = 0; // route not served on Solana at all
 const solNotes: string[] = [];
@@ -245,11 +292,20 @@ for (const probe of PROBES) {
   } else if (typeof live === "number") {
     const chainDelta = solLive - live;
     if (chainDelta > EPSILON) {
-      // Solana dearer than Base. Every estimator is built off Base, so this is
-      // an under-reserve for anyone on Solana — same severity as `✗`.
-      solShort++;
-      solTag = `  [sol: $${solLive.toFixed(6)} DEARER by $${chainDelta.toFixed(6)}]`;
-      solNotes.push(`${probe.label}: Solana charges $${solLive.toFixed(6)} vs Base $${live.toFixed(6)}`);
+      // Solana dearer than Base. Severity depends on whether OUR RESERVE still
+      // covers the Solana charge — an agent can switch chains mid-session while
+      // every estimator is built off Base, so the reserve is the thing that has
+      // to hold. Uncovered is a release blocker; covered is a note for the
+      // pricing owner (see the policy paragraph printed below).
+      if (solLive - probe.expected > EPSILON) {
+        solShort++;
+        solTag = `  [sol: $${solLive.toFixed(6)} DEARER by $${chainDelta.toFixed(6)} — RESERVE $${probe.expected.toFixed(6)} DOES NOT COVER IT]`;
+        solNotes.push(`BLOCKER ${probe.label}: Solana charges $${solLive.toFixed(6)} but we reserve only $${probe.expected.toFixed(6)}`);
+      } else {
+        solDearer++;
+        solTag = `  [sol: $${solLive.toFixed(6)} dearer by $${chainDelta.toFixed(6)}, covered by the reserve]`;
+        solNotes.push(`${probe.label}: Solana charges $${solLive.toFixed(6)} vs Base $${live.toFixed(6)} (reserve $${probe.expected.toFixed(6)} covers it)`);
+      }
     } else if (chainDelta < -EPSILON) {
       solCheaper++;
       solTag = `  [sol: $${solLive.toFixed(6)}, -$${(-chainDelta).toFixed(6)}]`;
@@ -288,7 +344,7 @@ console.log(
 if (unreachable) console.log("Unreachable routes were NOT verified — treat them as unknown, not as passing.");
 
 console.log(
-  `Solana: ${solShort} dearer than Base, ${solCheaper} cheaper, ${solMissing} not served`,
+  `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served`,
 );
 if (solCheaper) {
   console.log(

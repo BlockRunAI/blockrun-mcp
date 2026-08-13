@@ -26,27 +26,77 @@ test("estimateChatCost keeps genuinely-free paths at $0", () => {
   assert.equal(estimateChatCost(1024, undefined, "nvidia/gpt-oss-120b"), 0);
 });
 
-// ── balanced/coding tiers have FRONTIER primaries (gpt-5.6-terra / claude-opus-5),
-//    so the gate must reserve the frontier worst-case — not the cheap heuristic ──
-test("estimateChatCost reserves the frontier worst-case for balanced/coding (their primary is a frontier model)", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined);
-  assert.equal(estimateChatCost(1024, "balanced", undefined), frontier);
-  assert.equal(estimateChatCost(1024, "coding", undefined), frontier);
-});
+// ── Every reserve must cover what the gateway actually charges ──
+//
+// These used to assert that balanced, coding and reasoning reserved the SAME
+// amount — true only because all three shared one flat $5/M-input constant. They
+// no longer do, and the equality was hiding the bug: that constant was up to
+// 9.9x short at the top of the catalog (openai/gpt-5.4-pro charges $1.460020 on
+// a 100k-char prompt against the old $0.147480 reserve) while the cheap tiers'
+// $1/M constant was 2.46x short on fast[0] after gemini-3.5-flash tripled in
+// price. Each tier is now reserved against its own most expensive MEMBER — the
+// loop can fall through to any of them — so coding ($5/$25) legitimately
+// reserves less than balanced ($5/$30).
+//
+// Amounts below are live unpaid 402 quotes, 2026-08-13, 100k-char prompt,
+// max_tokens 1024. Re-probe with `npm run verify:prices` (which now carries one
+// row per tier) rather than adjusting them to match a failing build.
+const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> = [
+  // [mode, model, charged]
+  [undefined, "openai/gpt-5.4-pro", 1.460020],
+  [undefined, "openai/gpt-5.5-pro", 1.460020],
+  [undefined, "openai/gpt-5.2-pro", 1.026640],
+  [undefined, "openai/o1", 0.727420],
+  [undefined, "anthropic/claude-fable-5", 0.486310],
+  [undefined, "openai/gpt-5.6-sol", 0.244171],
+  [undefined, "anthropic/claude-opus-5", 0.243655],
+  [undefined, "openai/gpt-5.6-terra", 0.098269],
+  [undefined, "google/gemini-3.5-flash", 0.073951],
+  [undefined, "zai/glm-5", 0.049346],
+  [undefined, "deepseek/deepseek-v4-pro", 0.021977],
+  // Tier routing: the charge is that of the member the loop settles on, so each
+  // tier is pinned against its most expensive member's live quote.
+  ["powerful", undefined, 1.460020],   // gpt-5.4-pro
+  ["balanced", undefined, 0.244171],   // gpt-5.5
+  ["reasoning", undefined, 0.243655],  // gpt-5.6-sol / opus-5
+  ["coding", undefined, 0.243655],     // claude-opus-5
+  ["fast", undefined, 0.073951],       // gemini-3.5-flash
+  ["glm", undefined, 0.049346],        // glm-5.x
+  ["cheap", undefined, 0.021977],      // deepseek-v4-pro
+];
 
-test("estimateChatCost reserves the frontier worst-case for a no-mode chat (defaults to the balanced tier → gpt-5.6-terra)", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined);
-  assert.equal(estimateChatCost(1024, undefined, undefined), frontier);
-});
-
-test("estimateChatCost keeps the explicitly-cheap tiers on the budget-model heuristic", () => {
-  const frontier = estimateChatCost(1024, "reasoning", undefined);
-  for (const mode of ["cheap", "fast", "glm"]) {
+test("estimateChatCost never reserves less than the gateway charges (live 402, 2026-08-13)", () => {
+  for (const [mode, model, charged] of LIVE_CHARGE_100K) {
+    const reserved = estimateChatCost(1024, mode, model, undefined, 100_000);
     assert.ok(
-      estimateChatCost(1024, mode, undefined) < frontier,
-      `${mode} should stay on the cheap heuristic, not the frontier reserve`,
+      reserved >= charged,
+      `${mode ?? "no-mode"}/${model ?? "tier"}: reserved ${reserved} < charged ${charged}`,
+    );
+    // ...and not by an absurd margin, or a stale rate hides behind the cushion
+    // and small budgets get locked out of calls they could afford.
+    assert.ok(
+      reserved <= charged * 2,
+      `${mode ?? "no-mode"}/${model ?? "tier"}: reserved ${reserved} is over 2x the ${charged} charge`,
     );
   }
+});
+
+test("estimateChatCost keeps the cheap tiers cheaper than the frontier ones", () => {
+  const frontier = estimateChatCost(1024, "reasoning", undefined, undefined, 100_000);
+  for (const mode of ["cheap", "fast", "glm"]) {
+    assert.ok(
+      estimateChatCost(1024, mode, undefined, undefined, 100_000) < frontier,
+      `${mode} must stay below the frontier reserve or small budgets lose the cheap path`,
+    );
+  }
+});
+
+test("estimateChatCost prices an unknown model at the catalog ceiling, not a guess", () => {
+  // A model added upstream between releases has no table entry. $5/$30 covers
+  // everything in the catalog except the five pro-tier ids, which ARE listed.
+  const unknown = estimateChatCost(1024, undefined, "someone/brand-new-model", undefined, 100_000);
+  assert.equal(unknown, estimateChatCost(1024, undefined, "openai/gpt-5.6-sol", undefined, 100_000));
+  assert.ok(unknown >= 0.244171);
 });
 
 // ── #10: JSON mode must reach the native Anthropic path ──
