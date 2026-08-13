@@ -85,3 +85,28 @@ test("estimateModalCost treats a missing/garbage timeout as the 300s default (fl
     );
   }
 });
+
+// The classifier must price the route the URL parser will SEND, not the string
+// the caller typed. `path.includes("sandbox/create")` compared the raw slug, so
+// one invisible character moved a $192.00 non-refundable create into the $0.003
+// operation tier — and reserveBudget then admitted it against ANY cap, since
+// $0.003 clears a $1.00 global limit and a $0.05 agent delegation alike.
+// Verified against the real parser: new URL(base + "sandbox/cre\tate").pathname
+// === "/api/v1/modal/sandbox/create".
+test("estimateModalCost prices tab/LF/CR-obfuscated sandbox/create as a create, not a $0.003 op", () => {
+  const BASE = "https://blockrun.ai/api/v1/modal/";
+  for (const raw of ["sandbox/cre\tate", "sandbox/cr\neate", "sandbox\r/create"]) {
+    assert.equal(new URL(BASE + raw).pathname, "/api/v1/modal/sandbox/create", raw);
+    assert.equal(estimateModalCost(raw, { timeout: 86400, gpu: "H100" }), 192.002, raw);
+  }
+});
+
+test("estimateModalCost decodes percent-escapes, which the gateway router resolves", () => {
+  // fetch() forwards %63 untouched; the gateway decodes it when routing, so
+  // this reaches the same create handler.
+  assert.equal(estimateModalCost("sandbox/%63reate", { timeout: 86400, gpu: "H100" }), 192.002);
+  assert.equal(estimateModalCost("modal/sandbox/create/", { timeout: 86400, gpu: "H100" }), 192.002);
+  assert.equal(estimateModalCost("SANDBOX/CREATE", { timeout: 86400, gpu: "H100" }), 192.002);
+  // One decode only — %2563reate is not %63reate is not create.
+  assert.equal(estimateModalCost("sandbox/%2563reate", { timeout: 86400, gpu: "H100" }), 0.003);
+});

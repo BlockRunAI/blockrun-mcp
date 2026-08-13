@@ -12,6 +12,7 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { buildClientWithTimeout, getChain } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { normalizeClassifyPath } from "../utils/path-safety.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
@@ -60,7 +61,16 @@ const MODAL_GPU_HOURLY_PRICE_USD = new Map<string, number>([
 
 /** Exported for tests. Returns what x402 will CHARGE (base + the flat tx fee). */
 export function estimateModalCost(path: string, body?: unknown): number {
-  if (!path.includes("sandbox/create")) return withTxFee(MODAL_OPERATION_PRICE_USD);
+  // Classify the route the gateway will SERVE, not the string the caller typed.
+  // A raw `path.includes("sandbox/create")` compared the un-normalized slug, so
+  // a single invisible character moved the most expensive call this server can
+  // make into the cheapest tier: `sandbox/cre<TAB>ate` reserved $0.003 (fetch
+  // deletes the tab, so the gateway still routed and billed a real create — up
+  // to $192.00, non-refundable), and $0.003 clears every budget cap there is.
+  // `%63reate` did the same via the router's own percent-decode. This is the
+  // shared helper `hasPathTraversal` has always used; modal was the one price
+  // table that never adopted it. See test/modal-cost.test.ts.
+  if (!normalizeClassifyPath(path).includes("sandbox/create")) return withTxFee(MODAL_OPERATION_PRICE_USD);
 
   const o = body && typeof body === "object" ? (body as { gpu?: unknown; timeout?: unknown }) : {};
   const gpu = typeof o.gpu === "string" ? o.gpu : undefined;

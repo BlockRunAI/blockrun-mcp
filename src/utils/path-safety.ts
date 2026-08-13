@@ -46,19 +46,46 @@ export function hasPathTraversal(path: string): boolean {
 
 /**
  * Normalize a caller-supplied passthrough slug for TIER CLASSIFICATION only (not
- * for the endpoint actually sent): drop a query string / fragment, strip
- * leading + trailing slashes, and lowercase. The per-endpoint price tables key
- * on the bare route, but the gateway router ignores a trailing `?query`, a
- * trailing slash, or casing when matching — so classifying the raw slug lets an
- * expensive route (e.g. the $5 `phone/numbers/buy`, or a $0.02 surf tier) be
- * mispriced as the cheap default while the gateway still charges full price,
- * defeating the budget pre-check and under-recording spend. Callers still send
- * the original slug, so a legitimate query string (e.g. surf GET params in the
- * path) is preserved.
+ * for the endpoint actually sent): drop a query string / fragment, decode once,
+ * delete tab/LF/CR, strip leading + trailing slashes, and lowercase. The
+ * per-endpoint price tables key on the bare route, but the gateway router
+ * ignores a trailing `?query`, a trailing slash, or casing when matching — so
+ * classifying the raw slug lets an expensive route (e.g. the $5
+ * `phone/numbers/buy`, or a $0.02 surf tier) be mispriced as the cheap default
+ * while the gateway still charges full price, defeating the budget pre-check and
+ * under-recording spend. Callers still send the original slug, so a legitimate
+ * query string (e.g. surf GET params in the path) is preserved.
+ *
+ * CLASSIFY THE ROUTE THAT WILL BE SERVED, NOT THE STRING THE CALLER TYPED. Two
+ * transformations sit between them, and this helper shipped doing neither while
+ * its sibling `hasPathTraversal` above has done both since 0.33 — the same
+ * asymmetry, twice, each independently exploitable (probed live 2026-08-13 with
+ * unpaid 402s; both quote 5001000 micro = $5.001 against a $0.012 reserve, a
+ * 417x under-reserve that admits the call against ANY budget cap):
+ *
+ *   1. fetch() DELETES tab/LF/CR before sending, so `phone/numbers/b<TAB>uy`
+ *      leaves this process as `phone/numbers/buy`.
+ *   2. The gateway DECODES percent-escapes when routing, so
+ *      `phone/numbers/%62uy` is served by the `buy` handler. (fetch leaves the
+ *      escape intact, so unlike case 1 this one is decoded on the far side.)
+ *
+ * Decode ONCE, matching the parser and hasPathTraversal — `%2562uy` decodes to
+ * `%62uy`, which is not a route, so it must not classify as one. A malformed `%`
+ * falls back to the raw string rather than throwing.
+ *
+ * Direction of error, when the two sides disagree: over-classification (pricing
+ * a 404 as the expensive route) merely over-reserves, which the gate tolerates
+ * and `recordActualSpend` corrects; under-classification is the bug. So the
+ * query string is dropped from the RAW slug BEFORE decoding — otherwise an
+ * encoded `?` inside a segment (`phone/lookup%3Ffoo`) would truncate the path
+ * to a real, cheaper route that the gateway would never serve.
  */
 export function normalizeClassifyPath(path: string): string {
-  return path
-    .replace(/[?#].*$/, "")   // drop query string / fragment
+  const withoutQuery = path.replace(/[?#].*$/, "");
+  let decoded = withoutQuery;
+  try { decoded = decodeURIComponent(withoutQuery); } catch { /* malformed %: classify raw */ }
+  return decoded
+    .replace(/[\t\n\r]/g, "")  // the URL parser deletes these before sending
     .replace(/^\/+/, "")       // drop leading slashes
     .replace(/\/+$/, "")       // drop trailing slashes
     .toLowerCase();

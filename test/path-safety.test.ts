@@ -96,3 +96,47 @@ test("isValidNetworkSlug rejects traversal / path separators / empties", () => {
   assert.equal(isValidNetworkSlug(""), false);
   assert.equal(isValidNetworkSlug("eth.mainnet"), false);
 });
+
+// The tier tables that price a passthrough call are keyed on the route the
+// gateway will ACTUALLY serve — so normalizeClassifyPath has to reproduce the
+// two transformations that happen between the caller's string and that route.
+// hasPathTraversal above has done both since 0.33; its sibling did neither,
+// and both gaps were live and independently exploitable:
+//
+//   blockrun_phone({ path: "phone/numbers/b\tuy" })   -> fetch strips the tab
+//   blockrun_phone({ path: "phone/numbers/%62uy" })   -> the gateway decodes it
+//
+// Both land on /api/v1/phone/numbers/buy and quote 5001000 micro-USDC (probed
+// live 2026-08-13, unpaid 402), while the classifier matched neither `path ===`
+// branch and fell through to PHONE_UNKNOWN_RESERVE_USD = $0.012 — a 417x
+// under-reserve that admits the call against any budget cap.
+test("normalizeClassifyPath strips tab/LF/CR, which the URL parser deletes before sending", () => {
+  const BASE = "https://blockrun.ai/api/v1/";
+  for (const raw of ["phone/numbers/b\tuy", "phone/numbers/bu\ny", "phone/numbers/\rbuy"]) {
+    // Assert against the REAL parser first — a guard test for a shape the
+    // parser does not actually normalize would prove nothing.
+    assert.equal(new URL(BASE + raw).pathname, "/api/v1/phone/numbers/buy", raw);
+    assert.equal(normalizeClassifyPath(raw), "phone/numbers/buy", raw);
+  }
+});
+
+test("normalizeClassifyPath decodes once, as the gateway router does", () => {
+  // Percent-encoding survives fetch() untouched (unlike the tab), so this one
+  // is decoded server-side: /api/v1/phone/numbers/%62uy really does route to
+  // the $5 buy handler.
+  assert.equal(new URL("https://blockrun.ai/api/v1/phone/numbers/%62uy").pathname, "/api/v1/phone/numbers/%62uy");
+  assert.equal(normalizeClassifyPath("phone/numbers/%62uy"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("phone/numbers/%42%55%59"), "phone/numbers/buy");
+  // ONE decode, matching the parser — %2562uy is not %62uy is not buy, and the
+  // gateway does not double-decode either, so it must not classify as buy.
+  assert.notEqual(normalizeClassifyPath("phone/numbers/%2562uy"), "phone/numbers/buy");
+  // A malformed % must not throw — fall back to the raw string.
+  assert.equal(normalizeClassifyPath("phone/lookup%zz"), "phone/lookup%zz");
+});
+
+test("normalizeClassifyPath keeps the query string off the classified route", () => {
+  // Order matters: the query is dropped from the RAW string before decoding, so
+  // an encoded `?` inside a segment cannot truncate the path to a cheaper tier.
+  assert.equal(normalizeClassifyPath("phone/numbers/%62uy?x=1"), "phone/numbers/buy");
+  assert.notEqual(normalizeClassifyPath("phone/lookup%3Ffoo"), "phone/lookup");
+});

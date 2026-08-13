@@ -35,19 +35,21 @@ const GAMMA_ONLY_MARKET_PARAMS = new Set([
  * Every rule below matched a bare, exactly-cased slug, which meant
  * `markets/listings?venue=polymarket`, `Markets/Listings`, `markets//listings`,
  * and a trailing tab all sailed past and settled a payment for the very failure
- * the rule exists to prevent. `normalizeClassifyPath` already drops the query
- * string / fragment, strips outer slashes, and lowercases — the same hazard its
- * own doc comment describes for the price tables. Two more are needed here:
- * control characters (the URL parser deletes tab/CR/LF, so `..<TAB>` reaches
- * the gateway as `..`, which is why `hasPathTraversal` strips them too) and
- * interior slash runs, which the router collapses and the helper does not.
+ * the rule exists to prevent. `normalizeClassifyPath` now does all of it — query
+ * string / fragment, a single percent-decode, tab/CR/LF deletion, outer slashes,
+ * lowercase — so the tab strip that used to sit here is gone; it was a local
+ * patch for a gap that belonged in the shared helper (and that the price tables
+ * were left exposed to for two releases as a result).
  *
- * NOTE: the price-classification path shares the un-collapsed helper, so a
- * doubled interior slash can still mis-classify an expensive route as cheap
- * there. Out of scope for this fix; worth its own change.
+ * Interior slash runs are collapsed here and ONLY here, as belt-and-braces for
+ * rule matching. The note that used to live here — that the price path was
+ * exposed to a doubled interior slash — was wrong: probed live 2026-08-13,
+ * `phone//numbers/buy`, `phone/numbers//buy` and `//phone/numbers/buy` all 404
+ * rather than routing, so the gateway does NOT collapse them and there is no
+ * cheap-classification to escape into.
  */
 function normalizeMarketPath(rawPath: string): string {
-  return normalizeClassifyPath(rawPath.replace(/[\t\n\r]/g, "")).replace(/\/{2,}/g, "/");
+  return normalizeClassifyPath(rawPath).replace(/\/{2,}/g, "/");
 }
 
 function numberParam(params: Record<string, string>, key: string): number | undefined {
