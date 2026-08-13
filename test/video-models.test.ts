@@ -104,7 +104,9 @@ async function reservedFor(args: Record<string, unknown>) {
 // the gateway's current 0.001 fee — an over-reserve, the safe direction, and the
 // subject of a separate sweep. Assert we never fall BELOW the live charge.
 const LIVE_CHARGE: Array<[string, number | undefined, string | undefined, number]> = [
-  ["xai/grok-imagine-video", undefined, undefined, 0.421001],
+  // grok lost its 5% margin between 08-07 and 08-13: 0.05 x 8 + 0.001 = $0.401
+  // exactly, where the margin would give $0.421001. Sora below still carries it.
+  ["xai/grok-imagine-video", undefined, undefined, 0.401],
   ["azure/sora-2", undefined, undefined, 0.421001],
   ["bytedance/seedance-1.5-pro", undefined, undefined, 0.354916],
   ["bytedance/seedance-1.5-pro", 12, undefined, 0.850398],
@@ -273,18 +275,19 @@ test("every schema-listed (model, resolution) pair is ACCEPTED — the whole tab
   }
 });
 
-test("resolution is ignored, not rejected, on the per-second models", async () => {
-  // The schema promises "Ignored by xAI/Sora". Forwarding it earned a gateway
-  // 400, and an earlier version of this guard rejected 4K on sora with a message
-  // claiming it was "billed for 4K but downscales" — false for a per-second model.
-  for (const m of ["azure/sora-2", "xai/grok-imagine-video"]) {
-    const { text } = await reservedFor({ prompt: "a cube", model: m, resolution: "4K" });
-    assert.doesNotMatch(text, /4K/, `${m} must ignore resolution, not reject it`);
-    // "Ignored" has to mean not sent: forwarding it earned a gateway 400, so
-    // asserting only that we did not reject it would miss the actual bug.
-    const body = await bodySentFor({ prompt: "a cube", model: m, resolution: "4K", duration_seconds: 4 });
-    assert.ok(!("resolution" in body), `${m} must not forward resolution: ${JSON.stringify(body)}`);
-  }
+test("only SORA ignores resolution now — grok validates it, Seedance gets it", async () => {
+  // This test used to cover both per-second models together, because both
+  // ignored the parameter. Grok no longer does: it renders and prices 480p vs
+  // 720p, and REJECTS 1080p/4K upstream (no 402 at all on a live probe), so
+  // "ignore it" would mean paying for a round trip that cannot succeed. Sora is
+  // the only one left that truly ignores it — probed 2026-08-13, sora with
+  // resolution:"720p" quotes the same $0.421001 as the default.
+  const { text } = await reservedFor({ prompt: "a cube", model: "azure/sora-2", resolution: "4K" });
+  assert.doesNotMatch(text, /4K/, "sora must ignore resolution, not reject it");
+  // "Ignored" has to mean not sent: forwarding it earned a gateway 400, so
+  // asserting only that we did not reject it would miss the actual bug.
+  const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "4K", duration_seconds: 4 });
+  assert.ok(!("resolution" in sora), `sora must not forward resolution: ${JSON.stringify(sora)}`);
   // ...and Seedance still gets it.
   const seedance = await bodySentFor({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "1080p" });
   assert.equal(seedance.resolution, "1080p");
@@ -339,4 +342,56 @@ test("sora-2 pins its 4/8/12 allowlist — refused off it, accepted on it", asyn
     const { text } = await reservedFor({ prompt: "a cube", model: "azure/sora-2", duration_seconds: s });
     assert.doesNotMatch(text, /accepts duration_seconds of exactly/, `${s}s must be accepted`);
   }
+});
+
+// ── xai/grok-imagine-video honours `resolution`, and is NOT margin-priced ──
+//
+// The schema accepted resolution for every model but the handler forwarded it
+// only for Seedance, so a caller asking grok for 720p silently got 480p and was
+// billed for 480p, while both the enum and the returned text implied otherwise.
+// Live unpaid 402 probes, 2026-08-13:
+//
+//   grok default (no resolution)  8s  -> 401000 micro   ($0.05/s)
+//   grok 480p                     8s  -> 401000
+//   grok 720p                     8s  -> 561000         ($0.07/s)
+//   grok 480p                    15s  -> 751000
+//   grok 720p                    15s  -> 1051000
+//   grok 1080p / 4K                   -> no 402 (rejected upstream)
+//
+// Those numbers also show grok carries NO margin any more: 0.05 x 15 + 0.001 =
+// $0.751 exactly, where VIDEO_MARGIN would make it $0.7885. Sora still does
+// (0.10 x 4 x 1.05 + 0.001 = $0.421001, its pinned row above), so the two
+// per-second models no longer share a formula. Forwarding resolution WITHOUT
+// this rate split would have under-reserved 720p by 1.33x.
+const GROK_LIVE: Array<[number | undefined, string | undefined, number]> = [
+  [undefined, undefined, 0.401],
+  [undefined, "480p", 0.401],
+  [undefined, "720p", 0.561],
+  [15, "480p", 0.751],
+  [15, "720p", 1.051],
+  [1, "720p", 0.071001],
+];
+
+test("estimateVideoCost covers grok at both resolutions without over-reserving", () => {
+  for (const [seconds, resolution, charged] of GROK_LIVE) {
+    const reserved = estimateVideoCost("xai/grok-imagine-video", seconds, resolution);
+    assert.ok(reserved >= charged, `grok ${seconds ?? "default"}s ${resolution ?? "default"}: ${reserved} < ${charged}`);
+    assert.ok(reserved <= charged + 0.003, `grok ${seconds ?? "default"}s ${resolution ?? "default"}: ${reserved} too far above ${charged}`);
+  }
+});
+
+test("grok refuses the resolutions the gateway rejects, before paying", async () => {
+  for (const resolution of ["1080p", "4K"]) {
+    const text = await errorText({ prompt: "a cube", model: "xai/grok-imagine-video", resolution });
+    assert.match(text, /does not render/, resolution);
+  }
+});
+
+test("grok's resolution reaches the request body — the whole point of accepting it", async () => {
+  const body = await bodySentFor({ prompt: "a cube", model: "xai/grok-imagine-video", resolution: "720p" });
+  assert.equal(body.resolution, "720p");
+  // Sora genuinely ignores it (probed: 720p quotes the same $0.421001 as the
+  // default), so it must still be dropped rather than forwarded.
+  const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "720p" });
+  assert.equal(sora.resolution, undefined);
 });

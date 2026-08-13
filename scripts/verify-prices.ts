@@ -151,6 +151,8 @@ const PROBES: Probe[] = [
   // so a table that only knows 720p is 9x short on the most expensive call here.
   ...([
     ["xai/grok-imagine-video", undefined, undefined],
+    ["xai/grok-imagine-video", undefined, "720p"],
+    ["xai/grok-imagine-video", 15, "720p"],
     ["azure/sora-2", undefined, undefined],
     ["bytedance/seedance-1.5-pro", undefined, undefined],
     ["bytedance/seedance-1.5-pro", 12, undefined],

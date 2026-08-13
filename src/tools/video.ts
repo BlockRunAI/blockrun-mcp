@@ -53,9 +53,30 @@ const SEEDANCE_PRICE_PER_MTOKENS: Record<string, number> = {
   "bytedance/seedance-2.0": 9.9715,
   "bytedance/seedance-2.5": 13.8565,
 };
+// Sora: duration x rate x margin. Grok is NOT in this table — it stopped
+// carrying the margin (see GROK_PRICE_PER_SECOND) and it now prices per
+// resolution, so it no longer shares a formula with Sora.
 const VIDEO_BASE_PRICE_PER_SECOND: Record<string, number> = {
-  "xai/grok-imagine-video": 0.05,
   "azure/sora-2": 0.10,
+};
+
+// xai/grok-imagine-video, probed live 2026-08-13 (unpaid 402s):
+//
+//   480p (the default)  8s -> $0.401   15s -> $0.751
+//   720p                8s -> $0.561   15s -> $1.051
+//   1080p / 4K             -> rejected upstream, no quote
+//
+// Two things changed under us. Grok now HONOURS `resolution` and prices it
+// (this client dropped the parameter for every per-second model, so a caller
+// asking for 720p silently got 480p), and it no longer carries VIDEO_MARGIN:
+// 0.05 x 15 + 0.001 = $0.751 to the micro, where the margin would make it
+// $0.7885. Forwarding the parameter without splitting the rate would have
+// under-reserved 720p by 1.33x — the parameter and the price had to move
+// together, which is why this is one change and not two.
+const GROK_VIDEO_MODEL = "xai/grok-imagine-video";
+const GROK_PRICE_PER_SECOND: Record<string, number> = {
+  "480p": 0.05,
+  "720p": 0.07,
 };
 
 // Token cost scales with output resolution; 21,690 tok/sec is the 720p figure.
@@ -165,6 +186,19 @@ export const SEEDANCE_RESOLUTIONS: Record<string, { resolutions: Set<string>; no
 };
 
 /**
+ * Grok's own supported set, kept in the same shape as SEEDANCE_RESOLUTIONS so the
+ * handler's ceiling check works for both. 1080p and 4K are refused here because
+ * the gateway refuses them too (no 402 at all on a live probe) — better an
+ * immediate, specific message than a round trip that returns nothing useful.
+ */
+const GROK_RESOLUTIONS: Record<string, { resolutions: Set<string>; note: string }> = {
+  [GROK_VIDEO_MODEL]: {
+    resolutions: new Set(["480p", "720p"]),
+    note: "grok-imagine-video renders 480p (default, ~$0.05/sec) or 720p (~$0.07/sec) — for 1080p or 4K use a Seedance model",
+  },
+};
+
+/**
  * What the budget gate reserves for one video job — the CHARGE, not the base.
  *
  * Exported so `npm run verify:prices` can probe it against the live 402: video
@@ -196,6 +230,16 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
     return withTxFee((tokens * SEEDANCE_PRICE_PER_MTOKENS[model] / 1_000_000) * VIDEO_MARGIN);
   }
 
+  if (model === GROK_VIDEO_MODEL) {
+    // Defaults to 480p — the tier the gateway renders when no resolution is
+    // sent, confirmed by the default quote matching the explicit 480p one.
+    const res = resolution ?? "480p";
+    if (!Object.hasOwn(GROK_PRICE_PER_SECOND, res)) {
+      throw new Error(`grok-imagine-video does not render "${res}" — refusing to reserve at the 480p rate.`);
+    }
+    return withTxFee(GROK_PRICE_PER_SECOND[res] * seconds); // no margin, see above
+  }
+
   if (!Object.hasOwn(VIDEO_BASE_PRICE_PER_SECOND, model)) {
     throw new Error(`No price for video model "${model}" — refusing to reserve a guessed rate.`);
   }
@@ -212,7 +256,7 @@ Turns a text prompt (and optional seed image) into a short MP4 clip. The tool su
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
 - azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
-- xai/grok-imagine-video (~$0.053/sec, 8s default -> ~$0.42/clip, 1-15s) — stylized, fast
+- xai/grok-imagine-video ($0.05/sec at 480p default, $0.07/sec at 720p; 8s default -> $0.401/clip, 1-15s) — stylized, fast. 480p/720p only.
 - bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace and first/last-frame
 - bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
@@ -231,7 +275,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast / 2.0-mini only (NOT 2.5). Mutually exclusive with image_url."),
         duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance, 4s Sora). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast / 2.0-mini 4-15s · seedance-2.5 4-30s · sora-2 exactly 4, 8 or 12 · grok-imagine-video 1-15s."),
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
-        resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Seedance only: output resolution. Defaults to 720p. Higher resolutions cost more (token-priced upstream, ~2.25x at 1080p and ~9x at 4K). Per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. Ignored by xAI/Sora (dropped from the request)."),
+        resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Output resolution. Seedance defaults to 720p and is token-priced (~2.25x at 1080p, ~9x at 4K); per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. grok-imagine-video honours 480p (default, $0.05/sec) and 720p ($0.07/sec) and rejects anything higher. Ignored by Sora only (dropped from the request)."),
         aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora uses it only to pick portrait vs landscape (9:16 / 3:4 -> portrait); Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini only (NOT 2.5): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
@@ -317,12 +361,13 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
-        // Resolution ceilings, per model. Only Seedance
-        // is checked: Sora and Grok bill per second and ignore the parameter,
-        // which is what the schema promises — so for them it is DROPPED from the
-        // body below rather than rejected. (Forwarding it earned a gateway 400,
-        // which is the opposite of "ignored".)
-        const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel];
+        // Resolution ceilings, per model. Seedance and Grok both honour the
+        // parameter and are checked against their own supported sets; only Sora
+        // truly ignores it (probed: `resolution:"720p"` quotes the same
+        // $0.421001 as the default), so for Sora alone it is DROPPED from the
+        // body below rather than rejected — forwarding it there earns a gateway
+        // 400, which is the opposite of "ignored".
+        const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel] ?? GROK_RESOLUTIONS[selectedModel];
         if (resolution && seedanceRes && !seedanceRes.resolutions.has(resolution)) {
           return {
             content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}. ${seedanceRes.note}. Supported: ${[...seedanceRes.resolutions].join(", ")}.`) }],
@@ -370,9 +415,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
         if (generate_audio !== undefined) body.generate_audio = generate_audio;
-        // Seedance-only, as documented. Sora/Grok bill per second, and the
-        // gateway 400s a resolution it was sent for them — so honour "ignored"
-        // by not sending it, instead of failing a call over a no-op parameter.
+        // Sent for every model that has a resolution table (Seedance + Grok).
+        // Sora has none, and the gateway 400s a resolution it was sent there —
+        // so honour "ignored" by not sending it, instead of failing a call over
+        // a no-op parameter.
         if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
