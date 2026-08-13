@@ -75,6 +75,39 @@ this very audit and caught by its own second pass.
   file, ranked below the env var and above session autodetect, and `setChain()`
   now deletes it.
 
+**Found by this audit's own second pass** (each fix was re-attacked; two of the
+three were defects in the round-one fixes themselves)
+
+- **`fix(security)` — the control-char strip ran AFTER the decode, in both path
+  helpers.** Each transformation is right alone, which is why every test passed;
+  nesting one inside the other defeats both. A tab SPLITTING a percent-escape
+  makes `decodeURIComponent` throw, the catch falls back to the raw string, and
+  the later strip leaves the escape uninterpreted:
+  `phone/numbers/%<TAB>62uy` classified as the $0.012 unknown while the gateway
+  quotes $5.001, and `sandbox/%<TAB>63reate` as $0.003 against $192.001. Worse,
+  `hasPathTraversal` had the same inversion — since 0.33, under a doc comment
+  mandating the opposite order — so `%<TAB>2e%<TAB>2e/phone/numbers/buy` escaped
+  the tool's namespace entirely and reached the $5 phone route on
+  `blockrun_surf`'s $0.0095 reserve, defeating profile scoping too.
+
+- **`fix(budget)` — vendor-less model ids reserved the default.** The gateway
+  serves `gpt-5.4-pro` and `openai/gpt-5.4-pro` at the identical price (and bare
+  `gpt-oss-120b` free), but the tables key on the prefixed form only, so a bare
+  id fell to $5/$30: 5.16x short on gpt-5.4-pro. The mirror case made a bare free
+  id reserve like a paid one and silenced its truncation warning.
+
+- **`fix(speech)` — the 60s timeout was shorter than the model's own ceiling.**
+  `bytedance/seed-audio-1.0` can emit 120 seconds of audio, so a long render was
+  aborted after its payment signature had been sent — losing the clip, and with
+  it any record of a settlement that did go through. Raised to 180s, and the
+  timeout message now says a charge may stand.
+
+- **`fix(wallet)` — existing installs are told when their stored preference is
+  overriding `SOLANA_WALLET_KEY`.** Deleting a pre-0.40.1 `.chain` automatically
+  is not safe: nothing distinguishes the machine-written file from a real
+  `action:"chain"` choice — that is exactly the information the old behaviour
+  destroyed. So `blockrun_wallet` now says so, with the one command that fixes it.
+
 **Tooling**
 
 - `npm run verify:prices` gains a row per routing tier plus the five

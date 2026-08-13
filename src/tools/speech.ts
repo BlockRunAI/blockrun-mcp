@@ -28,7 +28,14 @@ import {
 } from "@blockrun/llm";
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
-const SPEECH_TIMEOUT = 60_000; // TTS is synchronous (<1s for Flash); 60s covers long multilingual-v2 inputs
+// TTS is synchronous — the HTTP call stays open for the whole synthesis. Flash
+// answers in <1s and the ElevenLabs models are comfortably inside a minute, but
+// 0.40.0 added bytedance/seed-audio-1.0, which can emit up to 120 SECONDS of
+// audio from a single 3k-character prompt. A 60s cap therefore aborted a call
+// whose payment signature had already been sent: the clip is lost, and because
+// booking only happens after resp.ok, a settlement that did go through is never
+// recorded. 180s covers the 120s ceiling with margin.
+const SPEECH_TIMEOUT = 180_000;
 const VOICES_TIMEOUT = 15_000;
 const MARGIN = 1.05; // 5% platform fee, baked into the server's quoted price
 const MIN_PAYMENT_USD = 0.001;
@@ -301,7 +308,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         }
         if (isTimeoutError(err)) {
           return {
-            content: [{ type: "text", text: `Speech generation timed out — please try again.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Speech generation timed out after ${SPEECH_TIMEOUT / 1000}s. The payment signature had already been sent, so a charge MAY have settled without returning audio — check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
             isError: true,
           };
         }

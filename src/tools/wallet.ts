@@ -303,6 +303,17 @@ SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves yo
       const fmt = (b: number | null) => (b !== null ? `$${b.toFixed(6)} USDC` : "unavailable");
       const explorerLabel = chain === "solana" ? "Solscan" : "Basescan";
       const mark = (c: "base" | "solana") => (c === chain ? "→" : " ");
+      // A pre-0.40.1 install has an explicit ~/.blockrun/.chain that this server
+      // wrote automatically on first run — and that file outranks
+      // SOLANA_WALLET_KEY. 0.40.1 stopped creating it, but it cannot safely
+      // DELETE existing ones: nothing distinguishes the machine-written file
+      // from a genuine `action:"chain"` choice (that is precisely the
+      // information the old behaviour destroyed). So say it out loud instead of
+      // leaving the operator to wonder why their env var does nothing.
+      const envIgnored = Boolean(process.env.SOLANA_WALLET_KEY) && chain === "base";
+      const envNote = envIgnored
+        ? `\n\n⚠️  SOLANA_WALLET_KEY is set but the active chain is BASE — a stored chain preference outranks it. Run action:"chain" chain:"solana" to switch (that also clears the stored preference).`
+        : "";
       const text = `Active chain: ${chain.toUpperCase()}   (switch with action:"chain" chain:"base"|"solana")
 
 ${mark("base")} Base:   ${both.base.address}
@@ -310,7 +321,7 @@ ${mark("base")} Base:   ${both.base.address}
 ${mark("solana")} Solana: ${both.solana.address}
             ${fmt(solBal)}${solBal !== null && solBal < 1 ? "  (low)" : ""}
 
-Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLET on active chain — run action:'setup' for funding instructions" : ""}`;
+Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLET on active chain — run action:'setup' for funding instructions" : ""}${envNote}`;
 
       return {
         content: [{ type: "text", text }],
