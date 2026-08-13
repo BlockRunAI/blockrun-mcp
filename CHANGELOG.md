@@ -2,6 +2,88 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.40.1
+
+An audit release: no new features, seven confirmed defects fixed, every one of
+them found by probing the live gateway rather than by reading the code. Five
+touch money. Two were introduced by 0.40.0 itself, and one was introduced by
+this very audit and caught by its own second pass.
+
+**Budget gate**
+
+- **`fix(budget)` — chat reserved against two hardcoded constants, both wrong.**
+  `$5/M input` and `4 chars/token` produced a reserve that live 402 quotes beat
+  on a 100k-character prompt: gpt-5.4-pro by 9.90x ($1.460020 charged against
+  $0.147480 reserved), gpt-5.2-pro 6.96x, o1 4.93x, claude-fable-5 3.30x, and
+  claude-opus-5 — the DEFAULT primary of `mode:"powerful"` — 1.65x.
+  `mode:"fast"` was 2.46x short because 0.40.0 documented gemini-3.5-flash's 3x
+  reprice without moving the estimator off the cheap heuristic. Reserves now
+  come from a real per-model table (the named model, or the tier's most
+  EXPENSIVE member, since the loop can fall through to any of them) at the
+  gateway's own ~2.08 chars/token. Cushion is 1.12–1.20x across 18 probed cases.
+
+- **`fix(budget)` — a settled call that then failed was never booked.** x402
+  settles on the 200, before the body is read, and every paid path streams — so
+  a mid-stream failure left the USDC gone, `budget.spent` unmoved, and the
+  reservation released: the ledger showed a free call. The routing loop then
+  tried the next model and settled a SECOND payment under the same single
+  reservation. Settled spend is now booked on the throw path, and the loop stops
+  once anything has settled (free models settle $0, so `mode:"free"` still falls
+  through as designed).
+
+- **`fix(budget)` — native Claude calls were booked at Anthropic's list price.**
+  The ledger multiplied response tokens by $15/$75 for opus, while the gateway
+  resells opus at $5/$25 and settles the QUOTE (which prices output at 10% of
+  max_tokens, floors at $0.001, and adds the transaction fee). A default
+  claude-opus-5 call settles $0.003660 and was booked as $0.03 — an 8x
+  over-count, so a budget cap tripped at an eighth of its allowance.
+
+- **`fix(budget)` — a prototype key reserved $0.** `CHAT_PRICE_PER_MTOKEN[model]
+  ?? DEFAULT` let `Object.prototype` members through (`model:"constructor"`
+  resolves to a function, which survives `??`), producing NaN and then a $0
+  reservation the gate approves unconditionally. The same fail-open the modal
+  GPU table already documents — reintroduced by the fix above and caught by this
+  audit's own regression pass.
+
+**Security**
+
+- **`fix(security)` — an expensive route could be bought at the cheap tier's
+  reserve.** `phone/numbers/b<TAB>uy` (fetch deletes the tab) and
+  `phone/numbers/%62uy` (the gateway decodes it) both reach the $5.001 buy route
+  while the classifier matched neither and reserved $0.012 — 417x short, which
+  clears every budget cap. `blockrun_modal` was worse: it never used the shared
+  helper at all, so `sandbox/cre<TAB>ate` reserved $0.003 against a $192.00
+  non-refundable 24h H100 create. `normalizeClassifyPath` now decodes once and
+  deletes tab/LF/CR, mirroring `hasPathTraversal`, which has done both since
+  0.33 — the same asymmetry, in the same file, for two releases.
+
+**Correctness**
+
+- **`fix(video)` — grok honours `resolution`, and lost its margin.**
+  xai/grok-imagine-video now prices 480p ($0.05/sec, default) and 720p
+  ($0.07/sec) and rejects anything higher, but the handler forwarded resolution
+  only for Seedance — so a caller asking for 720p silently got 480p and paid for
+  480p. The same probes show grok no longer carries the 5% margin (Sora still
+  does), so the two per-second models needed separate formulas; forwarding the
+  parameter without splitting the rate would have under-reserved 720p by 1.33x.
+
+- **`fix(wallet)` — the first-run chain pin overrode `SOLANA_WALLET_KEY`.**
+  `ensureBothWallets()` preserved the active chain through `setChain()`, i.e. an
+  explicit `~/.blockrun/.chain`, which outranks everything — so a clean install
+  wrote `.chain=base`, and an operator who later set `SOLANA_WALLET_KEY` stayed
+  on Base with no way to discover why. The pin moved to its own `.chain-auto`
+  file, ranked below the env var and above session autodetect, and `setChain()`
+  now deletes it.
+
+**Tooling**
+
+- `npm run verify:prices` gains a row per routing tier plus the five
+  above-default models; it had probed only `balanced`/gpt-5.6-terra for four
+  releases, which is why none of the above was visible. Its Solana check no
+  longer conflates "dearer than Base" with "not covered by the reserve" — only
+  the latter blocks a release, so the gate stops crying wolf over the deliberate
+  cross-chain price difference.
+
 ## 0.40.0
 
 Catalog sync against the live `GET /v1/models` (2026-08-12, 91 models on both
