@@ -263,8 +263,10 @@ export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
 export const TIER_WORST_PRICE: Record<RoutingMode, { input: number; output: number }> =
   Object.fromEntries(
     (Object.keys(MODEL_TIERS) as RoutingMode[]).map((mode) => {
-      const rates = MODEL_TIERS[mode].map(
-        (id: string) => CHAT_PRICE_PER_MTOKEN[id] ?? (id.startsWith("nvidia/") ? { input: 0, output: 0 } : DEFAULT_CHAT_PRICE),
+      const rates = MODEL_TIERS[mode].map((id: string) =>
+        Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)
+          ? CHAT_PRICE_PER_MTOKEN[id]
+          : (id.startsWith("nvidia/") ? { input: 0, output: 0 } : DEFAULT_CHAT_PRICE),
       );
       return [mode, {
         input: Math.max(...rates.map((r) => r.input)),

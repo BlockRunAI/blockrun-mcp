@@ -124,10 +124,19 @@ export function estimateChatCost(
   // call; recordActualSpend() then books the REAL settled cost. Under-reserving
   // is what lets one approved call blow a cap, so where the two disagree this
   // rounds toward reserving more (worst tier member, 2 chars/token).
+  // hasOwn-guarded, NOT `?? DEFAULT`. Both tables are object literals, so they
+  // inherit from Object.prototype: `model:"constructor"` resolves to a FUNCTION,
+  // which survives `??`, makes rate.input undefined, and turns the arithmetic
+  // into NaN — and withTxFee maps NaN to 0, i.e. a $0 reserve that the budget
+  // gate waves through. `model` is a free-form z.string(), so it is caller
+  // controlled. This is the identical fail-open documented on the modal GPU
+  // table (src/tools/modal.ts) and it was reintroduced here the moment these
+  // tables were added; measured before the guard: model:"constructor",
+  // "toString", "__proto__", "hasOwnProperty" and "valueOf" all reserved $0.
   const effectiveMode = (mode ?? "balanced") as RoutingMode;
   const rate = model
-    ? (CHAT_PRICE_PER_MTOKEN[model] ?? DEFAULT_CHAT_PRICE)
-    : (TIER_WORST_PRICE[effectiveMode] ?? DEFAULT_CHAT_PRICE);
+    ? (Object.hasOwn(CHAT_PRICE_PER_MTOKEN, model) ? CHAT_PRICE_PER_MTOKEN[model] : DEFAULT_CHAT_PRICE)
+    : (Object.hasOwn(TIER_WORST_PRICE, effectiveMode) ? TIER_WORST_PRICE[effectiveMode] : DEFAULT_CHAT_PRICE);
 
   const inTokens = Math.ceil((promptChars ?? 0) / GATEWAY_CHARS_PER_TOKEN);
   // Rounded to micro-dollars because the raw float drifts — (1024/1e6)*20 is

@@ -250,3 +250,21 @@ test("anthropicCallCost honours the $0.001 floor and the prefixed/bare id", () =
   // rather than inventing a number.
   assert.equal(anthropicCallCost("claude-does-not-exist", 2, 1024), null);
 });
+
+// A prototype key must never produce a $0 reserve. `model` is a free-form
+// z.string(), CHAT_PRICE_PER_MTOKEN is an object literal, and a `?? DEFAULT`
+// lookup lets Object.prototype members through: they are truthy, so the fallback
+// never fires, rate.input is undefined, the arithmetic goes NaN, and withTxFee
+// maps NaN to 0 — a reservation the budget gate always approves. This is the
+// same fail-open documented on the modal GPU table, and it was live here for the
+// length of one commit.
+test("estimateChatCost never returns $0 for a prototype-key model", () => {
+  const paid = estimateChatCost(1024, undefined, "openai/gpt-5.6-terra", undefined, 100_000);
+  for (const key of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf", "isPrototypeOf"]) {
+    const reserved = estimateChatCost(1024, undefined, key, undefined, 100_000);
+    assert.ok(reserved > 0, `model:"${key}" reserved ${reserved} — the gate would approve anything`);
+    // It must land on the unknown-model default, which is the catalog ceiling.
+    assert.equal(reserved, estimateChatCost(1024, undefined, "someone/unknown", undefined, 100_000), key);
+    assert.ok(reserved >= paid, key);
+  }
+});

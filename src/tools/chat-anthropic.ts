@@ -75,9 +75,13 @@ export function anthropicCallCost(
   // The catalog keys on the prefixed id; the response echoes a bare one
   // ("claude-opus-5"), sometimes with a date suffix.
   const id = model.startsWith("anthropic/") ? model : `anthropic/${model}`;
-  const rate =
-    CHAT_PRICE_PER_MTOKEN[id] ??
-    Object.entries(CHAT_PRICE_PER_MTOKEN).find(([k]) => id.startsWith(k))?.[1];
+  // hasOwn, not `??` — see the note in estimateChatCost: an inherited
+  // Object.prototype member would pass the null check and poison the arithmetic.
+  // (`id` is always prefixed with "anthropic/" here, so it cannot BE a prototype
+  // key; guarded anyway so the pattern is uniform wherever these tables are read.)
+  const rate = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)
+    ? CHAT_PRICE_PER_MTOKEN[id]
+    : Object.entries(CHAT_PRICE_PER_MTOKEN).find(([k]) => id.startsWith(k))?.[1];
   if (!rate) return null;
 
   const inputTokens = Math.ceil(promptChars / GATEWAY_CHARS_PER_TOKEN_OBSERVED) + MESSAGE_TOKEN_OVERHEAD;
