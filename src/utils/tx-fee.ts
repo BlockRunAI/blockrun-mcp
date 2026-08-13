@@ -38,6 +38,23 @@
 export const TRANSACTION_FEE_USD = 0.002;
 
 /**
+ * What the gateway is OBSERVED to charge per transaction, as opposed to what we
+ * RESERVE above.
+ *
+ * These differ on purpose and must not be collapsed. Every row of
+ * `npm run verify:prices` currently over-reserves by exactly $0.001, because the
+ * gateway's own constant reads `Number(process.env.TRANSACTION_FEE_USD ?? 0.001)`
+ * — it dropped from $0.002 and has flip-flopped before. Reserving the higher
+ * figure is the safe direction and stays; but the LEDGER is a different job, and
+ * booking a fee that was not charged inflates recorded spend on every flat-priced
+ * call, which trips budget caps early.
+ *
+ * So: withTxFee() for anything feeding the budget GATE; this constant only where
+ * we are reconstructing what actually settled.
+ */
+export const OBSERVED_GATEWAY_TX_FEE_USD = 0.001;
+
+/**
  * Convert a BASE price into what the caller is actually charged.
  *
  * No-op for $0 so genuinely free paths stay free — mirrors the gateway's

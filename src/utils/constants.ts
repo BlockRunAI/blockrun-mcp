@@ -181,7 +181,16 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // call like a frontier one and lock small budgets out of the cheap path.
   "anthropic/claude-opus-5": { input: 5, output: 25 },
   "anthropic/claude-opus-4.8": { input: 5, output: 25 },
+  "anthropic/claude-opus-4.7": { input: 5, output: 25 },
+  "anthropic/claude-opus-4.5": { input: 5, output: 25 },
   "anthropic/claude-sonnet-5": { input: 3, output: 15 },
+  // The rest of the Anthropic family: in no tier, but every one of them is
+  // reachable as an explicit `model` — and that path goes to the NATIVE
+  // /v1/messages endpoint, where this table is also what reconstructs the ledger
+  // entry (see anthropicCallCost). A missing id there books nothing at all.
+  "anthropic/claude-sonnet-4.6": { input: 3, output: 15 },
+  "anthropic/claude-sonnet-4.5": { input: 3, output: 15 },
+  "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
   "openai/gpt-5.6-sol": { input: 5, output: 30 },
   "openai/gpt-5.5": { input: 5, output: 30 },
   "openai/gpt-5.6-terra": { input: 2, output: 12 },
@@ -232,6 +241,16 @@ export const DEFAULT_CHAT_PRICE = { input: 5, output: 30 } as const;
  * direction.
  */
 export const GATEWAY_CHARS_PER_TOKEN = 2;
+
+/**
+ * The MEASURED ratio, for reconstructing what actually settled.
+ *
+ * Same split as TRANSACTION_FEE_USD vs OBSERVED_GATEWAY_TX_FEE_USD, for the same
+ * reason: a reserve should round against us, a ledger entry should be accurate.
+ * Fitted from live quotes at 10k and 100k characters (2.075 and 2.083); using
+ * the conservative 2 here would over-book every large prompt by ~4%.
+ */
+export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
 
 /**
  * The most expensive model each tier can settle at. Derived, not hand-written,

@@ -16,30 +16,78 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { recordActualSpend } from "../utils/budget.js";
+import { OBSERVED_GATEWAY_TX_FEE_USD } from "../utils/tx-fee.js";
+import { CHAT_PRICE_PER_MTOKEN, GATEWAY_CHARS_PER_TOKEN_OBSERVED } from "../utils/constants.js";
 import type { BudgetState } from "../types.js";
 
 /**
- * Reconstruct the real cost of a native Anthropic call from its token usage.
+ * Reconstruct what the GATEWAY charged for a native Anthropic call.
+ *
  * The AnthropicClient settles the 402 internally and never exposes the amount,
- * so token-count × the model's published per-1M rate is the best signal we have
- * (vastly better than a flat estimate). Rates mirror Anthropic's public pricing;
- * unknown ids fall back to a conservative Sonnet-ish default. Returns null when
- * usage is absent so the caller falls back to the pre-call estimate.
+ * so the charge has to be recomputed here — but from the gateway's pricing, not
+ * from the tokens the response reports.
+ *
+ * This used to multiply the response's own `usage` by ANTHROPIC'S PUBLIC LIST
+ * RATES ($15/$75 for opus, $1/$5 for haiku). Three things were wrong with that,
+ * compounding in the same direction:
+ *
+ *   1. The gateway resells opus at $5/$25, not $15/$75 — 3x over on the rate.
+ *   2. Settlement collects the QUOTE, and the quote prices output at
+ *      OUTPUT_QUOTE_FACTOR (0.1) of max_tokens, not at tokens actually produced
+ *      ("Settlement charges the full quoted amount regardless of actual usage"
+ *      — the gateway's own comment on that constant).
+ *   3. There is a $0.001 floor and a flat transaction fee on top, and neither
+ *      appeared at all.
+ *
+ * Net effect measured: a claude-opus-5 call with the default max_tokens settles
+ * $0.003660, and the old path booked $0.03 for it — the ledger over-counted 8x,
+ * so a budget cap tripped at an eighth of its real allowance.
+ *
+ * The formula below is the gateway's, mirrored. Verified against live unpaid 402
+ * quotes on /v1/messages, 2026-08-13 — accurate to +0.16% across a 100x span of
+ * prompt sizes and both price tiers, erring high:
+ *
+ *   opus-5  "hi"   max_tokens 1024 -> quoted 3660     reconstructed 3665
+ *   opus-5  "hi"   max_tokens 4096 -> quoted 11336    reconstructed 11345
+ *   opus-5  "hi"   max_tokens  100 -> quoted 2000     reconstructed 2000  (floor)
+ *   opus-5   10k   max_tokens 1024 -> quoted 27656    reconstructed 27700
+ *   opus-5  100k   max_tokens 1024 -> quoted 243655   reconstructed 244045
+ *   haiku   "hi"   max_tokens 1024 -> quoted 2000     reconstructed 2000  (floor)
+ *
+ * `usage` is deliberately NOT consulted: real output tokens do not move the
+ * price. Returns null only when the model is unknown, so the caller falls back
+ * to the pre-call estimate.
  */
-function anthropicCallCost(
+// The gateway quotes output at this fraction of max_tokens and settles the quote
+// (OUTPUT_QUOTE_FACTOR in blockrun/src/lib/models.ts). If that constant moves,
+// this books low — it is the one number here we do not own.
+const OUTPUT_QUOTE_FACTOR = 0.1;
+// The gateway's own per-message envelope overhead, fitted from the probes above
+// (~20 tokens on a 2-character message). Keeps small calls from booking under.
+const MESSAGE_TOKEN_OVERHEAD = 20;
+const MIN_BASE_USD = 0.001;
+
+export function anthropicCallCost(
   model: string,
-  usage?: { input_tokens?: number; output_tokens?: number } | null,
+  promptChars: number,
+  maxTokens: number,
 ): number | null {
-  if (!usage) return null;
-  const id = model.toLowerCase();
-  let inRate = 5, outRate = 25; // safe default (≈ Sonnet, slightly high)
-  if (id.includes("opus")) { inRate = 15; outRate = 75; }
-  else if (id.includes("haiku")) { inRate = 1; outRate = 5; }
-  else if (id.includes("sonnet")) { inRate = 3; outRate = 15; }
-  const cost =
-    ((usage.input_tokens ?? 0) / 1_000_000) * inRate +
-    ((usage.output_tokens ?? 0) / 1_000_000) * outRate;
-  return cost > 0 ? cost : null;
+  // The catalog keys on the prefixed id; the response echoes a bare one
+  // ("claude-opus-5"), sometimes with a date suffix.
+  const id = model.startsWith("anthropic/") ? model : `anthropic/${model}`;
+  const rate =
+    CHAT_PRICE_PER_MTOKEN[id] ??
+    Object.entries(CHAT_PRICE_PER_MTOKEN).find(([k]) => id.startsWith(k))?.[1];
+  if (!rate) return null;
+
+  const inputTokens = Math.ceil(promptChars / GATEWAY_CHARS_PER_TOKEN_OBSERVED) + MESSAGE_TOKEN_OVERHEAD;
+  const base =
+    (inputTokens / 1_000_000) * rate.input +
+    ((maxTokens * OUTPUT_QUOTE_FACTOR) / 1_000_000) * rate.output;
+  // The OBSERVED fee, not the reserved one: this figure is the ledger entry, and
+  // booking $0.001 that never left the wallet would trip budget caps early.
+  const charged = Math.max(base, MIN_BASE_USD) + OBSERVED_GATEWAY_TX_FEE_USD;
+  return Math.ceil(charged * 1e6) / 1e6; // the gateway settles in whole micro-USDC
 }
 
 // AnthropicClient.messages is typed as the official SDK's Messages resource.
@@ -177,6 +225,15 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     raisedMaxTokens = true;
   }
 
+  // Everything the gateway will count as prompt: the system block plus every
+  // message body, measured the same way promptCharSize does for the OpenAI-compat
+  // paths. Used only to reconstruct the settled charge below.
+  const anthropicPromptChars =
+    (systemParts.join("\n\n").length) +
+    apiMessages.reduce((n: number, m: { content: unknown }) => n + (typeof m.content === "string"
+      ? m.content.length
+      : JSON.stringify(m.content ?? "").length), 0);
+
   const params: Anthropic.MessageCreateParamsNonStreaming = {
     model,
     max_tokens: effectiveMax,
@@ -200,8 +257,16 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
   }
 
-  // Book the real cost derived from native token usage, not the flat estimate.
-  recordActualSpend(budget, anthropicCallCost(native.model, native.usage), estimatedCost, agentId);
+  // Book what the gateway actually charged (the quote it settled), not the flat
+  // estimate and not a token reconstruction at Anthropic's list prices.
+  // effectiveMax is the max_tokens the request was sent with — including the
+  // auto-raise for a thinking budget, which is what the quote was priced on.
+  recordActualSpend(
+    budget,
+    anthropicCallCost(native.model, anthropicPromptChars, effectiveMax),
+    estimatedCost,
+    agentId,
+  );
 
   const thinkingBlocks = native.content.filter(isThinkingBlock);
   const textBlocks = native.content.filter(isTextBlock);

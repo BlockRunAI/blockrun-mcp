@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost } from "../src/tools/chat.js";
-import { handleAnthropicNative } from "../src/tools/chat-anthropic.js";
+import { handleAnthropicNative, anthropicCallCost } from "../src/tools/chat-anthropic.js";
 import { MODEL_TIERS } from "../src/utils/constants.js";
 import type { BudgetState } from "../src/types.js";
 
@@ -205,4 +205,48 @@ test("prompt size does not make a genuinely free call cost anything", () => {
 
 test("omitting promptChars keeps the previous reserve (no silent inflation)", () => {
   assert.equal(estimateChatCost(1024, "balanced", undefined), estimateChatCost(1024, "balanced", undefined, undefined, 0));
+});
+
+// ── The native Claude ledger must record what the GATEWAY charged ──
+//
+// It used to book actual tokens x Anthropic's PUBLIC list rates ($15/$75 opus),
+// while the gateway resells opus at $5/$25 and settles the QUOTE — which prices
+// output at OUTPUT_QUOTE_FACTOR (0.1) of max_tokens, floors at $0.001, and adds
+// the transaction fee. A default claude-opus-5 call settles $0.003660 and was
+// booked as $0.03: the ledger over-counted 8x, so a budget cap tripped at an
+// eighth of its real allowance.
+//
+// Expected values are live unpaid 402 quotes on /v1/messages, 2026-08-13.
+test("anthropicCallCost reconstructs the gateway's quote, not Anthropic's list price", () => {
+  const CASES: Array<[string, number, number, number]> = [
+    // [model, promptChars, maxTokens, quoted]
+    ["claude-opus-5", 2, 1024, 0.003660],
+    ["claude-opus-5", 2, 4096, 0.011336],
+    ["claude-opus-5", 10_000, 1024, 0.027656],
+    ["claude-opus-5", 100_000, 1024, 0.243655],
+  ];
+  for (const [model, chars, maxTokens, quoted] of CASES) {
+    const booked = anthropicCallCost(model, chars, maxTokens);
+    assert.ok(booked !== null, `${model} must be priceable`);
+    // Within 1% and never under: the ledger may round toward caution, but an
+    // 8x over-count is a broken budget and an under-count is an unbilled call.
+    assert.ok(booked! >= quoted, `${model} ${chars}c/${maxTokens}t: booked ${booked} < quoted ${quoted}`);
+    assert.ok(booked! <= quoted * 1.01, `${model} ${chars}c/${maxTokens}t: booked ${booked} is over 1% above ${quoted}`);
+  }
+});
+
+test("anthropicCallCost honours the $0.001 floor and the prefixed/bare id", () => {
+  // Small calls floor at $0.001 base + the fee, whatever the token maths says.
+  assert.equal(anthropicCallCost("claude-opus-5", 2, 100), 0.002);
+  assert.equal(anthropicCallCost("claude-haiku-4.5", 2, 1024), 0.002);
+  // The response echoes a bare id; the catalog keys on the prefixed one.
+  assert.equal(
+    anthropicCallCost("claude-opus-5", 10_000, 1024),
+    anthropicCallCost("anthropic/claude-opus-5", 10_000, 1024),
+  );
+  // A date-suffixed id still resolves via the prefix match.
+  assert.ok(anthropicCallCost("claude-opus-5-20260101", 2, 1024) !== null);
+  // An unknown model returns null so the caller falls back to the estimate,
+  // rather than inventing a number.
+  assert.equal(anthropicCallCost("claude-does-not-exist", 2, 1024), null);
 });
