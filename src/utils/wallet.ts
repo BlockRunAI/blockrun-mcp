@@ -34,6 +34,37 @@ let _evmWalletInfo: { address: string; privateKey: string; isNew: boolean } | nu
 let _solanaClient: SolanaLLMClient | null = null;
 let _anthropicClient: AnthropicClient | null = null;
 
+// The AUTO-pin, written by ensureBothWallets to preserve the chain a user was
+// already on when their second wallet gets provisioned. Deliberately a separate
+// file from `.chain`: that one means "the user chose this" and outranks
+// everything, and laundering a machine-made default through it silently killed
+// the documented SOLANA_WALLET_KEY override — first run wrote `.chain=base`, and
+// an operator who set the env var afterwards stayed on Base with no way to see
+// why. Ranked below the env var in getChain(), and deleted by setChain() so an
+// explicit choice is never shadowed by a stale automatic one.
+const CHAIN_AUTO_FILE = path.join(BLOCKRUN_DIR, ".chain-auto");
+
+function readOneChainFile(file: string): "base" | "solana" | null {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const value = fs.readFileSync(file, "utf-8").trim().toLowerCase();
+    if (value === "base" || value === "solana") return value;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function readAutoChain(): "base" | "solana" | null {
+  return readOneChainFile(CHAIN_AUTO_FILE);
+}
+
+function writeAutoChain(chain: "base" | "solana"): void {
+  try {
+    fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
+    fs.writeFileSync(CHAIN_AUTO_FILE, chain, { mode: 0o600 });
+    resetChainCaches();
+  } catch { /* a pin we cannot write is not worth failing a wallet call over */ }
+}
+
 function readChainPreference(): "base" | "solana" | null {
   for (const file of CHAIN_PREFERENCE_FILES) {
     try {
@@ -55,7 +86,14 @@ export function getChain(): "base" | "solana" {
   // 2. SOLANA_WALLET_KEY env var implies the operator wants Solana.
   if (process.env.SOLANA_WALLET_KEY) return "solana";
 
-  // 3. Fall back to wallet-file autodetection for first-run users who never
+  // 3. The automatic pin from ensureBothWallets — below the env var on purpose,
+  //    so setting SOLANA_WALLET_KEY later still switches chains. It sits ABOVE
+  //    the session autodetect below because that is exactly what it exists to
+  //    override: provisioning the second wallet must not move an existing user.
+  const auto = readAutoChain();
+  if (auto) return auto;
+
+  // 4. Fall back to wallet-file autodetection for first-run users who never
   //    set a chain preference but already have a Solana session on disk. Read
   //    the specific session file and require it to be NON-EMPTY: a bare
   //    existsSync would pin an empty/truncated file to a Solana client that
@@ -96,6 +134,9 @@ function resetChainCaches(): void {
 export function setChain(chain: "base" | "solana"): void {
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
   fs.writeFileSync(CHAIN_FILE, chain, { mode: 0o600 });
+  // Drop any automatic pin: an explicit choice must not leave a machine-made
+  // one behind to resurface if this file is ever removed.
+  try { fs.rmSync(CHAIN_AUTO_FILE, { force: true }); } catch { /* ignore */ }
   resetChainCaches();
 }
 
@@ -128,7 +169,10 @@ export async function ensureBothWallets(): Promise<{
   }
 
   if (chainBefore !== null && getChain() !== chainBefore) {
-    setChain(chainBefore);
+    // writeAutoChain, NOT setChain: this is the machine preserving continuity,
+    // not the user expressing a preference. The distinction is the whole fix —
+    // see CHAIN_AUTO_FILE.
+    writeAutoChain(chainBefore);
   }
 
   return {

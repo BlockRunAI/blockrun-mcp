@@ -351,7 +351,8 @@ One wallet. All sources. No dashboards.
 |---|---|---|
 | `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
 | `BLOCKRUN_WALLET_KEY` | unset | Env override of the EVM key — takes precedence over `.session` / `wallet.json` as the Base + Polymarket signer. |
-| `~/.blockrun/.chain` | unset | Explicit chain preference: `base` or `solana`. |
+| `~/.blockrun/.chain` | unset | Explicit chain preference: `base` or `solana`. Written only by `blockrun_wallet action:"chain"` — i.e. only when you choose. |
+| `~/.blockrun/.chain-auto` | written on first run | Automatic pin: the chain you were already on when your second wallet was provisioned. Keeps a Base user on Base once a Solana session exists, and is outranked by `SOLANA_WALLET_KEY`. Cleared whenever you set a chain explicitly. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
@@ -363,7 +364,7 @@ One wallet. All sources. No dashboards.
 | `POLYMARKET_BOUNDED_APPROVALS` | unset (unlimited) | Bound pUSD exchange allowances to this many dollars. |
 | `BLOCKRUN_BUILDER_CODE` | unset | Optional Polymarket builder attribution code carried on orders. |
 
-**Chain selection priority** (`src/utils/wallet.ts`): `.chain` preference → `SOLANA_WALLET_KEY` → `.solana-session` exists → otherwise Base.
+**Chain selection priority** (`src/utils/wallet.ts`): `.chain` preference → `SOLANA_WALLET_KEY` → `.chain-auto` pin → `.solana-session` exists → otherwise Base.
 
 The server runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` exists — re-run the install command to upgrade.
 
