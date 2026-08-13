@@ -13,6 +13,7 @@ import {
   FREE_TIER_MAX_PROMPT_CHARS,
   CHAT_PRICE_PER_MTOKEN,
   DEFAULT_CHAT_PRICE,
+  canonicalChatModel,
   TIER_WORST_PRICE,
   GATEWAY_CHARS_PER_TOKEN,
   type RoutingMode,
@@ -54,7 +55,11 @@ export function promptCharSize(
  * the tool says so out loud. Returns null when nothing was lost.
  */
 export function freeTierTruncationNote(promptChars: number, model: string): string | null {
-  if (!model.startsWith("nvidia/")) return null; // paid models scale past this
+  // Canonicalised: the gateway serves `gpt-oss-120b` as well as
+  // `nvidia/gpt-oss-120b`, and the bare spelling truncates identically — a
+  // startsWith check on the raw string let the silent-truncation warning go
+  // silent, which is the one failure this function exists to make loud.
+  if (!canonicalChatModel(model).startsWith("nvidia/")) return null; // paid models scale past this
   if (promptChars <= FREE_TIER_MAX_PROMPT_CHARS) return null;
   const keptPct = Math.round((FREE_TIER_MAX_PROMPT_CHARS / promptChars) * 100);
   return (
@@ -96,8 +101,12 @@ export function estimateChatCost(
   //
   // So: an explicit model decides on its own merits; `mode` only grants free when
   // no model overrides it.
-  if (model) {
-    if (model.startsWith("nvidia/")) return 0; // genuinely free, whatever the mode
+  // Canonicalised FIRST: the gateway serves vendor-less ids at the same price
+  // (and serves the bare free ones free), so every classification below — the
+  // nvidia check included — has to run on the catalog spelling.
+  const canonical = model ? canonicalChatModel(model) : undefined;
+  if (canonical) {
+    if (canonical.startsWith("nvidia/")) return 0; // genuinely free, whatever the mode
   } else if (mode === "free") {
     return 0; // no model to override it — resolves to the free tier
   }
@@ -134,8 +143,8 @@ export function estimateChatCost(
   // tables were added; measured before the guard: model:"constructor",
   // "toString", "__proto__", "hasOwnProperty" and "valueOf" all reserved $0.
   const effectiveMode = (mode ?? "balanced") as RoutingMode;
-  const rate = model
-    ? (Object.hasOwn(CHAT_PRICE_PER_MTOKEN, model) ? CHAT_PRICE_PER_MTOKEN[model] : DEFAULT_CHAT_PRICE)
+  const rate = canonical
+    ? (Object.hasOwn(CHAT_PRICE_PER_MTOKEN, canonical) ? CHAT_PRICE_PER_MTOKEN[canonical] : DEFAULT_CHAT_PRICE)
     : (Object.hasOwn(TIER_WORST_PRICE, effectiveMode) ? TIER_WORST_PRICE[effectiveMode] : DEFAULT_CHAT_PRICE);
 
   const inTokens = Math.ceil((promptChars ?? 0) / GATEWAY_CHARS_PER_TOKEN);

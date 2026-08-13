@@ -36,10 +36,24 @@
  * `..\r/`, `\t../` and `..\t\` landed on /api/v1/phone/numbers/buy before this.
  */
 export function hasPathTraversal(path: string): boolean {
-  let decoded = path;
-  try { decoded = decodeURIComponent(path); } catch { /* malformed %: check raw */ }
-  // Mirror the URL parser: it deletes these outright, so we must too before
-  // comparing segments — otherwise the string we check is not the string it sends.
+  // ORDER MATTERS, and it was wrong here from 0.33 until 0.40.1 — the comment
+  // above said "STRIP TAB/LF/CR FIRST" while the code decoded first.
+  //
+  // The real pipeline is: fetch's URL parser DELETES tab/LF/CR before the
+  // request leaves this process, and only then does the far side decode. Decode
+  // first and a tab SPLITTING an escape defeats both steps: `%<TAB>2e%<TAB>2e`
+  // makes decodeURIComponent throw, the catch falls back to the raw string, and
+  // the later strip leaves the literal segment "%2e%2e" — which is not ".." to
+  // this check, but IS to the parser once it has deleted the same tab. Probed
+  // live: blockrun_surf path:"%<TAB>2e%<TAB>2e/phone/numbers/buy" resolves to
+  // /api/v1/phone/numbers/buy and quotes $5.001 against surf's $0.0095 reserve,
+  // and escapes profile scoping on the way. Each transformation was tested
+  // alone and passed; only the composition was broken.
+  const asSent = path.replace(/[\t\n\r]/g, "");
+  let decoded = asSent;
+  try { decoded = decodeURIComponent(asSent); } catch { /* malformed %: check as-sent */ }
+  // Strip again after decoding: an ENCODED %09 decodes to a literal tab, which
+  // the far side does not delete. Over-blocking is the safe direction here.
   const asParsed = decoded.replace(/[\t\n\r]/g, "");
   return asParsed.split(/[/\\]/).some((seg) => seg === ".." || seg === ".");
 }
@@ -81,11 +95,15 @@ export function hasPathTraversal(path: string): boolean {
  * to a real, cheaper route that the gateway would never serve.
  */
 export function normalizeClassifyPath(path: string): string {
-  const withoutQuery = path.replace(/[?#].*$/, "");
-  let decoded = withoutQuery;
-  try { decoded = decodeURIComponent(withoutQuery); } catch { /* malformed %: classify raw */ }
+  // Strip BEFORE decoding as well as after — same order bug, same fix, same
+  // reason as hasPathTraversal above: `phone/numbers/%<TAB>62uy` is sent as
+  // `%62uy`, which the gateway decodes to `buy` ($5.001), while a decode-first
+  // classifier throws on the split escape and prices it as the $0.012 unknown.
+  const asSent = path.replace(/[?#].*$/, "").replace(/[\t\n\r]/g, "");
+  let decoded = asSent;
+  try { decoded = decodeURIComponent(asSent); } catch { /* malformed %: classify as-sent */ }
   return decoded
-    .replace(/[\t\n\r]/g, "")  // the URL parser deletes these before sending
+    .replace(/[\t\n\r]/g, "")  // a decoded %09 stays literal server-side
     .replace(/^\/+/, "")       // drop leading slashes
     .replace(/\/+$/, "")       // drop trailing slashes
     .toLowerCase();

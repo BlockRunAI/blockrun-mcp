@@ -140,3 +140,43 @@ test("normalizeClassifyPath keeps the query string off the classified route", ()
   assert.equal(normalizeClassifyPath("phone/numbers/%62uy?x=1"), "phone/numbers/buy");
   assert.notEqual(normalizeClassifyPath("phone/lookup%3Ffoo"), "phone/lookup");
 });
+
+// ── ORDER: strip, then decode, then strip again ──
+//
+// The real pipeline has TWO transformations in a fixed order: fetch's URL parser
+// DELETES tab/LF/CR before the request leaves this process, and the gateway
+// DECODES percent-escapes when it routes. Both helpers did them backwards
+// (decode first), which is invisible until one is nested inside the other:
+// a tab splitting an escape (`%<TAB>62uy`) makes decodeURIComponent throw, the
+// catch falls back to the RAW string, and the later strip then leaves `%62uy`
+// undecoded. Each transformation was tested in isolation and passed; the
+// composition was the hole.
+//
+// Both variants were reproduced against the live gateway with unpaid 402s
+// (2026-08-13) — each quotes 5001000 micro ($5.001) at /v1/phone/numbers/buy.
+test("normalizeClassifyPath survives a tab splitting a percent-escape", () => {
+  const BASE = "https://blockrun.ai/api/v1/";
+  for (const raw of ["phone/numbers/%\t62uy", "phone/numbers/%6\r2uy", "phone/numbers/%\n62uy"]) {
+    // The parser deletes the control char, so the gateway receives %62uy and
+    // decodes it to `buy` — the classifier has to reach the same conclusion.
+    assert.equal(new URL(BASE + raw).pathname, "/api/v1/phone/numbers/%62uy", raw);
+    assert.equal(normalizeClassifyPath(raw), "phone/numbers/buy", raw);
+  }
+  assert.equal(normalizeClassifyPath("sandbox/%\t63reate"), "sandbox/create");
+});
+
+test("hasPathTraversal survives a tab splitting a dot-escape (namespace escape)", () => {
+  // Worse than a mispricing: this one leaves the tool's own namespace, so a
+  // research-profile install that never exposes blockrun_phone could reach
+  // phone/numbers/buy on blockrun_surf's $0.0095 reserve.
+  const BASE = "https://blockrun.ai/api/v1/surf/";
+  for (const raw of [
+    "%\t2e%\t2e/phone/numbers/buy",
+    "%2\te%2\te/phone/numbers/buy",
+    "%\r2e%\r2e/phone/numbers/buy",
+    "%\n2e%\n2e/phone/numbers/buy",
+  ]) {
+    assert.equal(new URL(BASE + raw).pathname, "/api/v1/phone/numbers/buy", raw);
+    assert.equal(hasPathTraversal(raw), true, raw);
+  }
+});

@@ -1,9 +1,9 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { estimateChatCost } from "../src/tools/chat.js";
+import { estimateChatCost, freeTierTruncationNote } from "../src/tools/chat.js";
 import { handleAnthropicNative, anthropicCallCost } from "../src/tools/chat-anthropic.js";
-import { MODEL_TIERS } from "../src/utils/constants.js";
+import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN } from "../src/utils/constants.js";
 import type { BudgetState } from "../src/types.js";
 
 function newBudget(limit: number | null = null): BudgetState {
@@ -267,4 +267,53 @@ test("estimateChatCost never returns $0 for a prototype-key model", () => {
     assert.equal(reserved, estimateChatCost(1024, undefined, "someone/unknown", undefined, 100_000), key);
     assert.ok(reserved >= paid, key);
   }
+});
+
+// ── Vendor-less model ids are a real, chargeable spelling ──
+//
+// The gateway serves `gpt-5.4-pro` and `openai/gpt-5.4-pro` at the IDENTICAL
+// price (live unpaid 402s, 2026-08-13: both quote $1.460020 on a 100k-char
+// prompt; a genuinely unknown id 400s). Every table here keys on the prefixed
+// form, so a bare id fell to DEFAULT_CHAT_PRICE and reserved $0.282720 — 5.16x
+// short — reopening the under-reserve these tables were added to close, on a
+// spelling chat-anthropic.ts already normalises for the ledger.
+test("estimateChatCost prices a vendor-less model id exactly like its prefixed twin", () => {
+  const PAIRS: Array<[string, string]> = [
+    ["gpt-5.4-pro", "openai/gpt-5.4-pro"],
+    ["o1", "openai/o1"],
+    ["claude-fable-5", "anthropic/claude-fable-5"],
+    ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
+    ["glm-5", "zai/glm-5"],
+  ];
+  for (const [bare, prefixed] of PAIRS) {
+    assert.equal(
+      estimateChatCost(1024, undefined, bare, undefined, 100_000),
+      estimateChatCost(1024, undefined, prefixed, undefined, 100_000),
+      bare,
+    );
+  }
+  // The bare pro-tier id must still clear its real charge.
+  assert.ok(estimateChatCost(1024, undefined, "gpt-5.4-pro", undefined, 100_000) >= 1.460020);
+});
+
+test("a vendor-less free model is still free, and still warns about truncation", () => {
+  // The mirror case: `startsWith("nvidia/")` on the raw string made a bare free
+  // id reserve like a paid one (so an exhausted budget refused a $0 call) and
+  // silenced the truncation warning — the one failure that function exists for.
+  assert.equal(estimateChatCost(1024, undefined, "gpt-oss-120b", undefined, 100_000), 0);
+  assert.equal(estimateChatCost(1024, undefined, "nvidia/gpt-oss-120b", undefined, 100_000), 0);
+  const note = freeTierTruncationNote(200_000, "gpt-oss-120b");
+  assert.ok(note && /TRUNCATED/.test(note), "a bare free id must still warn about silent truncation");
+});
+
+test("every catalog id has a unique vendor-less segment — the mapping cannot be ambiguous", () => {
+  const ids = [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat()].filter((i) => i.includes("/"));
+  const byBare = new Map<string, Set<string>>();
+  for (const id of ids) {
+    const bare = id.slice(id.indexOf("/") + 1);
+    if (!byBare.has(bare)) byBare.set(bare, new Set());
+    byBare.get(bare)!.add(id);
+  }
+  const clashes = [...byBare.entries()].filter(([, set]) => set.size > 1);
+  assert.deepEqual(clashes, [], `two vendors ship the same model name: ${JSON.stringify(clashes)}`);
 });

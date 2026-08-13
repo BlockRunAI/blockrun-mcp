@@ -260,6 +260,41 @@ export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
  * through to a later model whenever an earlier one fails BEFORE taking payment,
  * so any member can be the one that settles.
  */
+/**
+ * Map a vendor-less model id onto its catalog key.
+ *
+ * The gateway serves BOTH spellings and charges the same: live unpaid 402s
+ * (2026-08-13) quote `gpt-5.4-pro` and `openai/gpt-5.4-pro` at an identical
+ * $1.460020, `o1` and `openai/o1` at $0.727420, and serve bare `gpt-oss-120b`
+ * free just like `nvidia/gpt-oss-120b`. A genuinely unknown id 400s, so a bare
+ * id that resolves is a real, chargeable model.
+ *
+ * Every table here keys on the prefixed spelling, so without this a bare id fell
+ * through to DEFAULT_CHAT_PRICE and reserved a fraction of what settles —
+ * gpt-5.4-pro 5.16x short, o1 2.57x — reopening, on a different spelling, the
+ * exact defect the tables were added to close. The mirror case bit too: bare
+ * `gpt-oss-120b` failed the `startsWith("nvidia/")` free check, so an exhausted
+ * budget refused a $0 call and the free-tier truncation warning went silent.
+ *
+ * chat-anthropic.ts already normalised bare -> prefixed for the LEDGER; this is
+ * the same normalisation for the GATE, which is where the money decision is.
+ * Post-slash segments are unique across the catalog (pinned by a test), so the
+ * mapping is unambiguous.
+ */
+const BARE_TO_PREFIXED: Record<string, string> = Object.fromEntries(
+  [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat()]
+    .filter((id: string) => id.includes("/"))
+    .map((id: string) => [id.slice(id.indexOf("/") + 1), id]),
+);
+
+export function canonicalChatModel(model: string): string {
+  const id = model.trim();
+  if (Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)) return id;
+  // hasOwn, not `??` — BARE_TO_PREFIXED is an object literal and `model` is a
+  // free-form z.string(); "constructor"/"toString" must not resolve here.
+  return Object.hasOwn(BARE_TO_PREFIXED, id) ? BARE_TO_PREFIXED[id] : id;
+}
+
 export const TIER_WORST_PRICE: Record<RoutingMode, { input: number; output: number }> =
   Object.fromEntries(
     (Object.keys(MODEL_TIERS) as RoutingMode[]).map((mode) => {
