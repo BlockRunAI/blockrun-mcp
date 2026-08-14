@@ -24,6 +24,7 @@ import { registerSurfTool } from "./tools/surf.js";
 import { registerRpcTool } from "./tools/rpc.js";
 import { registerDefiTool } from "./tools/defi.js";
 import { registerPolymarketReadTool, registerPolymarketTool } from "./tools/polymarket.js";
+import { registerScrapecheckTool } from "./tools/scrapecheck.js";
 import { resolveTools, type ToolName } from "./profiles.js";
 
 /**
@@ -75,6 +76,7 @@ export function initializeMcpServer(
     defi: () => registerDefiTool(server, budget),
     polymarket_read: () => registerPolymarketReadTool(server),
     polymarket: () => registerPolymarketTool(server),
+    scrapecheck: () => registerScrapecheckTool(server, budget),
   };
 
   for (const [name, register] of Object.entries(registrars) as [ToolName, () => void][]) {

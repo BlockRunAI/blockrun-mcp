@@ -28,7 +28,8 @@ export type ToolName =
   | "rpc"
   | "defi"
   | "polymarket_read"
-  | "polymarket";
+  | "polymarket"
+  | "scrapecheck";
 
 // `as const satisfies` keeps the literal tuple type (so the exhaustiveness
 // guard below can see the actual entries) AND rejects any entry that isn't a
@@ -36,7 +37,7 @@ export type ToolName =
 export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
   "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
-  "polymarket_read", "polymarket",
+  "polymarket_read", "polymarket", "scrapecheck",
 ] as const satisfies readonly ToolName[];
 
 // Compile-time guard: if a new ToolName is added to the union but not to
@@ -60,7 +61,7 @@ export const PROFILES: Record<string, ToolName[] | "all"> = {
   trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc", "polymarket_read", "polymarket"],
   // Web research & analysis: live search, neural search, Surf's news/SQL,
   // and chat for synthesis, plus wallet and the model catalogue.
-  research: ["wallet", "models", "chat", "search", "exa", "surf"],
+  research: ["wallet", "models", "chat", "search", "exa", "surf", "scrapecheck"],
   // Minimal LLM gateway: just chat + model discovery + wallet.
   chat: ["wallet", "models", "chat"],
 };
