@@ -215,7 +215,7 @@ Claude reads the odds with `blockrun_markets` and — with your confirmation —
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
 | `blockrun_surf` | Surf (asksurf.ai) — 83 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
-| `blockrun_scrapecheck` | ScrapeCheck — verify a held web value (price, title, availability) against its live source page; signed pass/fail/unverifiable verdict, offline-verifiable | $0.012 full / $0.0040 presence |
+| `blockrun_scrapecheck` | ScrapeCheck — verify a held web value (price, title, availability) against its live source page; pass/fail/unverifiable verdict carrying an ed25519 signature you can check against ScrapeCheck's published key | $0.012 full / $0.0040 presence |
 | `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
 | `blockrun_rpc` | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, …) via Tatum | $0.002/call |
@@ -296,7 +296,7 @@ blockrun_wallet action:"setup"                  # shows the Solana address + fun
 
 Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. Switch back with `blockrun_wallet action:"chain" chain:"base"`. The server keeps both wallets; switching just changes which one pays.
 
-**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
+**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, `blockrun_scrapecheck`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
 
 ---
 

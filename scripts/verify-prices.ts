@@ -27,6 +27,7 @@ import { estimateSurfCost, SURF_PRICE_USD } from "../src/tools/surf.js";
 import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateCost as estimateImageCost } from "../src/tools/image.js";
 import { estimateExaCost } from "../src/tools/exa.js";
+import { estimateScrapecheckCost } from "../src/tools/scrapecheck.js";
 import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
 import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
@@ -111,6 +112,12 @@ const PROBES: Probe[] = [
   // Routes with no exported estimator: pin the documented figure instead, so a
   // gateway reprice still trips this gate rather than only the skill docs.
   { label: "exa/search", path: "exa/search?query=t", expected: withTxFee(0.01) },
+  // ScrapeCheck is a pass-through partner: the BASE price is set by ScrapeCheck,
+  // not by our own catalogue, so it can move without a BlockRun deploy — the
+  // exact drift this sweep exists to catch. Base only (settles to ScrapeCheck's
+  // Base treasury), so `[sol: not served]` on these two rows is correct, not a gap.
+  { label: "scrapecheck/verify", path: "scrapecheck/verify", body: { url: "https://example.com", claim: { price: "$1" }, asked: "what is the price?" }, expected: estimateScrapecheckCost("verify") },
+  { label: "scrapecheck/presence", path: "scrapecheck/verify-presence", body: { url: "https://example.com", claim: { price: "$1" }, asked: "what is the price?" }, expected: estimateScrapecheckCost("presence") },
   { label: "defillama/protocols", path: "defillama/protocols", expected: withTxFee(0.005) },
   { label: "rpc/ethereum (single)", path: "rpc/ethereum", body: { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }, expected: withTxFee(0.002) },
 

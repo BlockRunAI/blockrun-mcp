@@ -7,9 +7,9 @@
 // a scraper, another tool) and needs to know it is on the source page right
 // now before acting on it.
 //
-// Settlement: per call to ScrapeCheck's Base treasury via the gateway
-// (route proposed in this PR — see PR description). No API key exists on
-// either side: x402 payment is the credential.
+// Settlement: per call to ScrapeCheck's Base treasury via the gateway, the
+// same pass-through shape as Surf (see the gateway's x402-partner.ts). Base
+// only — see the getChain() guard below.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
@@ -17,7 +17,8 @@ import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent } from "../utils/body.js";
-import { getClient } from "../utils/wallet.js";
+import { getClient, getChain } from "../utils/wallet.js";
+import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import type { BudgetState } from "../types.js";
 
@@ -28,6 +29,13 @@ type RawClient = {
 // Base prices published in ScrapeCheck's OpenAPI and charged by its 402
 // challenge (verified against the live challenge header, x402 v2):
 // /verify $0.01, /verify-presence $0.002. The gateway adds its flat tx fee.
+//
+// PROVISIONAL until the gateway routes exist: what the caller is actually
+// charged is whatever /api/v1/scrapecheck/* quotes in its `payment-required`
+// header, which is the gateway's published price, not ScrapeCheck's base.
+// `npm run verify:prices` probes both routes — if this estimator ever reserves
+// LESS than the live quote, the budget gate under-reserves on every call and
+// the ledger under-counts permanently. Fix this constant, not the script.
 export function estimateScrapecheckCost(tier: string): number {
   return withTxFee(tier === "presence" ? 0.002 : 0.01);
 }
@@ -38,16 +46,16 @@ export function registerScrapecheckTool(server: McpServer, budget: BudgetState):
     {
       description: `Verify a web value you already hold against its live source page (ScrapeCheck). Not retrieval: it checks a value, it does not find data.
 
-Call when a price, title, availability, or any page value came from a search result, a scraper, or another tool, and you are about to act on it. ScrapeCheck independently re-fetches the page and returns a signed pass/fail/unverifiable verdict — a claim is never certified unless the re-fetched page contains it, and anything unconfirmed is unverifiable, never pass. Verdicts are ed25519-signed and verifiable offline.
+Call when a price, title, availability, or any page value came from a search result, a scraper, or another tool, and you are about to act on it. ScrapeCheck independently re-fetches the page and returns a pass/fail/unverifiable verdict — a claim is never certified unless the re-fetched page contains it, and anything unconfirmed is unverifiable, never pass. Verdicts carry an ed25519 signature you can check against ScrapeCheck's published key; this tool returns the verdict as-is and does NOT verify that signature for you.
 
 Tiers:
 - verify   — full check: is the value on the page AND does it answer what was asked   ($${withTxFee(0.01).toFixed(3)}/check charged)
 - presence — cheap screen: does the value appear on the page at all; never returns pass ($${withTxFee(0.002).toFixed(4)}/check charged)
 
-Scope: server-rendered pages; JS-only content returns unverifiable rather than a guess.`,
+Scope: server-rendered pages; JS-only content returns unverifiable rather than a guess. Settles on Base only. Public http(s) URLs only.`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
-        url: z.string().describe("Source page the value came from (public http/https)"),
+        url: z.string().url().describe("Source page the value came from (public http/https)"),
         claim: z
           .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
           .describe('The value(s) to check, as {field: value}, e.g. {"price": "$45"}'),
@@ -61,6 +69,45 @@ Scope: server-rendered pages; JS-only content returns unverifiable rather than a
     },
     async ({ url, claim, asked, tier, agent_id }) => {
       try {
+        // Settlement goes to ScrapeCheck's Base treasury; sol.blockrun.ai does
+        // not carry these routes. Fail closed with the same actionable message
+        // the other Base-only paid tools use (price.ts, realface.ts) rather
+        // than letting the call 404 against the wrong gateway.
+        if (getChain() !== "base") {
+          return {
+            content: [{ type: "text", text: formatError("blockrun_scrapecheck settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
+            isError: true,
+          };
+        }
+
+        // SSRF guard on the caller-supplied URL, mirroring blockrun_video and
+        // blockrun_image. This process never fetches the URL — the GATEWAY and
+        // then ScrapeCheck do — so this is defense-in-depth plus a saved round
+        // trip: a URL pointing at localhost / the metadata endpoint / the
+        // private network would otherwise be forwarded, quoted, and PAID for
+        // before failing (or worse, succeeding) server-side. Resolved, not
+        // literal: wildcard-DNS names like 127.0.0.1.nip.io are public strings
+        // that map to private addresses. Runs BEFORE reserveBudget so a
+        // rejected URL never touches the ledger.
+        let parsed: URL;
+        try {
+          parsed = new URL(url);
+        } catch {
+          return { content: [{ type: "text", text: formatError(`url is not a valid URL: ${url}`) }], isError: true };
+        }
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          return {
+            content: [{ type: "text", text: formatError(`url must be an http(s) URL — got scheme "${parsed.protocol}"`) }],
+            isError: true,
+          };
+        }
+        if (await isBlockedFetchHostResolved(parsed.hostname)) {
+          return {
+            content: [{ type: "text", text: formatError(`url resolves to a private/loopback/link-local address (${parsed.hostname}) — refusing to forward it to the gateway.`) }],
+            isError: true,
+          };
+        }
+
         const chosenTier = tier === "presence" ? "presence" : "verify";
         const estimatedCost = estimateScrapecheckCost(chosenTier);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
