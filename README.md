@@ -295,7 +295,7 @@ blockrun_wallet action:"setup"                  # shows the Solana address + fun
 
 Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. Switch back with `blockrun_wallet action:"chain" chain:"base"`. The server keeps both wallets; switching just changes which one pays.
 
-**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
+**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_video`, `blockrun_modal`, `blockrun_defi`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` pays on either chain.
 
 ---
 
