@@ -38,8 +38,23 @@ jobs:
         run: |
           PKG=$(node -p "require('./package.json').version")
           NPM=$(npm view @blockrun/mcp version 2>/dev/null || echo "none")
-          REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp" \
-                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const a=j.servers||[];const cur=a.find(x=>x['_meta']?.['io.modelcontextprotocol.registry/official']?.isLatest)||a[a.length-1];console.log(cur?.server?.version||'none')}catch{console.log('none')}})")
+          # `version=latest` is load-bearing. Without it the search endpoint pages
+          # at 30 results with every isLatest=false, so the old `|| a[a.length-1]`
+          # fallback returned the last row of PAGE ONE — 0.32.8, frozen since July —
+          # and called it the current registry version.
+          #
+          # That was wrong on every run, but it only SHOWED on the runs where it
+          # mattered. On a real release pkg is genuinely new, so `pkg != reg` was
+          # true for the wrong reason and the publish succeeded anyway. The bug
+          # bites when package.json changes WITHOUT a version bump (a dependency
+          # pin, an override): npm is correctly skipped, then the registry step
+          # fires on a stale comparison and 400s with "cannot publish duplicate
+          # version" — a red release job with nothing actually wrong.
+          #
+          # With the parameter the endpoint returns exactly one row, the real
+          # latest, isLatest=true.
+          REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp&version=latest" \
+                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const a=j.servers||[];console.log(a[0]?.server?.version||'none')}catch{console.log('none')}})")
           echo "pkg=$PKG"  >> "$GITHUB_OUTPUT"
           echo "npm=$NPM"  >> "$GITHUB_OUTPUT"
           echo "reg=$REG"  >> "$GITHUB_OUTPUT"
