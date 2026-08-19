@@ -2,6 +2,52 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.40.2
+
+A housekeeping release. One correction users can actually see, and three fixes
+to the machinery that was quietly wrong underneath it.
+
+**The documentation was misleading Solana users.** `blockrun_modal` and
+`blockrun_defi` both settle on Base only — they carry the same
+`getChain() !== "base"` guard as music, speech and video, and the live dual-chain
+sweep confirms why: on sol.blockrun.ai every modal route answers 503 and
+defillama/protocols answers 404. But the README's Base-only list never named
+them, so a Solana user read that list, concluded those two worked on their
+chain, hit the guard, and had no way to know it was expected. Behaviour was
+always right; only the list was wrong.
+
+**The release pipeline's registry guard was reading the wrong number.**
+`registry.modelcontextprotocol.io/v0/servers?search=...` paginates at 30 rows
+with `isLatest=false` on every one, so the old `.find(isLatest) || a[a.length-1]`
+resolved the last row of page one — 0.32.8, frozen since July — and called it
+the current registry version. That was wrong on every run and visible on almost
+none: a real release has a genuinely new version, so the comparison came out
+true for the wrong reason and published correctly anyway. It only bites when
+`package.json` changes without a version bump, where it fires into a guaranteed
+`400 cannot publish duplicate version`. Fixed with the `&version=latest`
+parameter, which returns exactly one row.
+
+**Two dependency advisories closed in our own tree.** `fast-uri` 3.1.2 → 3.1.5
+(three host-confusion advisories) and `ip-address` 10.2.0 → 10.5.0 (three SSRF
+and trust-boundary bypasses), both arriving through the MCP SDK and both pinned
+inside the range their parent declared. Worth being precise about who this
+helped: a fresh `npm install @blockrun/mcp@0.40.1` already resolved both to the
+patched versions, because npm picks the newest match for `^3.0.1` and `^10.2.0`
+at install time. The stale copies lived only in this repo's `package-lock.json`,
+which is what CI installs from — so CI had been running its tests against
+vulnerable versions while every user was fine. Also worth stating plainly: the
+`ip-address` advisories concern SSRF, and this server ships an SSRF guard, but
+the two never touched. `src/utils/ssrf.ts` has no imports at all; the
+private/loopback/link-local checks are pure Node and were never built on the
+vulnerable parser.
+
+**`VERSION` had drifted eight minors** behind `package.json` (0.32.6 vs 0.40.1).
+Nothing in the repo reads it — publish.yml takes the version from
+`package.json` — but external release tooling computes the next version from it,
+and off 0.32.6 that proposes a number already published.
+
+No tool changes, no pricing changes, no API changes. 20 tools, unchanged.
+
 ## 0.40.1
 
 An audit release: no new features, eleven confirmed defects fixed, nearly all of
