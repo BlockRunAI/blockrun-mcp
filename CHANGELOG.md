@@ -2,6 +2,40 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.40.3
+
+**Slow Seedance 2.5 jobs now finish instead of timing out at 5 minutes.** The
+client-side polling budget was 300s, but production 30s clips measured 479s,
+400s and 275s — so two of three failed on a hard cap that had nothing to do with
+the gateway, which had already moved to async submit plus short polling requests.
+The budget is now 540s. Nothing about pricing or settlement changed; the jobs
+were completing upstream all along, and the client was hanging up on them.
+
+**The 9-minute budget can no longer outlive the payment authorization it runs
+under.** The obvious version of that fix is off by one loop iteration. The
+signed EIP-3009 authorization dies at `startedAt + 600s`, and a 540s budget
+looks like it leaves a minute of margin — but the deadline check only bounds
+when a poll may *start*. The loop then adds a 5s interval sleep and a 90s poll
+timeout, so a poll entered at 539.9s stayed in flight until 635s: 35 seconds
+*past* `validBefore`, not 60 seconds inside it.
+
+That tail is not cosmetic. Settlement happens server-side on the poll the
+gateway answers `"completed"`, so a poll outliving its authorization fails
+settlement for a video that actually rendered — the same failure `blockrun_music`
+shipped once and was fixed by raising its window to 600s. Worse, the client books
+local spend the moment it observes `"completed"` without checking that settlement
+succeeded, so the expired tail could record a ledger charge for USDC that never
+moved: the mirror image of the bug that booking order was introduced to fix.
+
+Lowering the budget would have defeated the point — staying inside 600s
+unclamped requires 445s, which fails the 479s job the change exists to support.
+Instead the loop clamps its last poll to the budget that is actually left
+(`pollTimeoutFor`), which pins worst-case wall time at exactly 540s and makes
+the 60s margin real. The authorization window is now a named constant used where
+the payload is signed, rather than a `600` literal restated in the test, and the
+clamp is covered by a swept property test: a poll started at any reachable
+instant finishes on or before the deadline.
+
 ## 0.40.2
 
 A housekeeping release. One correction users can actually see, and three fixes
