@@ -63,8 +63,9 @@ stored key byte-for-byte before unlinking anything — a wrong answer here
 destroys the only copy of a key holding real USDC. And the secret never
 touches `argv` on either platform (`security -i` on macOS, stdin on
 `secret-tool`), because `ps` is world-readable; the `-w` stdin-prompt
-alternative was rejected for silently truncating at 128 bytes, which a base58
-Solana key comes close enough to matter.
+alternative was avoided on its own merits, and is also reported to truncate at
+128 bytes (a figure inherited from Circle's CLI, not reproduced here — nothing
+in this implementation depends on it).
 
 `getChain()` gained a matching last-resort branch. Its Solana autodetect keys
 off a non-empty `.solana-session`, which `strict` deletes — so hardening a
