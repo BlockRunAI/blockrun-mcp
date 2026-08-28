@@ -2,6 +2,51 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.41.0
+
+**The wallet key can now live in the OS keychain instead of a plaintext file.**
+`~/.blockrun/.session` is mode `0600`, which stops other UNIX users and nothing
+else — a malicious postinstall script, a backup agent syncing `$HOME` to
+iCloud, or a log collector that slurps dotfiles all read it as easily as we do.
+That is the same class of leak `utils/key-leak-scanner.ts` already exists to
+catch after the hosted-MCP flow put keys in `~/.claude.json`. On macOS and on
+Linux boxes with `secret-tool`, the key now moves behind an OS-mediated API:
+mirror newly-resolved keys into it, and read from it once the plaintext file
+is gone. Windows and keychain-less Linux are unchanged, and
+the MCP stays pure JS — no native dependency, no loss of `npx` portability.
+
+Storage is controlled by `BLOCKRUN_KEYCHAIN`. The default, `auto`, **keeps the
+plaintext file**: the CLI, the SDK and a long tail of scripts read
+`~/.blockrun/.session` directly, so deleting it by default would break tools
+this package does not own. `strict` opts into actually retiring the file, and
+`off` disables the keychain entirely. `BLOCKRUN_WALLET_KEY` still outranks
+both stores, matching the SDK's own precedence — and so does the key file
+whenever it exists. Both rules defend the same thing: replacing
+`~/.blockrun/.session` is how a wallet gets rotated or restored from a backup,
+so a stale keychain entry from a previous wallet must never shadow it. Reading
+the keychain ahead of a file still sitting on disk would have signed every
+payment with a wallet the user believed they had replaced, and in `auto` mode
+it bought nothing anyway — the plaintext file is right there for the same
+attacker to read. The keychain becomes the authoritative store exactly when the
+file is gone, which is what `strict` is for.
+
+Two things the read-back guard protects against. `security` exits 0 on a write
+to a locked keychain that then reads back empty, so `strict` verifies the
+stored key byte-for-byte before unlinking anything — a wrong answer here
+destroys the only copy of a key holding real USDC. And the secret never
+touches `argv` on either platform (`security -i` on macOS, stdin on
+`secret-tool`), because `ps` is world-readable; the `-w` stdin-prompt
+alternative was rejected for silently truncating at 128 bytes, which a base58
+Solana key comes close enough to matter.
+
+`getChain()` gained a matching last-resort branch. Its Solana autodetect keys
+off a non-empty `.solana-session`, which `strict` deletes — so hardening a
+Solana wallet would otherwise have flipped the user to Base and met them with
+"Base-only" refusals from a wallet they never funded.
+
+Keychain technique adapted from Circle's CLI (Apache-2.0); the implementation
+here is our own.
+
 ## 0.40.3
 
 **Slow Seedance 2.5 jobs now finish instead of timing out at 5 minutes.** The
