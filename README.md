@@ -61,7 +61,7 @@ Every other data integration was built for **human developers** — create an ac
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.
-- **Self-custody** — your key never leaves your machine (`~/.blockrun/.session` by default, `0600`). BlockRun can't move your funds.
+- **Self-custody** — your key never leaves your machine (`~/.blockrun/.session`, `0600` — or the OS keychain once you opt into `BLOCKRUN_KEYCHAIN=strict`). BlockRun can't move your funds.
 
 ---
 
@@ -355,6 +355,7 @@ One wallet. All sources. No dashboards.
 | `~/.blockrun/.chain-auto` | written on first run | Automatic pin: the chain you were already on when your second wallet was provisioned. Keeps a Base user on Base once a Solana session exists, and is outranked by `SOLANA_WALLET_KEY`. Cleared whenever you set a chain explicitly. |
 | `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
+| `BLOCKRUN_KEYCHAIN` | `auto` | Key storage. `auto` — mirror the key into the OS keychain (macOS Keychain / Linux `secret-tool`) and keep the plaintext file, which stays authoritative so other BlockRun tools keep working and so replacing it still rotates your wallet. `off` — file only. `strict` — also delete `~/.blockrun/.session` once a read-back proves the keychain holds the same key; **this breaks other tools that read that file directly**. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
 | `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap. |

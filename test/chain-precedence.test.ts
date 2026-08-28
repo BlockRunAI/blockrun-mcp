@@ -25,7 +25,14 @@ const blockrunDir = path.join(home, ".blockrun");
 fs.mkdirSync(blockrunDir, { recursive: true });
 const realHome = process.env.HOME;
 const savedEnv = process.env.SOLANA_WALLET_KEY;
+const savedKeychain = process.env.BLOCKRUN_KEYCHAIN;
 process.env.HOME = home;
+// These tests pin FILE precedence, and $HOME does not sandbox the OS keychain:
+// getChain()'s last resort probes it for a Solana key, so on a developer
+// machine that has actually used a Solana wallet the "falls back to base" cases
+// would read a real keychain entry and fail. Keychain lookups get their own
+// coverage in keychain.test.ts.
+process.env.BLOCKRUN_KEYCHAIN = "off";
 
 const { getChain, setChain } = await import("../src/utils/wallet.js");
 
@@ -42,6 +49,8 @@ afterEach(() => {
 });
 
 process.on("exit", () => {
+  if (savedKeychain === undefined) delete process.env.BLOCKRUN_KEYCHAIN;
+  else process.env.BLOCKRUN_KEYCHAIN = savedKeychain;
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
   fs.rmSync(home, { recursive: true, force: true });

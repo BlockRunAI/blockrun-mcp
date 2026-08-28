@@ -15,8 +15,17 @@ import {
   formatWalletCreatedMessage,
   formatNeedsFundingMessage,
   SOLANA_WALLET_FILE_PATH,
+  WALLET_FILE_PATH,
 } from "@blockrun/llm";
+import { privateKeyToAccount } from "viem/accounts";
 import { USDC_ADDRESS, BASE_RPC_URLS } from "./constants.js";
+import {
+  EVM_KEY_ACCOUNT,
+  SOLANA_KEY_ACCOUNT,
+  getKeychainMode,
+  keychainLoad,
+  persistKey,
+} from "./keychain.js";
 
 export type ApiClient = LLMClient | SolanaLLMClient;
 
@@ -76,6 +85,24 @@ function readChainPreference(): "base" | "solana" | null {
   return null;
 }
 
+// Memoized: getChain() is a hot path and this branch spawns a subprocess.
+// Only ever consulted after the file check misses, so the cost is paid at most
+// once per process, and only by users who have no Solana session file.
+let _keychainSolanaKeyPresent: boolean | undefined;
+
+function hasKeychainSolanaKey(): boolean {
+  if (getKeychainMode() === "off") return false;
+  if (_keychainSolanaKeyPresent === undefined) {
+    _keychainSolanaKeyPresent = keychainLoad(SOLANA_KEY_ACCOUNT) !== null;
+  }
+  return _keychainSolanaKeyPresent;
+}
+
+/** Test seam — clears the memoized keychain probe. */
+export function resetKeychainProbeCache(): void {
+  _keychainSolanaKeyPresent = undefined;
+}
+
 export function getChain(): "base" | "solana" {
   // 1. Explicit user preference (~/.blockrun/.chain) wins over everything else.
   //    Without this, the mere existence of a stale .solana-session file pins
@@ -106,6 +133,13 @@ export function getChain(): "base" | "solana" {
       return "solana";
     }
   } catch { /* ignore */ }
+
+  // 5. Same signal, different store. Under BLOCKRUN_KEYCHAIN=strict the
+  //    .solana-session file is deleted once its key is in the keychain, and
+  //    without this a Solana user with no explicit .chain would be silently
+  //    flipped to Base by the hardening step itself — then met with
+  //    "Base-only" refusals from a wallet they never funded.
+  if (hasKeychainSolanaKey()) return "solana";
 
   return "base";
 }
@@ -196,13 +230,63 @@ export function baseOnlyMessage(capability: string): string | null {
   return null;
 }
 
+/**
+ * A 0x-prefixed 32-byte EVM key. Anything else found in the keychain is
+ * ignored rather than handed to viem: privateKeyToAccount THROWS on malformed
+ * input, and a corrupted keychain entry must degrade to the file, not take
+ * every paid tool down with it.
+ */
+export function isEvmPrivateKey(value: string): value is `0x${string}` {
+  return /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
 function ensureEvmWallet() {
-  if (!_evmWalletInfo) {
-    _evmWalletInfo = getOrCreateWallet();
-    if (_evmWalletInfo.isNew) {
-      console.error(formatWalletCreatedMessage(_evmWalletInfo.address));
+  if (_evmWalletInfo) return _evmWalletInfo;
+
+  // BLOCKRUN_WALLET_KEY outranks the keychain, matching the SDK's own
+  // precedence (env > ~/.blockrun/.session). An operator who exports a key
+  // must not be silently overridden by a stale keychain entry from an earlier
+  // wallet — that is the same failure the .chain-auto file exists to prevent,
+  // and here it would route payments through a wallet the user cannot see.
+  // ...and so does the key FILE, whenever it exists. Replacing
+  // ~/.blockrun/.session is how a wallet gets rotated or restored from backup,
+  // and reading the keychain ahead of an existing file would let a stale entry
+  // from the previous wallet shadow the new key silently — every payment then
+  // signed by a wallet the user believes they replaced. In auto mode the file
+  // is deliberately kept for the CLI/SDK, so it is the shared source of truth
+  // and the keychain is only its mirror; the keychain becomes authoritative
+  // exactly when the file is gone, which is what strict mode does. Reading it
+  // first bought no security in auto mode anyway: the plaintext file is still
+  // sitting there for the same attacker to read.
+  if (
+    !process.env.BLOCKRUN_WALLET_KEY &&
+    getKeychainMode() !== "off" &&
+    !fs.existsSync(WALLET_FILE_PATH)
+  ) {
+    const stored = keychainLoad(EVM_KEY_ACCOUNT);
+    if (stored && isEvmPrivateKey(stored)) {
+      _evmWalletInfo = {
+        address: privateKeyToAccount(stored).address,
+        privateKey: stored,
+        isNew: false,
+      };
+      return _evmWalletInfo;
+    }
+    if (stored) {
+      console.error(
+        "[blockrun] Ignoring a malformed EVM key in the OS keychain — falling back to ~/.blockrun/.session.",
+      );
     }
   }
+
+  _evmWalletInfo = getOrCreateWallet();
+  if (_evmWalletInfo.isNew) {
+    console.error(formatWalletCreatedMessage(_evmWalletInfo.address));
+  }
+  // Mirror into the keychain so the next process reads it from there instead
+  // of the plaintext file. No-op unless a keychain exists; only strict mode
+  // then retires the file, and only after a verified read-back.
+  persistKey(EVM_KEY_ACCOUNT, _evmWalletInfo.privateKey, WALLET_FILE_PATH);
   return _evmWalletInfo;
 }
 
@@ -211,8 +295,46 @@ export function getOrCreateWalletKey(): `0x${string}` {
   return info.privateKey as `0x${string}`;
 }
 
+// Resolved once per process. buildSolanaClient() is called per-request on the
+// non-cached paths (blockrun_chat, modal), and a keychain read spawns a
+// subprocess — fine once, not fine on every paid call.
+let _solanaKey: string | null | undefined;
+
+/**
+ * Solana key precedence, mirroring the EVM path:
+ * SOLANA_WALLET_KEY env > ~/.blockrun/.solana-session > OS keychain.
+ * The file outranks the keychain so that rotating the wallet by replacing the
+ * file is not silently undone by a stale keychain entry; the keychain carries
+ * the key only once the file is gone (strict mode). A key found in the file is
+ * mirrored into the keychain on the way past.
+ */
+export function resolveSolanaKey(): string | undefined {
+  if (process.env.SOLANA_WALLET_KEY) return process.env.SOLANA_WALLET_KEY;
+  if (_solanaKey !== undefined) return _solanaKey ?? undefined;
+
+  // Same precedence correction as the EVM path: an existing .solana-session is
+  // the user's current intent, so it outranks whatever the keychain remembers.
+  if (getKeychainMode() !== "off" && !fs.existsSync(SOLANA_WALLET_FILE_PATH)) {
+    const stored = keychainLoad(SOLANA_KEY_ACCOUNT);
+    if (stored) {
+      _solanaKey = stored;
+      return stored;
+    }
+  }
+
+  const fromFile = loadSolanaWallet();
+  if (fromFile) persistKey(SOLANA_KEY_ACCOUNT, fromFile, SOLANA_WALLET_FILE_PATH);
+  _solanaKey = fromFile ?? null;
+  return fromFile ?? undefined;
+}
+
+/** Drop the cached Solana key. Test seam, and used when the wallet is re-provisioned. */
+export function resetSolanaKeyCache(): void {
+  _solanaKey = undefined;
+}
+
 function buildSolanaClient(timeout?: number): SolanaLLMClient {
-  const privateKey = process.env.SOLANA_WALLET_KEY || loadSolanaWallet() || undefined;
+  const privateKey = resolveSolanaKey();
   const opts = { ...(privateKey ? { privateKey } : {}), ...(timeout ? { timeout } : {}) };
   return new SolanaLLMClient(Object.keys(opts).length ? opts : undefined);
 }
