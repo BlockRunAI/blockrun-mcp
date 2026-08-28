@@ -67,9 +67,13 @@ export function _resetKeychainWarnings(): void {
  * we ever store a JSON blob or a passphrase here.
  *
  * A NEWLINE cannot be escaped this way at all: `security -i` reads one command
- * per line, so an embedded newline ends the command and the remainder parses
- * as the NEXT command. Callers must reject such values outright rather than
- * pretend to quote them — see the guard in keychainStore.
+ * per line, so an embedded newline ends the command mid-value. Measured on
+ * macOS 26.5: the truncated line fails to parse and `security` exits 2 without
+ * storing anything, and the remainder does NOT execute as an injected command
+ * — the quote escaping above already stops a value from closing its own quote.
+ * So this is a correctness guard, not a security boundary: callers reject such
+ * values so the failure is explicit instead of an opaque exit 2. See the guard
+ * in keychainStore.
  */
 export function escapeForSecurityInteractive(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -112,10 +116,12 @@ export function keychainStore(account: string, secret: string): boolean {
   const platform = os.platform();
 
   // No amount of quoting makes a newline safe for `security -i`, which parses
-  // one command per line: the value would be truncated at the break and the
-  // rest executed as another security(1) subcommand. Refuse and let the caller
-  // keep the file — storing a silently truncated private key would be far
-  // worse than not storing one.
+  // one command per line: the value is cut at the break. Measured on macOS
+  // 26.5 the mangled line simply fails to parse (exit 2, nothing stored) —
+  // it does NOT execute the remainder as an injected command, since the quote
+  // escaping already prevents a value from closing its own quote. Refusing up
+  // front turns that opaque exit 2 into a stated reason, and guards against a
+  // future platform being less strict about a half-parsed line.
   if (/[\r\n]/.test(secret)) {
     warnOnce("Refusing to store a key containing a line break in the OS keychain — keeping the file.");
     return false;
@@ -125,9 +131,12 @@ export function keychainStore(account: string, secret: string): boolean {
     if (platform === "darwin") {
       // `-i` (interactive) mode: the command — including the secret — arrives
       // on stdin. The alternative, a trailing bare `-w` that prompts for the
-      // password on stdin, silently TRUNCATES at 128 bytes; a base58 Solana
-      // key is up to 100 chars today, close enough to that ceiling to be a
-      // future correctness bug. `-U` updates an existing item in place.
+      // password, is reported to truncate at 128 bytes; a base58 Solana key is
+      // up to 100 chars today, close enough to that ceiling to avoid the
+      // prompt path regardless. NOTE: the 128-byte figure is inherited from
+      // Circle's CLI and has NOT been reproduced here — `-i` is preferred on
+      // its own merits (no argv exposure), so nothing depends on it being
+      // exact. `-U` updates an existing item in place.
       const command =
         `add-generic-password -s "${escapeForSecurityInteractive(KEYCHAIN_SERVICE)}" ` +
         `-a "${escapeForSecurityInteractive(account)}" ` +
