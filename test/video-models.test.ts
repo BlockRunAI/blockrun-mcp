@@ -15,6 +15,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
+import { pollTimeoutFor } from "../src/utils/poll.js";
 
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
@@ -49,7 +50,6 @@ const {
   VIDEO_TOTAL_BUDGET_MS,
   VIDEO_POLL_TIMEOUT_MS,
   VIDEO_PAYMENT_AUTH_SECONDS,
-  pollTimeoutFor,
 } = await import("../src/tools/video.js");
 
 function makeHarness() {
@@ -361,25 +361,25 @@ test("the last poll is clamped to the remaining budget, never left in flight pas
   const deadline = start + VIDEO_TOTAL_BUDGET_MS;
 
   // Early in the window there is plenty of budget: full poll timeout.
-  assert.equal(pollTimeoutFor(deadline, start), VIDEO_POLL_TIMEOUT_MS);
-  assert.equal(pollTimeoutFor(deadline, deadline - VIDEO_POLL_TIMEOUT_MS), VIDEO_POLL_TIMEOUT_MS);
+  assert.equal(pollTimeoutFor(deadline, start, VIDEO_POLL_TIMEOUT_MS), VIDEO_POLL_TIMEOUT_MS);
+  assert.equal(pollTimeoutFor(deadline, deadline - VIDEO_POLL_TIMEOUT_MS, VIDEO_POLL_TIMEOUT_MS), VIDEO_POLL_TIMEOUT_MS);
 
   // The case that motivated this: a poll entered just under the wire. Before
   // the clamp it got the full 90s and stayed in flight ~90s past the deadline;
   // now it gets exactly what is left.
-  assert.equal(pollTimeoutFor(deadline, deadline - 1_000), 1_000);
-  assert.equal(pollTimeoutFor(deadline, deadline - 1), 1);
+  assert.equal(pollTimeoutFor(deadline, deadline - 1_000, VIDEO_POLL_TIMEOUT_MS), 1_000);
+  assert.equal(pollTimeoutFor(deadline, deadline - 1, VIDEO_POLL_TIMEOUT_MS), 1);
 
   // Budget spent -> 0, which the loop treats as "stop" rather than issuing a
   // request that cannot finish in time.
-  assert.equal(pollTimeoutFor(deadline, deadline), 0);
-  assert.equal(pollTimeoutFor(deadline, deadline + 5_000), 0);
+  assert.equal(pollTimeoutFor(deadline, deadline, VIDEO_POLL_TIMEOUT_MS), 0);
+  assert.equal(pollTimeoutFor(deadline, deadline + 5_000, VIDEO_POLL_TIMEOUT_MS), 0);
 
   // The property that actually matters, swept across the whole window: a poll
   // started at any reachable instant finishes on or before the deadline.
   for (let elapsed = 0; elapsed <= VIDEO_TOTAL_BUDGET_MS; elapsed += 4_999) {
     const now = start + elapsed;
-    const t = pollTimeoutFor(deadline, now);
+    const t = pollTimeoutFor(deadline, now, VIDEO_POLL_TIMEOUT_MS);
     assert.ok(now + t <= deadline, `poll started at +${elapsed}ms would finish past the deadline`);
   }
 });
