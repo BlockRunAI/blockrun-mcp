@@ -7,6 +7,7 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
+import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
@@ -40,17 +41,6 @@ export const VIDEO_POLL_TIMEOUT_MS = 90_000;
 // margin above is asserted against the value the request actually sends,
 // rather than a literal restated in the test.
 export const VIDEO_PAYMENT_AUTH_SECONDS = 600;
-
-// How long the next poll may block, given the budget that is left. Pulled out
-// of the loop so the clamp is unit-testable: inline it sits inside the handler,
-// behind a live 402 + payment + submit chain the test suite deliberately blocks
-// at the network, so its removal would otherwise go uncaught.
-// Returns 0 when the budget is spent, which the caller treats as "stop".
-export function pollTimeoutFor(deadlineMs: number, nowMs: number): number {
-  const remainingMs = deadlineMs - nowMs;
-  if (remainingMs <= 0) return 0;
-  return Math.min(VIDEO_POLL_TIMEOUT_MS, remainingMs);
-}
 
 // Video pricing mirrors the gateway's calculateVideoPrice() + addTransactionFee()
 // (blockrun/src/lib/models.ts). Two regimes:
@@ -575,7 +565,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           // only at the top of the loop bounds when a poll may START, not when
           // it finishes — an unclamped 90s poll entered just under the wire
           // stays in flight well past validBefore.
-          const pollTimeoutMs = pollTimeoutFor(deadline, Date.now());
+          const pollTimeoutMs = pollTimeoutFor(deadline, Date.now(), VIDEO_POLL_TIMEOUT_MS);
           if (pollTimeoutMs === 0) break;
 
           const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
@@ -606,9 +596,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           // finally released the reservation — a real charge the ledger never
           // saw, silently raising the cap by the lost amount.
           if (lastStatus === "completed" && !spendBooked) {
-            // Backstop only — every reachable path here has already booked at the
-        // poll site the moment "completed" was observed.
-        if (!spendBooked) recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+            recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
             spendBooked = true;
           }
 

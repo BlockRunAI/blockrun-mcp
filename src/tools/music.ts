@@ -7,6 +7,7 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
+import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -24,7 +25,17 @@ const MUSIC_COST = withTxFee(0.1575);
 // Async slow-path polling. MiniMax music takes 1-3 min: fast tracks complete
 // inline (200), slower ones return 202 + poll_url and we poll like blockrun_video.
 const MUSIC_POLL_INTERVAL_MS = 5_000;
-const MUSIC_POLL_BUDGET_MS = 240_000; // 4 min overall budget for submit + polling
+export const MUSIC_POLL_BUDGET_MS = 240_000; // 4 min polling budget, measured from submit
+export const MUSIC_POLL_TIMEOUT_MS = 90_000;
+// Lifetime of the signed payment authorization, in seconds, counted from the
+// moment createPaymentPayload() signs. The polling budget above is measured
+// from a LATER instant (after submit), so the two are not directly comparable —
+// the loop below takes the earlier of the two deadlines rather than assuming
+// the poll budget is the binding one.
+export const MUSIC_PAYMENT_AUTH_SECONDS = 600;
+// Settle-side slack: stop polling this far before validBefore so the gateway
+// still has room to settle the poll we just accepted as completed.
+export const MUSIC_AUTH_MARGIN_MS = 60_000;
 
 export function registerMusicTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -106,6 +117,9 @@ Returns a permanent BlockRun-hosted URL.`,
         const paymentRequired = parsePaymentRequired(prHeader);
         const details = extractPaymentDetails(paymentRequired);
 
+        // validBefore is counted from HERE, so the authorization deadline has to
+        // be stamped here too — not after submit, which can burn up to 95s.
+        const signedAt = Date.now();
         const paymentPayload = await createPaymentPayload(
           privateKey,
           account.address,
@@ -120,7 +134,7 @@ Returns a permanent BlockRun-hosted URL.`,
             // The gateway's default (300s) expires before a slow MiniMax track
             // completes, so settlement fails for a track that actually generated
             // (mirrors blockrun_video's fix).
-            maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, 600),
+            maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, MUSIC_PAYMENT_AUTH_SECONDS),
             extra: details.extra,
           }
         );
@@ -160,14 +174,29 @@ Returns a permanent BlockRun-hosted URL.`,
             : `${BLOCKRUN_API.replace(/\/api$/, "")}${submitData.poll_url}`;
 
           const startedAt = Date.now();
+          // Two independent deadlines, and the loop must respect BOTH. The poll
+          // budget is measured from here (after submit); the authorization is
+          // measured from signing and dies regardless of how long submit took.
+          // Take the earlier: a slow submit shortens the window rather than
+          // silently pushing polls past validBefore, and a fast one leaves the
+          // full MUSIC_POLL_BUDGET_MS intact for the 1-3 min MiniMax tracks.
+          const deadline = Math.min(
+            startedAt + MUSIC_POLL_BUDGET_MS,
+            signedAt + MUSIC_PAYMENT_AUTH_SECONDS * 1000 - MUSIC_AUTH_MARGIN_MS,
+          );
           let lastStatus = submitData.status || "queued";
-          while (Date.now() - startedAt < MUSIC_POLL_BUDGET_MS) {
+          while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, MUSIC_POLL_INTERVAL_MS));
+
+            // Clamp the last poll to the budget that is left, so it can never
+            // stay in flight past whichever deadline bound us.
+            const pollTimeoutMs = pollTimeoutFor(deadline, Date.now(), MUSIC_POLL_TIMEOUT_MS);
+            if (pollTimeoutMs === 0) break;
 
             const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
               method: "GET",
               headers: { "PAYMENT-SIGNATURE": paymentPayload },
-            }, 90_000);
+            }, pollTimeoutMs);
 
             const pollData = await pollResp.json().catch(() => ({})) as {
               status?: string;

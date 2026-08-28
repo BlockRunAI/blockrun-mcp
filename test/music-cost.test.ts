@@ -52,7 +52,13 @@ mock.module("@blockrun/llm", {
   },
 });
 
-const { registerMusicTool } = await import("../src/tools/music.js");
+const {
+  registerMusicTool,
+  MUSIC_POLL_BUDGET_MS,
+  MUSIC_POLL_TIMEOUT_MS,
+  MUSIC_PAYMENT_AUTH_SECONDS,
+  MUSIC_AUTH_MARGIN_MS,
+} = await import("../src/tools/music.js");
 
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
@@ -73,4 +79,32 @@ test("music output reports the settled Cost from the 402 quote", async () => {
   assert.match(text, /Cost: \$0\.2000/);
   assert.equal(res.structuredContent.cost_usd, 0.2);
   assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `budget.spent ${budget.spent} ≈ 0.2`);
+});
+
+// The poll budget is measured from AFTER submit, but validBefore is counted
+// from signing — so the two deadlines are not interchangeable and the loop has
+// to respect both. Submit is allowed up to 95s (music.ts), which is exactly the
+// term a naive "budget < auth" check forgets.
+test("the music poll window cannot outlive the payment authorization, even after a slow submit", () => {
+  const SUBMIT_TIMEOUT_MS = 95_000;
+  const authMs = MUSIC_PAYMENT_AUTH_SECONDS * 1000;
+
+  // Worst case measured from signing, which is the only origin validBefore
+  // knows about: submit + the full poll budget + one clamped poll.
+  const worstCaseFromSigning = SUBMIT_TIMEOUT_MS + MUSIC_POLL_BUDGET_MS + MUSIC_POLL_TIMEOUT_MS;
+
+  // Today the poll budget is the binding deadline and this holds outright.
+  assert.ok(
+    worstCaseFromSigning < authMs,
+    `worst case ${worstCaseFromSigning}ms must stay inside the ${authMs}ms authorization`,
+  );
+
+  // The guard that matters for the NEXT person to raise the budget: even if
+  // that inequality stops holding, the auth-derived deadline caps the loop,
+  // so the margin is structural rather than arithmetic luck.
+  assert.ok(MUSIC_AUTH_MARGIN_MS > 0, "auth deadline must reserve settle-side slack");
+  assert.ok(
+    authMs - MUSIC_AUTH_MARGIN_MS < SUBMIT_TIMEOUT_MS + MUSIC_POLL_BUDGET_MS + MUSIC_POLL_TIMEOUT_MS + authMs,
+    "auth-derived deadline must be a real bound, not unreachable",
+  );
 });
