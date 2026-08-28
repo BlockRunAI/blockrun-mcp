@@ -7,7 +7,7 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
-import { pollTimeoutFor } from "../utils/poll.js";
+import { pollDeadline, pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -180,9 +180,12 @@ Returns a permanent BlockRun-hosted URL.`,
           // Take the earlier: a slow submit shortens the window rather than
           // silently pushing polls past validBefore, and a fast one leaves the
           // full MUSIC_POLL_BUDGET_MS intact for the 1-3 min MiniMax tracks.
-          const deadline = Math.min(
-            startedAt + MUSIC_POLL_BUDGET_MS,
-            signedAt + MUSIC_PAYMENT_AUTH_SECONDS * 1000 - MUSIC_AUTH_MARGIN_MS,
+          const deadline = pollDeadline(
+            startedAt,
+            MUSIC_POLL_BUDGET_MS,
+            signedAt,
+            MUSIC_PAYMENT_AUTH_SECONDS * 1000,
+            MUSIC_AUTH_MARGIN_MS,
           );
           let lastStatus = submitData.status || "queued";
           while (Date.now() < deadline) {

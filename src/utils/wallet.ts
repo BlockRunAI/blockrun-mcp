@@ -24,6 +24,7 @@ import {
   SOLANA_KEY_ACCOUNT,
   getKeychainMode,
   keychainLoad,
+  keychainRead,
   persistKey,
 } from "./keychain.js";
 
@@ -263,16 +264,33 @@ function ensureEvmWallet() {
     getKeychainMode() !== "off" &&
     !fs.existsSync(WALLET_FILE_PATH)
   ) {
-    const stored = keychainLoad(EVM_KEY_ACCOUNT);
-    if (stored && isEvmPrivateKey(stored)) {
+    const read = keychainRead(EVM_KEY_ACCOUNT);
+
+    if (read.status === "found" && isEvmPrivateKey(read.value)) {
       _evmWalletInfo = {
-        address: privateKeyToAccount(stored).address,
-        privateKey: stored,
+        address: privateKeyToAccount(read.value).address,
+        privateKey: read.value,
         isNew: false,
       };
       return _evmWalletInfo;
     }
-    if (stored) {
+
+    // A read that FAILED is not a read that found nothing. The file is already
+    // gone at this point (strict mode retired it), so falling through would
+    // hand getOrCreateWallet() an empty slate and mint a BRAND NEW wallet —
+    // orphaning a funded one that is very likely still sitting in a keychain we
+    // merely could not open (locked, ACL-denied, timed out). Stop instead: a
+    // loud error is recoverable, a silently replaced wallet is not.
+    if (read.status === "error") {
+      throw new Error(
+        `Could not read the wallet key from the OS keychain (${read.detail}), and ` +
+          `~/.blockrun/.session no longer exists because BLOCKRUN_KEYCHAIN=strict retired it. ` +
+          `Refusing to create a new wallet — your existing one is most likely still in the keychain. ` +
+          `Unlock the keychain and retry, or set BLOCKRUN_WALLET_KEY to your key.`,
+      );
+    }
+
+    if (read.status === "found") {
       console.error(
         "[blockrun] Ignoring a malformed EVM key in the OS keychain — falling back to ~/.blockrun/.session.",
       );
@@ -288,6 +306,11 @@ function ensureEvmWallet() {
   // then retires the file, and only after a verified read-back.
   persistKey(EVM_KEY_ACCOUNT, _evmWalletInfo.privateKey, WALLET_FILE_PATH);
   return _evmWalletInfo;
+}
+
+/** Drop the cached EVM wallet. Test seam, mirroring resetSolanaKeyCache(). */
+export function resetEvmWalletCache(): void {
+  _evmWalletInfo = null;
 }
 
 export function getOrCreateWalletKey(): `0x${string}` {

@@ -31,12 +31,18 @@ delete process.env.BLOCKRUN_WALLET_KEY;
 // The keychain always answers with the stale key, so any test that resolves to
 // KEYCHAIN_KEY proves the file was skipped.
 let keychainAnswer: string | null = KEYCHAIN_KEY;
+let readAnswer: { status: string; value?: string; detail?: string } = {
+  status: "found",
+  value: KEYCHAIN_KEY,
+};
+let mode = "auto";
 mock.module("../src/utils/keychain.js", {
   namedExports: {
     EVM_KEY_ACCOUNT: "evm-wallet-key",
     SOLANA_KEY_ACCOUNT: "solana-wallet-key",
-    getKeychainMode: () => "auto",
+    getKeychainMode: () => mode,
     keychainLoad: () => keychainAnswer,
+    keychainRead: () => readAnswer,
     persistKey: () => {},
   },
 });
@@ -67,4 +73,27 @@ test("a key file on disk outranks a stale keychain entry", () => {
     privateKeyToAccount(KEYCHAIN_KEY as `0x${string}`).address,
     "resolving to the keychain address would sign payments from a wallet the user replaced",
   );
+});
+
+// The money case. Under BLOCKRUN_KEYCHAIN=strict the plaintext file is gone, so
+// a keychain read that FAILS (locked, ACL-denied, timed out) must not be
+// mistaken for "no wallet here": falling through to getOrCreateWallet() would
+// mint a fresh empty wallet and orphan the funded one still sitting in a
+// keychain we merely could not open.
+test("a failed keychain read refuses to mint a new wallet instead of orphaning the funded one", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache?.();
+
+  fs.rmSync(path.join(home, ".blockrun", ".session"), { force: true });
+  mode = "strict";
+  readAnswer = { status: "error", detail: "security exit 51" };
+
+  assert.throws(
+    () => getOrCreateWalletKey(),
+    /Refusing to create a new wallet/,
+    "a read failure with no file must stop, not silently provision a second wallet",
+  );
+
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
 });
