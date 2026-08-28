@@ -42,7 +42,15 @@ mock.module("../src/utils/wallet.js", {
   },
 });
 
-const { registerVideoTool, estimateVideoCost, SEEDANCE_RESOLUTIONS, VIDEO_TOTAL_BUDGET_MS } = await import("../src/tools/video.js");
+const {
+  registerVideoTool,
+  estimateVideoCost,
+  SEEDANCE_RESOLUTIONS,
+  VIDEO_TOTAL_BUDGET_MS,
+  VIDEO_POLL_TIMEOUT_MS,
+  VIDEO_PAYMENT_AUTH_SECONDS,
+  pollTimeoutFor,
+} = await import("../src/tools/video.js");
 
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
@@ -320,8 +328,60 @@ test("seedance-2.5 ACCEPTS 30s — the headline capability, asserted positively"
 });
 
 test("video polling allows slow 30s jobs while staying inside payment authorization", () => {
-  assert.equal(VIDEO_TOTAL_BUDGET_MS, 9 * 60 * 1000);
-  assert.equal(10 * 60 * 1000 - VIDEO_TOTAL_BUDGET_MS, 60 * 1000);
+  // The capability this budget exists to buy: production Seedance 2.5 30s jobs
+  // measured at 479s, 400s, and 275s. The slowest must fit with room to spare.
+  const SLOWEST_OBSERVED_MS = 479_000;
+  assert.ok(
+    VIDEO_TOTAL_BUDGET_MS > SLOWEST_OBSERVED_MS,
+    `budget ${VIDEO_TOTAL_BUDGET_MS}ms must clear the slowest observed job (${SLOWEST_OBSERVED_MS}ms)`,
+  );
+
+  // The invariant on the other side. Worst-case wall time is bounded by the
+  // budget itself ONLY because the poll loop clamps its last request to the
+  // remaining budget; a poll left in flight past validBefore fails settlement
+  // for a video that actually generated. Derive the authorization window from
+  // the constant the request sends rather than restating 600 as a literal.
+  const authMs = VIDEO_PAYMENT_AUTH_SECONDS * 1000;
+  const MARGIN_MS = 60_000;
+  assert.ok(
+    VIDEO_TOTAL_BUDGET_MS + MARGIN_MS <= authMs,
+    `budget ${VIDEO_TOTAL_BUDGET_MS}ms + ${MARGIN_MS}ms margin must fit the ${authMs}ms authorization`,
+  );
+
+  // The clamp is load-bearing, not cosmetic: unclamped, the real worst case is
+  // budget + interval + poll timeout, which overruns the authorization.
+  assert.ok(
+    VIDEO_TOTAL_BUDGET_MS + VIDEO_POLL_TIMEOUT_MS > authMs,
+    "unclamped worst case would overrun the authorization — do not remove pollTimeoutFor",
+  );
+});
+
+test("the last poll is clamped to the remaining budget, never left in flight past the deadline", () => {
+  const start = 1_000_000;
+  const deadline = start + VIDEO_TOTAL_BUDGET_MS;
+
+  // Early in the window there is plenty of budget: full poll timeout.
+  assert.equal(pollTimeoutFor(deadline, start), VIDEO_POLL_TIMEOUT_MS);
+  assert.equal(pollTimeoutFor(deadline, deadline - VIDEO_POLL_TIMEOUT_MS), VIDEO_POLL_TIMEOUT_MS);
+
+  // The case that motivated this: a poll entered just under the wire. Before
+  // the clamp it got the full 90s and stayed in flight ~90s past the deadline;
+  // now it gets exactly what is left.
+  assert.equal(pollTimeoutFor(deadline, deadline - 1_000), 1_000);
+  assert.equal(pollTimeoutFor(deadline, deadline - 1), 1);
+
+  // Budget spent -> 0, which the loop treats as "stop" rather than issuing a
+  // request that cannot finish in time.
+  assert.equal(pollTimeoutFor(deadline, deadline), 0);
+  assert.equal(pollTimeoutFor(deadline, deadline + 5_000), 0);
+
+  // The property that actually matters, swept across the whole window: a poll
+  // started at any reachable instant finishes on or before the deadline.
+  for (let elapsed = 0; elapsed <= VIDEO_TOTAL_BUDGET_MS; elapsed += 4_999) {
+    const now = start + elapsed;
+    const t = pollTimeoutFor(deadline, now);
+    assert.ok(now + t <= deadline, `poll started at +${elapsed}ms would finish past the deadline`);
+  }
 });
 
 test("durations outside each model's window are refused, both ends", async () => {
