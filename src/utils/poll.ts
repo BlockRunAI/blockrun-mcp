@@ -27,3 +27,25 @@ export function pollTimeoutFor(
   if (remainingMs <= 0) return 0;
   return Math.min(maxTimeoutMs, remainingMs);
 }
+
+/**
+ * The instant a poll loop must stop, given two independent clocks.
+ *
+ * The poll budget is measured from when polling STARTS (after submit), while
+ * the signed payment authorization is measured from when it was SIGNED and
+ * expires regardless of how long submit took. They are not interchangeable, so
+ * the loop has to honour whichever runs out first.
+ *
+ * Taking the earlier means a slow submit shortens the polling window rather
+ * than silently pushing polls past validBefore, and a fast one leaves the whole
+ * budget intact.
+ */
+export function pollDeadline(
+  startedAtMs: number,
+  budgetMs: number,
+  signedAtMs: number,
+  authMs: number,
+  marginMs: number,
+): number {
+  return Math.min(startedAtMs + budgetMs, signedAtMs + authMs - marginMs);
+}

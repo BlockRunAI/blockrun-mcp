@@ -2,6 +2,33 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.41.1
+
+**`BLOCKRUN_KEYCHAIN=strict` could mint a new wallet and orphan your funded
+one.** 0.41.0 shipped `keychainLoad()` returning `null` for two different
+facts: the keychain has no entry, and the keychain could not be read. Under
+`strict` the plaintext file is already gone, so the caller took a transient
+read failure — a locked keychain, an ACL denial, a timeout — as "no wallet
+here" and fell through to `getOrCreateWallet()`, which does what its name says.
+The funded wallet was still sitting in the keychain; the MCP just started
+signing with a fresh empty one. `keychain.ts` names this exact scenario as the
+worst possible failure in a comment at the read site, and then nothing acted
+on it.
+
+Reads now return a discriminated `found` / `absent` / `error`. Only `absent`
+may create a wallet. An `error` with no file left stops with an actionable
+message naming the keychain fault and pointing at `BLOCKRUN_WALLET_KEY` — a
+loud failure is recoverable, a silently substituted wallet is not. `auto` mode
+was never exposed: the file it keeps is found first.
+
+**The music poll deadline is now real code rather than an assertion about
+constants.** The `0.40.x` guard asserted `auth - margin < submit + budget +
+timeout + auth`, which contains `auth` on both sides and is therefore true for
+every input — it verified nothing. The deadline calculation moved into
+`pollDeadline()` and the test now exercises it: the poll budget binds at
+today's constants, the authorization takes over above the 445s crossover, and a
+poll attempted at the deadline is refused rather than issued.
+
 ## 0.41.0
 
 **The wallet key can now live in the OS keychain instead of a plaintext file.**

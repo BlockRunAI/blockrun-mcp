@@ -59,6 +59,7 @@ const {
   MUSIC_PAYMENT_AUTH_SECONDS,
   MUSIC_AUTH_MARGIN_MS,
 } = await import("../src/tools/music.js");
+const { pollDeadline, pollTimeoutFor } = await import("../src/utils/poll.js");
 
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
@@ -99,12 +100,45 @@ test("the music poll window cannot outlive the payment authorization, even after
     `worst case ${worstCaseFromSigning}ms must stay inside the ${authMs}ms authorization`,
   );
 
-  // The guard that matters for the NEXT person to raise the budget: even if
-  // that inequality stops holding, the auth-derived deadline caps the loop,
-  // so the margin is structural rather than arithmetic luck.
-  assert.ok(MUSIC_AUTH_MARGIN_MS > 0, "auth deadline must reserve settle-side slack");
-  assert.ok(
-    authMs - MUSIC_AUTH_MARGIN_MS < SUBMIT_TIMEOUT_MS + MUSIC_POLL_BUDGET_MS + MUSIC_POLL_TIMEOUT_MS + authMs,
-    "auth-derived deadline must be a real bound, not unreachable",
+  // The assertion that actually earns its keep: the auth-derived deadline must
+  // BIND once the budget grows past what the authorization can cover. Asserted
+  // against pollDeadline() itself rather than by restating the arithmetic here,
+  // so it fails if the loop stops consulting the authorization at all.
+  const signedAt = 1_000_000;
+  const startedAt = signedAt + SUBMIT_TIMEOUT_MS; // worst-case slow submit
+  const authCap = signedAt + authMs - MUSIC_AUTH_MARGIN_MS;
+
+  // Today: the budget is the binding clock, so the full window survives.
+  assert.equal(
+    pollDeadline(startedAt, MUSIC_POLL_BUDGET_MS, signedAt, authMs, MUSIC_AUTH_MARGIN_MS),
+    startedAt + MUSIC_POLL_BUDGET_MS,
+    "at today's constants the poll budget should bind, leaving the window intact",
   );
+
+  // The crossover: the budget stops binding once startedAt + budget passes the
+  // authorization cap, i.e. above authMs - margin - submit = 445s here. Below
+  // it the budget still rules; above it the authorization takes over instead of
+  // the loop running past validBefore.
+  assert.equal(
+    pollDeadline(startedAt, 445_000, signedAt, authMs, MUSIC_AUTH_MARGIN_MS),
+    startedAt + 445_000,
+    "445s is the last budget the authorization can still cover",
+  );
+  for (const inflated of [446_000, 540_000, 900_000]) {
+    const d = pollDeadline(startedAt, inflated, signedAt, authMs, MUSIC_AUTH_MARGIN_MS);
+    assert.equal(d, authCap, `budget ${inflated}ms must be capped by the authorization`);
+    // The real invariant. No poll can outlive `d` — pollTimeoutFor clamps the
+    // last one to whatever is left and returns 0 at the deadline itself — so
+    // what has to hold is that `d` stops short of validBefore by the full
+    // margin, leaving the gateway room to settle the poll it just answered.
+    assert.ok(
+      d + MUSIC_AUTH_MARGIN_MS <= signedAt + authMs,
+      "the loop must stop at least one margin before validBefore",
+    );
+    assert.equal(
+      pollTimeoutFor(d, d, MUSIC_POLL_TIMEOUT_MS),
+      0,
+      "a poll attempted at the deadline must be refused, not issued",
+    );
+  }
 });

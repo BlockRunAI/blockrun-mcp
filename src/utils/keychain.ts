@@ -158,8 +158,65 @@ export function keychainStore(account: string, secret: string): boolean {
 }
 
 /**
- * Read a secret. Returns null when absent, unavailable, or unreadable —
- * every caller must treat null as "fall back to the file".
+ * The three distinguishable outcomes of a keychain read.
+ *
+ * Collapsing `absent` and `error` into one null is a money bug: with the
+ * plaintext file already retired by strict mode, "absent" means create a
+ * wallet while "error" means a funded wallet may well be sitting in a keychain
+ * we merely failed to open. Creating a fresh one there orphans the user's
+ * funds — the failure this module's read site calls the worst possible one.
+ */
+export type KeychainRead =
+  | { status: "found"; value: string }
+  | { status: "absent" }
+  | { status: "error"; detail: string };
+
+/**
+ * Read a secret, preserving WHY a read came back empty.
+ */
+export function keychainRead(account: string): KeychainRead {
+  const platform = os.platform();
+  try {
+    if (platform === "darwin") {
+      const result = spawnSync(
+        MACOS_SECURITY_BIN,
+        ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
+        { timeout: TIMEOUT_MS, encoding: "utf-8" },
+      );
+      if (result.status === 0) {
+        const value = result.stdout.trim();
+        return value ? { status: "found", value } : { status: "absent" };
+      }
+      if (result.status === MACOS_ITEM_NOT_FOUND) return { status: "absent" };
+      return { status: "error", detail: `security exit ${result.status ?? "timeout"}` };
+    }
+
+    if (platform === "linux") {
+      const result = spawnSync(
+        LINUX_SECRET_TOOL_BIN,
+        ["lookup", "app", KEYCHAIN_SERVICE, "account", account],
+        { timeout: TIMEOUT_MS, encoding: "utf-8" },
+      );
+      if (result.status === 0) {
+        const value = result.stdout.trim();
+        return value ? { status: "found", value } : { status: "absent" };
+      }
+      if (result.status === LINUX_ITEM_NOT_FOUND) return { status: "absent" };
+      return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}` };
+    }
+
+    return { status: "absent" };
+  } catch (err) {
+    return { status: "error", detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Read a secret. Returns null when absent, unavailable, or unreadable.
+ *
+ * Convenience wrapper for callers where "absent" and "error" lead to the same
+ * safe action. Anywhere the difference decides whether to CREATE a wallet, use
+ * keychainRead() instead.
  */
 export function keychainLoad(account: string): string | null {
   const platform = os.platform();
