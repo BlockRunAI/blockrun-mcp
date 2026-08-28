@@ -19,10 +19,38 @@ import {
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
 // Overall budget for the async flow (submit + client-side polling).
-// Seedance 2.5 30s jobs can take 5-8 minutes in production. Keep this one
-// minute below the gateway's 600s payment-authorization window.
+// Seedance 2.5 30s jobs can take 5-8 minutes in production.
+//
+// These four constants are one invariant, not four independent knobs. The
+// signed EIP-3009 authorization dies at startedAt + VIDEO_PAYMENT_AUTH_SECONDS,
+// and settlement happens server-side on the poll that answers "completed" — so
+// a poll still IN FLIGHT past validBefore fails settlement for a video that
+// actually generated (see the blockrun_music entry in CHANGELOG for the same
+// bug). The loop below therefore clamps its last poll to the remaining budget,
+// which keeps worst-case wall time at exactly VIDEO_TOTAL_BUDGET_MS:
+//
+//   VIDEO_TOTAL_BUDGET_MS + 60s margin <= VIDEO_PAYMENT_AUTH_SECONDS
+//
+// Without that clamp the true worst case is budget + interval + poll timeout,
+// which at 540s/5s/90s lands 35s PAST a 600s authorization.
 export const VIDEO_TOTAL_BUDGET_MS = 540_000;
 const POLL_INTERVAL_MS = 5_000;
+export const VIDEO_POLL_TIMEOUT_MS = 90_000;
+// Lifetime of the signed payment authorization, in seconds. Exported so the
+// margin above is asserted against the value the request actually sends,
+// rather than a literal restated in the test.
+export const VIDEO_PAYMENT_AUTH_SECONDS = 600;
+
+// How long the next poll may block, given the budget that is left. Pulled out
+// of the loop so the clamp is unit-testable: inline it sits inside the handler,
+// behind a live 402 + payment + submit chain the test suite deliberately blocks
+// at the network, so its removal would otherwise go uncaught.
+// Returns 0 when the budget is spent, which the caller treats as "stop".
+export function pollTimeoutFor(deadlineMs: number, nowMs: number): number {
+  const remainingMs = deadlineMs - nowMs;
+  if (remainingMs <= 0) return 0;
+  return Math.min(VIDEO_POLL_TIMEOUT_MS, remainingMs);
+}
 
 // Video pricing mirrors the gateway's calculateVideoPrice() + addTransactionFee()
 // (blockrun/src/lib/models.ts). Two regimes:
@@ -484,7 +512,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             resourceDescription: details.resource?.description || "BlockRun Video Generation",
             // Bump to 10 min so the signed authorization stays valid through the
             // async polling window. Default (~5 min) is tight when upstream is slow.
-            maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, 600),
+            maxTimeoutSeconds: Math.max(details.maxTimeoutSeconds || 0, VIDEO_PAYMENT_AUTH_SECONDS),
             extra: details.extra,
           }
         );
@@ -538,13 +566,22 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           txHash?: string;
         } | null = null;
 
-        while (Date.now() - startedAt < VIDEO_TOTAL_BUDGET_MS) {
+        const deadline = startedAt + VIDEO_TOTAL_BUDGET_MS;
+
+        while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+          // Clamp to the budget that is actually left. Checking the deadline
+          // only at the top of the loop bounds when a poll may START, not when
+          // it finishes — an unclamped 90s poll entered just under the wire
+          // stays in flight well past validBefore.
+          const pollTimeoutMs = pollTimeoutFor(deadline, Date.now());
+          if (pollTimeoutMs === 0) break;
 
           const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
             method: "GET",
             headers: { "PAYMENT-SIGNATURE": paymentPayload },
-          }, 90_000);
+          }, pollTimeoutMs);
 
           const pollData = await pollResp.json().catch(() => ({})) as {
             status?: string;
