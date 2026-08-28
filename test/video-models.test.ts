@@ -42,7 +42,7 @@ mock.module("../src/utils/wallet.js", {
   },
 });
 
-const { registerVideoTool, estimateVideoCost, SEEDANCE_RESOLUTIONS } = await import("../src/tools/video.js");
+const { registerVideoTool, estimateVideoCost, SEEDANCE_RESOLUTIONS, VIDEO_TOTAL_BUDGET_MS } = await import("../src/tools/video.js");
 
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
@@ -317,6 +317,11 @@ test("seedance-2.5 ACCEPTS 30s — the headline capability, asserted positively"
   const { text, estimate } = await reservedFor({ prompt: "a cube", model: "bytedance/seedance-2.5", duration_seconds: 30 });
   assert.doesNotMatch(text, /supports 4-30s/, "30s must clear the duration window");
   assert.equal(estimate, "$9.47", `reserved the 30s price, not the 5s default: ${text}`);
+});
+
+test("video polling allows slow 30s jobs while staying inside payment authorization", () => {
+  assert.equal(VIDEO_TOTAL_BUDGET_MS, 9 * 60 * 1000);
+  assert.equal(10 * 60 * 1000 - VIDEO_TOTAL_BUDGET_MS, 60 * 1000);
 });
 
 test("durations outside each model's window are refused, both ends", async () => {

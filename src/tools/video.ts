@@ -19,8 +19,9 @@ import {
 
 const BLOCKRUN_API = "https://blockrun.ai/api";
 // Overall budget for the async flow (submit + client-side polling).
-// Upstream jobs typically finish in 60-180s; 5 min gives comfortable margin.
-const TOTAL_BUDGET_MS = 300_000;
+// Seedance 2.5 30s jobs can take 5-8 minutes in production. Keep this one
+// minute below the gateway's 600s payment-authorization window.
+export const VIDEO_TOTAL_BUDGET_MS = 540_000;
 const POLL_INTERVAL_MS = 5_000;
 
 // Video pricing mirrors the gateway's calculateVideoPrice() + addTransactionFee()
@@ -252,7 +253,7 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
     {
       description: `Generate short AI videos via BlockRun x402 (async, client-polled).
 
-Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 5 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
+Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
 - azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
@@ -469,6 +470,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
+        // Start the total budget before creating the 600s authorization so the
+        // polling loop cannot accidentally consume its intended 60s margin.
+        const startedAt = Date.now();
         const paymentPayload = await createPaymentPayload(
           privateKey,
           account.address,
@@ -522,7 +526,6 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           ? submitData.poll_url
           : `${BLOCKRUN_API.replace(/\/api$/, "")}${submitData.poll_url}`;
 
-        const startedAt = Date.now();
         let lastStatus = submitData.status || "queued";
         let spendBooked = false;
         let completed: {
@@ -535,7 +538,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           txHash?: string;
         } | null = null;
 
-        while (Date.now() - startedAt < TOTAL_BUDGET_MS) {
+        while (Date.now() - startedAt < VIDEO_TOTAL_BUDGET_MS) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
 
           const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
@@ -603,7 +606,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         }
 
         if (!completed) {
-          throw new Error(`Video generation did not complete within ${Math.round(TOTAL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
+          throw new Error(`Video generation did not complete within ${Math.round(VIDEO_TOTAL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
         }
 
         // Real settled price from the 402 (token-priced upstream); fall back to
