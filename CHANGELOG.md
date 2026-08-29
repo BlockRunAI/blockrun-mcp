@@ -2,16 +2,27 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
-## Unreleased
+## 0.42.0
 
 **`blockrun_video` now pays on Solana as well as Base.** The Solana route uses
-the gateway's payment-on-completion async flow: the job POST is never retried,
+the gateway's payment-on-completion async flow: the job POST is issued once,
 idempotent poll GETs tolerate transient disconnects, and their SVM transaction
-is refreshed before its recent blockhash expires. A reactive re-challenge is
-pinned to the original amount and recipient, so a slow Seedance 2.5 render can
-finish inside a 15-minute polling budget without silently repricing or sending
-a payment signature to another origin. Image-to-video also rejects the
-Solana-incompatible `image_url` + `aspect_ratio` combination before payment.
+is re-signed with a fresh blockhash every 20s so a slow Seedance 2.5 render can
+settle at the end of a true 15-minute total budget (quote + submit + polling,
+every request clamped to what is left). A gateway re-challenge is pinned to
+the original amount, recipient and fee payer, and a payment signature is never
+sent to a poll URL off the gateway's origin. A settle-failure 402 is read from
+its `PAYMENT-RESPONSE` reason: a funding problem surfaces as one, while the
+gateway's documented stale-blockhash re-sign path is bounded and, if
+exhausted, reports the still-claimable job id instead of "out of funds". A
+poll answer carrying a settlement receipt is booked before its body is
+validated, so a truncated payload cannot erase a real charge from the ledger.
+
+**`BLOCKRUN_KEYCHAIN=strict` broke Solana image payments.** `blockrun_image`
+on Solana (and the new video route) loaded the wallet through the SDK's
+file-only loader, which cannot see a key that strict mode has moved into the
+OS keychain, so a funded wallet was reported as missing. Both now resolve the
+key the same way `blockrun_wallet` does.
 
 ## 0.41.1
 
