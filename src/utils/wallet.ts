@@ -218,11 +218,11 @@ export async function ensureBothWallets(): Promise<{
 
 /**
  * Guard for capabilities the Solana SDK path doesn't cover yet (price data,
- * video, music, speech, RealFace). Returns an actionable message when the
+ * music, speech, RealFace). Returns an actionable message when the
  * active chain is Solana, otherwise null. Tools call this before paying so
  * they never silently drain the Base wallet while the user believes they're
- * on Solana. Image generation is NOT on this list — it pays on either chain
- * via utils/solana-402.ts.
+ * on Solana. Image and video generation are NOT on this list — they pay on
+ * either chain via utils/solana-402.ts.
  */
 export function baseOnlyMessage(capability: string): string | null {
   if (getChain() === "solana") {

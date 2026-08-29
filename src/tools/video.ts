@@ -269,9 +269,9 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
   server.registerTool(
     "blockrun_video",
     {
-      description: `Generate short AI videos via BlockRun x402 (async, client-polled).
+      description: `Generate short AI videos via BlockRun x402 on the active Base or Solana chain (async, client-polled).
 
-Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
+Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
 - azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
@@ -306,13 +306,6 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_video currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
-        }
-
         const selectedModel = model || "xai/grok-imagine-video";
 
         // RealFace guardrails — fail fast client-side instead of round-tripping a 400.
@@ -425,10 +418,6 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           };
         }
 
-        const privateKey = getOrCreateWalletKey();
-        const account = privateKeyToAccount(privateKey);
-        const submitUrl = `${BLOCKRUN_API}/v1/videos/generations`;
-
         const body: Record<string, unknown> = { model: selectedModel, prompt };
         if (image_url) body.image_url = image_url;
         if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
@@ -441,6 +430,72 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
+
+        if (getChain() === "solana") {
+          // Loaded only on the Solana branch so Base-only test harnesses and
+          // installations never need to initialize SVM payment dependencies.
+          const { solanaPaidAsyncPost } = await import("../utils/solana-402.js");
+          // The Solana gateway derives image-to-video geometry from the seed
+          // image. Supplying aspect_ratio as well is rejected before quoting;
+          // fail locally so a caller gets the actionable form of that error.
+          if (image_url && aspect_ratio) {
+            return {
+              content: [{ type: "text", text: formatError("Solana image-to-video derives its frame shape from image_url; do not also pass aspect_ratio.") }],
+              isError: true,
+            };
+          }
+
+          const { data, paidUsd, txHash } = await solanaPaidAsyncPost(
+            "/v1/videos/generations",
+            body,
+            300_000,
+            {
+              pollBudgetMs: 900_000,
+              onQuote: (quotedUsd) => {
+                if (quotedUsd === null || quotedUsd <= estimatedCost) return;
+                gate?.release();
+                gate = reserveBudget(budget, agent_id, quotedUsd);
+                if (!gate.allowed) throw new Error(`${gate.reason}. No payment was signed.`);
+              },
+            },
+          );
+          // A terminal response means the gateway has already settled. Book it
+          // before validating the payload so a malformed completed body cannot
+          // make a real Solana charge disappear from the local ledger.
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean }>; model?: string }).data?.[0];
+          if (!clip?.url) throw new Error("Completed Solana video response missing video URL");
+          const billedUsd = paidUsd ?? estimatedCost;
+          const lines = [
+            "🎬 Video ready!",
+            `URL: ${clip.url}`,
+            `Duration: ${clip.duration_seconds ?? billedSeconds}s`,
+            `Model: ${(data as { model?: string }).model || selectedModel}`,
+            "Chain: Solana",
+            `Cost: $${billedUsd.toFixed(4)}`,
+            ...(clip.backed_up ? ["Backed up to BlockRun storage (URL is permanent)"] : clip.source_url ? [`Source URL: ${clip.source_url}`] : []),
+            ...(clip.request_id ? [`Request ID: ${clip.request_id}`] : []),
+            ...(txHash ? [`Tx: ${txHash}`] : []),
+          ];
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            structuredContent: {
+              url: clip.url,
+              ...(clip.source_url ? { source_url: clip.source_url } : {}),
+              duration_seconds: clip.duration_seconds,
+              model: (data as { model?: string }).model || selectedModel,
+              cost_usd: billedUsd,
+              chain: "solana",
+              ...(clip.request_id ? { request_id: clip.request_id } : {}),
+              ...(clip.backed_up !== undefined ? { backed_up: clip.backed_up } : {}),
+              ...(txHash ? { txHash } : {}),
+            },
+          };
+        }
+
+        const privateKey = getOrCreateWalletKey();
+        const account = privateKeyToAccount(privateKey);
+        const submitUrl = `${BLOCKRUN_API}/v1/videos/generations`;
 
         // Step 1: get 402 with price + requirements
         const resp402 = await fetchWithTimeout(submitUrl, {

@@ -2,6 +2,17 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## Unreleased
+
+**`blockrun_video` now pays on Solana as well as Base.** The Solana route uses
+the gateway's payment-on-completion async flow: the job POST is never retried,
+idempotent poll GETs tolerate transient disconnects, and their SVM transaction
+is refreshed before its recent blockhash expires. A reactive re-challenge is
+pinned to the original amount and recipient, so a slow Seedance 2.5 render can
+finish inside a 15-minute polling budget without silently repricing or sending
+a payment signature to another origin. Image-to-video also rejects the
+Solana-incompatible `image_url` + `aspect_ratio` combination before payment.
+
 ## 0.41.1
 
 **`BLOCKRUN_KEYCHAIN=strict` could mint a new wallet and orphan your funded
