@@ -1,11 +1,12 @@
 // Run with: npm test  (tsx --experimental-test-module-mocks --test)
-import { test, mock } from "node:test";
+import { test, mock, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
 
 let solanaCalls = 0;
 let quoteUsd = 0.5;
 let completedHasUrl = true;
+beforeEach(() => { solanaCalls = 0; quoteUsd = 0.5; completedHasUrl = true; });
 
 mock.module("../src/utils/wallet.js", {
   namedExports: {
@@ -16,7 +17,7 @@ mock.module("../src/utils/wallet.js", {
 });
 mock.module("../src/utils/solana-402.js", {
   namedExports: {
-    solanaPaidAsyncPost: async (_endpoint: string, _body: unknown, _timeout: number, opts: { onQuote?: (usd: number) => void }) => {
+    solanaPaidAsyncPost: async (_endpoint: string, _body: unknown, opts: { onQuote?: (usd: number) => void }) => {
       solanaCalls++;
       opts.onQuote?.(quoteUsd);
       return {
@@ -70,9 +71,8 @@ test("Solana video uses the async SVM route and reports the settled result", asy
   assert.equal(budget.spent, 0.5);
 });
 
-test("Solana image-to-video rejects image_url plus aspect_ratio before payment", async () => {
-  solanaCalls = 0;
-  const { call, budget } = makeHarness();
+test("Solana image-to-video forwards image_url plus aspect_ratio like Base does (the gateway quotes it)", async () => {
+  const { call } = makeHarness();
   const res = await call({
     prompt: "a rainy alley",
     model: "bytedance/seedance-2.5",
@@ -80,10 +80,17 @@ test("Solana image-to-video rejects image_url plus aspect_ratio before payment",
     image_url: "https://example.com/keyframe.png",
     aspect_ratio: "16:9",
   });
-  assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /do not also pass aspect_ratio/);
-  assert.equal(solanaCalls, 0);
-  assert.equal(budget.spent, 0);
+  assert.notEqual(res.isError, true, res.content?.[0]?.text);
+  assert.equal(solanaCalls, 1);
+});
+
+test("a higher Solana quote within the cap swaps the reservation without double-booking", async () => {
+  quoteUsd = 5;
+  const { call, budget } = makeHarness(10);
+  const res = await call({ prompt: "a rainy alley", model: "bytedance/seedance-2.5", duration_seconds: 4 });
+  assert.notEqual(res.isError, true, res.content?.[0]?.text);
+  assert.equal(res.structuredContent.cost_usd, 5);
+  assert.equal(budget.spent, 5, "reservation released, actual booked exactly once");
 });
 
 test("the authoritative Solana quote is re-checked against the budget before signing", async () => {
@@ -93,6 +100,7 @@ test("the authoritative Solana quote is re-checked against the budget before sig
   const res = await call({ prompt: "a rainy alley", model: "bytedance/seedance-2.5", duration_seconds: 4 });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /budget|limit/i);
+  assert.doesNotMatch(res.content[0].text, /needs funding/i, "a budget cap is not a funding problem");
   assert.equal(budget.spent, 0);
 });
 

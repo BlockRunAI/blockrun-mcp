@@ -41,6 +41,13 @@ export const VIDEO_POLL_TIMEOUT_MS = 90_000;
 // margin above is asserted against the value the request actually sends,
 // rather than a literal restated in the test.
 export const VIDEO_PAYMENT_AUTH_SECONDS = 600;
+// Solana has no EIP-3009 validBefore to stay inside: utils/solana-402.ts
+// re-signs the SPL transaction with a fresh blockhash throughout polling, so
+// the budget is bounded by the tool's patience, not an authorization. Measured
+// from the helper's entry (quote + submit + polling), so the description's
+// "15 min Solana hard cap" is a true total, not a polling budget that starts
+// after a submit of unbounded length.
+export const SOLANA_VIDEO_TOTAL_BUDGET_MS = 900_000;
 
 // Video pricing mirrors the gateway's calculateVideoPrice() + addTransactionFee()
 // (blockrun/src/lib/models.ts). Two regimes:
@@ -435,27 +442,19 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           // Loaded only on the Solana branch so Base-only test harnesses and
           // installations never need to initialize SVM payment dependencies.
           const { solanaPaidAsyncPost } = await import("../utils/solana-402.js");
-          // The Solana gateway derives image-to-video geometry from the seed
-          // image. Supplying aspect_ratio as well is rejected before quoting;
-          // fail locally so a caller gets the actionable form of that error.
-          if (image_url && aspect_ratio) {
-            return {
-              content: [{ type: "text", text: formatError("Solana image-to-video derives its frame shape from image_url; do not also pass aspect_ratio.") }],
-              isError: true,
-            };
-          }
 
           const { data, paidUsd, txHash } = await solanaPaidAsyncPost(
             "/v1/videos/generations",
             body,
-            300_000,
             {
-              pollBudgetMs: 900_000,
+              pollBudgetMs: SOLANA_VIDEO_TOTAL_BUDGET_MS,
               onQuote: (quotedUsd) => {
                 if (quotedUsd === null || quotedUsd <= estimatedCost) return;
                 gate?.release();
                 gate = reserveBudget(budget, agent_id, quotedUsd);
-                if (!gate.allowed) throw new Error(`${gate.reason}. No payment was signed.`);
+                // Phrased so formatError's uncharged guard suppresses its
+                // "fund your wallet" footer — the remedy is the budget, not USDC.
+                if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
               },
             },
           );
