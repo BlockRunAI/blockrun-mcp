@@ -292,7 +292,7 @@ blockrun_wallet(action="chain", chain="base")
 blockrun_wallet(action="chain")
 ```
 
-**Note:** Base is required for music, speech, video, and realface. Solana works for price, wallet, dex, rpc, surf, etc.
+**Note:** Base is required for music, speech, and realface. Image and video pay on either chain. Solana works for price, wallet, dex, rpc, surf, etc.
 
 ---
 
