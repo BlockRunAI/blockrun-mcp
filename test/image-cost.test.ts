@@ -19,6 +19,9 @@ mock.module("../src/utils/wallet.js", {
     getImageClient: () => fakeImageClient,
     getOrCreateWalletKey: () => "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     getWalletInfo: async () => ({ address: "0xTEST" }),
+    // image.ts statically imports utils/solana-402.ts, which now resolves the
+    // Solana key through wallet.ts; this suite only exercises the Base path.
+    resolveSolanaKey: () => undefined,
   },
 });
 
