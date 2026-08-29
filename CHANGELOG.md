@@ -2,7 +2,7 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
-## Unreleased
+## 0.42.0
 
 **`blockrun_video` now pays on Solana as well as Base.** The Solana route uses
 the gateway's payment-on-completion async flow: the job POST is issued once,
