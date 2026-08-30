@@ -15,6 +15,7 @@ import { initializeMcpServer } from "./mcp-handler.js";
 import { warnOnLeakedKeys } from "./utils/key-leak-scanner.js";
 import { installBlockrunMcpUserAgent } from "./utils/user-agent.js";
 import { PROFILES } from "./profiles.js";
+import { runSkillsCli } from "./cli/skills.js";
 
 // Read version from package.json so it can never drift from the published version.
 const { version: VERSION } = JSON.parse(
@@ -28,13 +29,17 @@ function printHelp(): void {
       "",
       "Usage:",
       "  blockrun-mcp [options]",
+      "  blockrun-mcp skills list | install [--global | --to <dir>] [--only a,b] [--force]",
       "",
       "Options:",
       "  -h, --help       Show this help message",
       "  -v, --version    Print the package version",
       `      --profile <name>  Tool profile to expose: ${Object.keys(PROFILES).join(" | ")} (default: full)`,
       "",
-      "When no metadata flag is provided, the server starts on stdio for MCP clients.",
+      "Commands:",
+      "  skills           List or install the bundled agent skills (run `skills --help`)",
+      "",
+      "When no metadata flag or command is provided, the server starts on stdio for MCP clients.",
       "",
     ].join("\n"),
   );
@@ -42,6 +47,12 @@ function printHelp(): void {
 
 function handleCliMetadataFlags(argv: string[]): void {
   const args = argv.slice(2);
+
+  // Subcommands run and exit; they never start the stdio server. Checked
+  // first so `skills install --help` shows the skills usage, not the server's.
+  if (args[0] === "skills") {
+    process.exit(runSkillsCli(args.slice(1)));
+  }
 
   if (args.includes("--version") || args.includes("-v")) {
     process.stdout.write(`${VERSION}\n`);
