@@ -1,0 +1,85 @@
+/* apps/styles.css — shared look for both BlockRun MCP Apps.
+   Every colour/size falls back sensibly when the host sends no style vars. */
+:root {
+  --bg: var(--color-background-primary, #ffffff);
+  --bg2: var(--color-background-secondary, #f5f5f7);
+  --bg3: var(--color-background-tertiary, #ececf1);
+  --fg: var(--color-text-primary, #111111);
+  --fg2: var(--color-text-secondary, #5f6368);
+  --fg3: var(--color-text-tertiary, #8a8f98);
+  --border: var(--color-border-primary, #e3e3e8);
+  --ok: var(--color-text-success, #1a7f37);
+  --okbg: var(--color-background-success, #e6f4ea);
+  --danger: var(--color-text-danger, #b42318);
+  --dangerbg: var(--color-background-danger, #fdecea);
+  --warn: var(--color-text-warning, #9a6700);
+  --warnbg: var(--color-background-warning, #fff8e1);
+  --info: var(--color-text-info, #1b5fd9);
+  --infobg: var(--color-background-info, #e8f0fe);
+  --accent: #2563eb;
+  --sans: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --r: var(--border-radius-md, 10px);
+  --rs: var(--border-radius-sm, 6px);
+}
+html[data-theme="dark"], .dark {
+  --bg: var(--color-background-primary, #171717);
+  --bg2: var(--color-background-secondary, #202020);
+  --bg3: var(--color-background-tertiary, #2a2a2a);
+  --fg: var(--color-text-primary, #f2f2f2);
+  --fg2: var(--color-text-secondary, #b3b3b3);
+  --fg3: var(--color-text-tertiary, #808080);
+  --border: var(--color-border-primary, #333333);
+  --okbg: var(--color-background-success, #10321a);
+  --dangerbg: var(--color-background-danger, #3a1512);
+  --warnbg: var(--color-background-warning, #3a2e0a);
+  --infobg: var(--color-background-info, #12244a);
+  --accent: #60a5fa;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: transparent; color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45; }
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; max-width: 640px; }
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.title { font-weight: 600; font-size: 15px; margin: 0; }
+.sub { color: var(--fg2); font-size: 12px; margin: 2px 0 0; }
+.brand { color: var(--fg3); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--bg2); }
+.pill.buy { color: var(--ok); background: var(--okbg); border-color: transparent; }
+.pill.sell { color: var(--danger); background: var(--dangerbg); border-color: transparent; }
+.pill.active { color: var(--info); background: var(--infobg); border-color: transparent; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 12px 0; }
+.kv { display: flex; flex-direction: column; gap: 1px; }
+.kv .k { color: var(--fg3); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.kv .v { font-variant-numeric: tabular-nums; font-size: 15px; }
+.kv .v.big { font-size: 20px; font-weight: 600; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row.end { justify-content: flex-end; }
+.spacer { flex: 1; }
+input[type="number"] { width: 120px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--rs); background: var(--bg2); color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; }
+button { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: var(--rs); border: 1px solid var(--border); background: var(--bg2); color: var(--fg); cursor: pointer; }
+button:hover:not(:disabled) { background: var(--bg3); }
+button:disabled { opacity: .55; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.small { padding: 4px 10px; font-size: 12px; font-weight: 500; }
+.note { margin-top: 10px; padding: 8px 10px; border-radius: var(--rs); font-size: 12px; background: var(--bg2); color: var(--fg2); }
+.note.ok { background: var(--okbg); color: var(--ok); }
+.note.err { background: var(--dangerbg); color: var(--danger); }
+.note.warn { background: var(--warnbg); color: var(--warn); }
+.meter { height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; margin-top: 4px; }
+.meter > i { display: block; height: 100%; background: var(--accent); }
+pre.fallback { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; background: var(--bg2); padding: 10px; border-radius: var(--rs); margin: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+th { color: var(--fg3); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chains { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.chain { border: 1px solid var(--border); border-radius: var(--r); padding: 12px; background: var(--bg2); }
+.chain.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.chain .name { font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.chain .bal { font-size: 22px; font-weight: 600; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+.chain .addr { color: var(--fg2); }
+.qr { display: block; margin: 10px auto 0; width: 168px; height: 168px; border-radius: var(--rs); background: #fff; padding: 6px; }
+@media (max-width: 440px) { .grid, .chains { grid-template-columns: 1fr; } }

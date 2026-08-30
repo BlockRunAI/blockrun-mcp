@@ -10,6 +10,7 @@ import { runSetup } from "../utils/polymarket/setup.js";
 import { withdrawFunds } from "../utils/polymarket/withdraw.js";
 import { fundVault } from "../utils/polymarket/fund.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { appToolMeta } from "../apps.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -138,6 +139,9 @@ Actions:
 - preview — build a live buy/sell order preview from the CLOB book. side plus token_id (or condition_id+outcome) are required. Market buys use amount_usd; limit orders use price+size. This action never accepts confirm and never signs or submits an order.
 
 Use blockrun_polymarket only for setup and funds-affecting operations: confirmed buy/sell, cancel, redeem, fund, or withdraw.`,
+      // MCP App: a capable host renders the order card for this tool's
+      // results (docs/mcp-apps.md); others ignore _meta and show the text.
+      _meta: appToolMeta("orderPreview"),
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         action: z.enum(["positions", "orders", "preview"]).describe("Read-only operation"),

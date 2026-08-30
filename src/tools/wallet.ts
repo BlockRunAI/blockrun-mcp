@@ -7,6 +7,7 @@ import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
+import { appToolMeta } from "../apps.js";
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -52,6 +53,8 @@ Usage pattern for multi-agent systems:
   3. blockrun_wallet action:"report" to audit spending
 
 Do NOT call this for actual AI queries — use blockrun_chat for that.`,
+      // MCP App: the wallet panel (docs/mcp-apps.md) on hosts that support it.
+      _meta: appToolMeta("wallet"),
       annotations: TOOL_ANNOTATIONS.walletManagement,
       inputSchema: {
         action: z.enum(["status", "deposit", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),

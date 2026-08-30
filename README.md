@@ -62,6 +62,7 @@ Every other data integration was built for **human developers** — create an ac
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.
 - **Human-in-the-loop payments** — turn on `BLOCKRUN_CONFIRM_SPEND=on` and the agent pauses before any paid call above your threshold; nothing is signed until you approve. [Details ↓](#%EF%B8%8F-human-in-the-loop-payments)
+- **Generative UI** — on Claude Desktop, claude.ai, VS Code and Cursor the Polymarket preview is a live order card with a Place button, and the wallet is a panel with balances, QR and card top-up. [MCP Apps ↓](#-mcp-apps-order-card--wallet-panel)
 - **Self-custody** — your key never leaves your machine (`~/.blockrun/.session`, `0600` — or the OS keychain once you opt into `BLOCKRUN_KEYCHAIN=strict`). BlockRun can't move your funds.
 
 ---
@@ -77,6 +78,7 @@ Every other data integration was built for **human developers** — create an ac
 | **Pay-chain**       | —                                | —                         | **Base + Solana**                         |
 | **Agent budgets**   | Manual                           | —                         | **Built-in per-agent delegation**         |
 | **Spend approval**  | —                                | —                         | **Ask-before-pay dialog (MCP elicitation)** |
+| **Generative UI**   | —                                | Rare                      | **Order card + wallet panel (MCP Apps)**  |
 | **Open source**     | Varies                           | Varies                    | **Yes (MIT)**                             |
 
 ✓ One wallet · ✓ Pay-per-call · ✓ Reads **and** trades · ✓ Multi-chain · ✓ Agent-ready · ✓ Open source
@@ -329,6 +331,23 @@ On a client that can't ask, the gate **fails open** — the call proceeds and th
 
 ---
 
+## 🧩 MCP Apps — order card & wallet panel
+
+On hosts that support the [MCP Apps extension](https://modelcontextprotocol.io/extensions/apps/overview) — Claude Desktop, claude.ai, VS Code, Cursor, ChatGPT — two tools render as interactive cards instead of text. Everywhere else (Claude Code, Codex, terminals) nothing changes.
+
+<p align="center">
+  <img src="assets/mcp-apps/order-card.png" width="320" alt="Polymarket order card: BUY Market FOK, you spend $5.00, best ask 57.0¢, ≈8.77 shares, per-order cap meter, Re-quote and Place buy">
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/mcp-apps/wallet-panel.png" width="320" alt="Wallet panel: Base active $34.96 USDC, Solana $0.05 low balance, Copy / QR / Use Solana, Refresh, Basescan, Buy USDC with card">
+</p>
+
+- **Order card** on `blockrun_polymarket_read action:"preview"` — question, outcome, side, best quote, est. shares, notional, cap meter, session ledger. Edit the amount → **Re-quote**. **Place order** is arm-then-confirm and asks the *host* to call `blockrun_polymarket … confirm:true`, so the host's consent prompt and every server cap (`POLYMARKET_MAX_BET_USD`, session cap) still apply.
+- **Wallet panel** on `blockrun_wallet` — both chains' balances, switch chain, copy address, EIP-681 / Solana Pay QR, explorer, **Buy USDC with card**.
+
+**📖 Hosts, money path, local testing:** [`docs/mcp-apps.md`](docs/mcp-apps.md)
+
+---
+
 ## Fund your wallet
 
 Run `blockrun_wallet` to see your address. The server pays on **Base** by default.
@@ -468,6 +487,9 @@ Yes. Your private key never leaves your machine (`~/.blockrun/.session` by defau
 
 **Which clients work?**
 Any MCP client that can spawn a stdio server. Verified on Claude Code and Codex CLI, in daily use on OpenClaw; install paths documented for Claude Desktop, Cursor, VS Code, Gemini CLI and Windsurf — see the [client table](#1-install). The spend-confirmation dialog additionally needs MCP elicitation (Claude Code, Cursor, VS Code).
+
+**Does it have a UI?**
+On MCP-Apps hosts (Claude Desktop, claude.ai, VS Code, Cursor) the Polymarket preview is a live order card and the wallet is a panel — see [MCP Apps ↑](#-mcp-apps-order-card--wallet-panel). Terminal clients get the same information as text.
 
 **Can I make the agent ask before it spends?**
 Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated charge and nothing is signed until you approve. [Human-in-the-loop payments ↑](#%EF%B8%8F-human-in-the-loop-payments)

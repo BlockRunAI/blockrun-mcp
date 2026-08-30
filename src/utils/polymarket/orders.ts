@@ -12,6 +12,7 @@ import { AssetType, OrderType, Side, type ClobClient, type OrderBookSummary } fr
 import { checkGeoblock, getClobClient, getPolymarketAccount, resetClobClient } from "./client.js";
 import { getMaxBetUsd, getMaxSessionUsd, getSigType } from "./constants.js";
 import { invalidateL2Creds, loadState } from "./creds.js";
+import { fetchWithTimeout } from "../http.js";
 
 // --- Session bet ledger (in-memory; resets with the process) ---
 const ledger = {
@@ -91,7 +92,16 @@ async function resolveToken(
   clob: ClobClient,
   input: { token_id?: string; condition_id?: string; outcome?: string },
 ): Promise<ResolvedToken> {
-  if (input.token_id) return { tokenId: input.token_id };
+  if (input.token_id) {
+    // A bare token_id resolves through the CLOB without a question or outcome,
+    // which is all the order card (apps/order-preview.ts) can show in its
+    // header, and it skipped the closed/acceptingOrders guard entirely. Gamma
+    // indexes markets by CLOB token id; ask it, best-effort, and keep going
+    // with the bare id if it is slow or down — the CLOB book is still the
+    // authority on whether the order can be placed.
+    const meta = await lookupMarketByToken(input.token_id);
+    return { tokenId: input.token_id, ...meta };
+  }
   if (!input.condition_id) {
     throw new Error(`Provide token_id, or condition_id + outcome (find them via blockrun_markets).`);
   }
@@ -115,6 +125,62 @@ async function resolveToken(
     closed: market.closed,
     acceptingOrders: market.accepting_orders,
   };
+}
+
+const GAMMA_API = "https://gamma-api.polymarket.com";
+
+interface GammaMarket {
+  question?: string;
+  conditionId?: string;
+  closed?: boolean;
+  acceptingOrders?: boolean;
+  outcomes?: string | string[];
+  clobTokenIds?: string | string[];
+}
+
+/**
+ * Pick the market that lists `tokenId` and map its metadata onto the resolved
+ * token — including which outcome the token is. Gamma serialises `outcomes`
+ * and `clobTokenIds` as JSON *strings*; tolerate both that and real arrays.
+ * Returns {} when nothing matches so a caller can spread it safely.
+ */
+export function parseGammaMarket(payload: unknown, tokenId: string): Partial<ResolvedToken> {
+  const list = Array.isArray(payload) ? (payload as GammaMarket[]) : [];
+  const asArray = (v: string | string[] | undefined): string[] => {
+    if (Array.isArray(v)) return v.map(String);
+    if (typeof v === "string") {
+      try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return []; }
+    }
+    return [];
+  };
+  for (const m of list) {
+    const ids = asArray(m.clobTokenIds);
+    const idx = ids.indexOf(tokenId);
+    if (idx < 0) continue;
+    const outcomes = asArray(m.outcomes);
+    return {
+      question: typeof m.question === "string" ? m.question : undefined,
+      outcome: outcomes[idx],
+      conditionId: typeof m.conditionId === "string" ? m.conditionId : undefined,
+      closed: typeof m.closed === "boolean" ? m.closed : undefined,
+      acceptingOrders: typeof m.acceptingOrders === "boolean" ? m.acceptingOrders : undefined,
+    };
+  }
+  return {};
+}
+
+async function lookupMarketByToken(tokenId: string): Promise<Partial<ResolvedToken>> {
+  try {
+    const resp = await fetchWithTimeout(
+      `${GAMMA_API}/markets?clob_token_ids=${encodeURIComponent(tokenId)}`,
+      { headers: { accept: "application/json" } },
+      4_000,
+    );
+    if (!resp.ok) return {};
+    return parseGammaMarket(await resp.json(), tokenId);
+  } catch {
+    return {};
+  }
 }
 
 function bestQuote(book: OrderBookSummary, side: "buy" | "sell"): number | null {
@@ -417,6 +483,19 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
             notionalUsd: notional,
             tickSize,
             negRisk,
+            // Everything the order-preview MCP App renders that the summary
+            // text above already carries in prose — so the card never has to
+            // parse text, and hosts without the app still get the same facts.
+            question: token.question,
+            outcome: token.outcome,
+            conditionId: token.conditionId,
+            bestQuote: quote,
+            minSize,
+            maxBetUsd: maxBet,
+            sessionSpentUsd: ledger.totalUsd,
+            sessionCapUsd: sessionCap,
+            expiresAt: input.expires_at,
+            postOnly: input.post_only ?? false,
           },
         };
       }

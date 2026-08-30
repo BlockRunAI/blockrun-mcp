@@ -2,6 +2,36 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.44.0
+
+**Two MCP Apps: a Polymarket order card and a wallet panel.** Hosts that
+implement the MCP Apps extension — Claude Desktop, claude.ai, VS Code,
+Cursor, ChatGPT — now render `blockrun_polymarket_read` previews and
+`blockrun_wallet` results as interactive cards instead of text. The order
+card shows the question, outcome, side, best quote in cents, estimated
+shares, notional, a per-order cap meter and the session ledger; the amount
+is editable and re-quotes through the read-only tool; *Place order* is a
+two-click arm/confirm that asks the host to call `blockrun_polymarket` with
+`confirm:true`, so the host's own consent prompt and every server cap still
+apply, and the result (order id, status, tx) lands back in the card and in
+the model's context. The wallet panel shows both chains, switches the active
+one, copies an address, shows an EIP-681 / Solana Pay QR, opens the explorer,
+and mints the card on-ramp link. Hosts without the extension — Claude Code,
+Codex, Gemini CLI, Windsurf — ignore `_meta.ui` and see exactly the text
+they saw before. Bundles are single-file HTML built from `apps/` into `ui/`,
+shipped in the tarball, registered only for profiles that expose the tool,
+and pinned by `test/apps.test.ts`. Rendered and screenshotted in the MCPJam
+inspector against the published server; `docs/mcp-apps.md` has the host
+table and the money-path explanation.
+
+**A bare `token_id` now resolves to its market.** `resolveToken` returned
+only the id, so the card could not name the market and the closed /
+accepting-orders guard never ran on that path. Gamma indexes markets by CLOB
+token id; the preview asks it best-effort (4 s, spread-safe `{}` on failure)
+and fills question, outcome, conditionId, closed and acceptingOrders. The
+preview payload also carries bestQuote, minSize, maxBetUsd and the session
+ledger so nothing downstream has to parse prose.
+
 ## 0.43.0
 
 **Every paid tool now asks before it spends.** Spend confirmation via MCP
