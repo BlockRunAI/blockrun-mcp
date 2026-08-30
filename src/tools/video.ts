@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
@@ -424,6 +425,11 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             isError: true,
           };
         }
+        // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+        // decline returns here — nothing is sent, and the finally releases the
+        // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+        const confirm = await confirmSpend(server, { usd: estimatedCost, label: `video · ${selectedModel} · ${billedSeconds}s` });
+        if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
         const body: Record<string, unknown> = { model: selectedModel, prompt };
         if (image_url) body.image_url = image_url;

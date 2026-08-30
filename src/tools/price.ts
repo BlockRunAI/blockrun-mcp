@@ -15,6 +15,7 @@ import type {
   MarketSession,
 } from "@blockrun/llm";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getPriceClient } from "../utils/wallet.js";
@@ -96,6 +97,11 @@ Examples:
           };
         }
         try {
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: estimatedCost, label: `price · ${category} ${symbol ?? query ?? ""}`.trim() });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const priceClient = getPriceClient(paid);
 
           if (action === "price") {

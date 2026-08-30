@@ -11,6 +11,21 @@
       "description": "Start here. Pay-per-call access to AI models, real-time data, media generation and multi-chain RPC over x402 — which tool to reach for, how the wallet works, and how to get a first call working without spending anything."
     },
     {
+      "name": "blockrun-setup",
+      "source": "./skills/blockrun-setup",
+      "description": "Use when asked to install, add, or set up the BlockRun MCP server in Claude Code, Cursor, Codex or another client — the nvm/Homebrew PATH fix, first-run wallet, funding with USDC, profiles, and proving the install works."
+    },
+    {
+      "name": "blockrun-debug",
+      "source": "./skills/blockrun-debug",
+      "description": "Use when BlockRun MCP is installed but misbehaving — Failed to connect, spawn npx ENOENT, HTTP 402, fetch failed, media timeouts, missing spend dialogs, or a Polymarket order failing after funding. Symptom → cause → fix, plus what never to do."
+    },
+    {
+      "name": "blockrun-upgrade",
+      "source": "./skills/blockrun-upgrade",
+      "description": "Use when the server prints 'Update available', when asked to upgrade, pin or roll back @blockrun/mcp, when a fix should be in the new version but the client still runs the old one, or when refreshing skills copied into a project."
+    },
+    {
       "name": "exa-research",
       "source": "./skills/exa-research",
       "description": "Use when researching products, finding academic papers, discovering competitors, reading webpage content, or getting cited answers grounded in real web sources."

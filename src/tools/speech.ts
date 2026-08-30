@@ -14,6 +14,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
@@ -201,6 +202,11 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             isError: true,
           };
         }
+        // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+        // decline returns here — nothing is sent, and the finally releases the
+        // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+        const confirm = await confirmSpend(server, { usd: cost, label: `speech · ${action === "sound_effect" ? "sound effect" : model}` });
+        if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
         const privateKey = getOrCreateWalletKey();
         const account = privateKeyToAccount(privateKey);

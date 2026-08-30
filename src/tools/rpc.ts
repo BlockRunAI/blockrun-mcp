@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
@@ -90,6 +91,11 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
           };
         }
         try {
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: estimatedCost, label: `rpc · ${cleanNetwork}` });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
           recordSpending(budget, estimatedCost, agent_id);

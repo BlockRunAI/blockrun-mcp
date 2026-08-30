@@ -1,6 +1,6 @@
 # Contributing to BlockRun MCP
 
-PRs welcome. This server is small (~4,400 lines of tool code + 8 skills); reviews are usually fast.
+PRs welcome. This server is small (~4,400 lines of tool code + 16 skills); reviews are usually fast.
 
 ## Setup
 
