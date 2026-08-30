@@ -19,6 +19,7 @@ import {
   type RoutingMode,
 } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
@@ -270,6 +271,11 @@ Run blockrun_models to see all available models with pricing.`,
         };
       }
       try {
+      // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+      // decline returns here — nothing is sent, and the finally releases the
+      // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+      const confirm = await confirmSpend(server, { usd: estimatedCost, label: `chat · ${model ?? mode ?? "auto"}` });
+      if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
       // Native Anthropic passthrough (EVM/Base only).
       // An explicit anthropic/claude-* model goes DIRECT to the gateway's

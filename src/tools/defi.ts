@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { getClient, getChain } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -77,6 +78,11 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           };
         }
         try {
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: estimatedCost, label: `defi · ${cleanPath}` });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
           recordSpending(budget, estimatedCost, agent_id);

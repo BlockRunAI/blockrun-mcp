@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
@@ -270,6 +271,11 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (!gate.allowed) {
             return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: ENROLLMENT_PRICE_USD, label: `realface · ${action}` });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
           const { status, data, settledUsd } = await payAndPostJson(
             `${BLOCKRUN_API}/v1/portrait/enroll`,
@@ -328,6 +334,11 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (!gate.allowed) {
             return { content: [{ type: "text", text: `${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.` }], isError: true };
           }
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: ENROLLMENT_PRICE_USD, label: `realface · ${action}` });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
           // Same x402 probe/sign/resubmit flow as the portrait action — shared
           // via payAndPostJson. The server uploads the photo, waits for the

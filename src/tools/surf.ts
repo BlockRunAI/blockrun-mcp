@@ -14,6 +14,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
@@ -98,6 +99,11 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
           };
         }
         try {
+          // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
+          // decline returns here — nothing is sent, and the finally releases the
+          // reservation. No-ops when off, sub-threshold, or unsupported by the client.
+          const confirm = await confirmSpend(server, { usd: estimatedCost, label: `surf · ${cleanPath}` });
+          if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as SurfClient;
           const endpoint = `/v1/surf/${cleanPath}`;
           const result = body !== undefined
