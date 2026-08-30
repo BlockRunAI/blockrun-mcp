@@ -2,6 +2,50 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.43.0
+
+**Every paid tool now asks before it spends.** Spend confirmation via MCP
+elicitation (`BLOCKRUN_CONFIRM_SPEND=on`) shipped in 0.25.0 wired into
+`blockrun_image` alone; the other thirteen paid tools — chat, video, music,
+speech, realface, search, exa, markets, surf, defi, rpc, modal, phone — reserved
+budget and signed the x402 payment without a word. Each now pauses at its budget
+gate with the estimated charge, before the first request leaves the machine. A
+decline sends nothing, charges nothing, and releases the reservation; free
+paths (`chat mode:"free"`, crypto `price`, free `phone` and `realface` actions)
+never prompt, and `blockrun_polymarket` keeps its own per-order `confirm:true`.
+Still off by default, still fails open on clients that cannot render a dialog —
+the README now says which can (Claude Code, Cursor, VS Code) and which cannot,
+and `docs/spend-confirmation.md` says when to use it and when to use budgets
+instead. `test/confirm-spend-coverage.test.ts` makes the coverage a guarantee
+rather than a habit: every tool that reserves budget must confirm, and with a
+declining client every one of them must leave `budget.spent` at zero and the
+network untouched. That second check caught the first draft of this change,
+which had placed nine of the confirms outside their `try` and leaked the
+reservation on decline.
+
+**`blockrun-mcp skills list | install`.** The skills have shipped inside the npm
+tarball for months with no way to use them short of cloning the repo or the
+Claude Code plugin marketplace. `npx -y @blockrun/mcp@latest skills install`
+copies them into `./.claude/skills`; `--global` targets `~/.claude/skills`,
+`--to ~/.codex/skills` any other directory, `--only a,b` a subset, and
+`--force` refreshes copies after an upgrade while leaving the user's other files
+in those directories alone. It never deletes.
+
+**Three skills for the agent that runs the install, not the tool calls.**
+`blockrun-setup` (the nvm/Homebrew `-e PATH="$PATH"` rule first, one command per
+client, prove it with the free `blockrun_wallet` call, back up the key),
+`blockrun-debug` (symptom → cause → fix for every Troubleshooting row, plus the
+three things never to do: retry a 402, delete `~/.blockrun/.session`, or
+suggest a Polymarket withdraw), and `blockrun-upgrade` (npx caches by spec, so
+`@latest` restarts upgrade and a bare spec never does; how to prove the
+version, what changed, how to roll back). Each was written against a baseline
+run without it: the unaided agent reached for `nvm alias default` instead of
+the PATH passthrough, described the key as keychain-only, and refreshed copied
+skills with `npm pack` and `tar`.
+
+`BLOCKRUN_BUDGET_LIMIT`, which the server has honoured since 0.2x, finally
+appears in the README configuration table alongside the two confirm variables.
+
 ## 0.42.0
 
 **`blockrun_video` now pays on Solana as well as Base.** The Solana route uses
