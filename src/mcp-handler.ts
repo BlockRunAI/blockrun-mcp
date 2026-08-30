@@ -25,6 +25,7 @@ import { registerRpcTool } from "./tools/rpc.js";
 import { registerDefiTool } from "./tools/defi.js";
 import { registerPolymarketReadTool, registerPolymarketTool } from "./tools/polymarket.js";
 import { resolveTools, type ToolName } from "./profiles.js";
+import { registerAppResources } from "./apps.js";
 
 /**
  * Initialize the MCP server. The active tool `profile` (resolved from
@@ -118,6 +119,9 @@ export function initializeMcpServer(
       }
     );
   }
+
+  // MCP App bundles (ui://) for the tools that carry _meta.ui — same gating.
+  registerAppResources(server, tools);
 
   return { profile, tools: [...tools] };
 }

@@ -417,6 +417,19 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
             notionalUsd: notional,
             tickSize,
             negRisk,
+            // Everything the order-preview MCP App renders that the summary
+            // text above already carries in prose — so the card never has to
+            // parse text, and hosts without the app still get the same facts.
+            question: token.question,
+            outcome: token.outcome,
+            conditionId: token.conditionId,
+            bestQuote: quote,
+            minSize,
+            maxBetUsd: maxBet,
+            sessionSpentUsd: ledger.totalUsd,
+            sessionCapUsd: sessionCap,
+            expiresAt: input.expires_at,
+            postOnly: input.post_only ?? false,
           },
         };
       }

@@ -9,3 +9,4 @@ server.json
 docs/plans/
 pnpm-workspace.yaml
 .claude/
+ui/
