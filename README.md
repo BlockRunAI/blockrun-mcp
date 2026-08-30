@@ -61,6 +61,7 @@ Every other data integration was built for **human developers** — create an ac
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.
+- **Human-in-the-loop payments** — turn on `BLOCKRUN_CONFIRM_SPEND=on` and the agent pauses before any paid call above your threshold; nothing is signed until you approve. [Details ↓](#%EF%B8%8F-human-in-the-loop-payments)
 - **Self-custody** — your key never leaves your machine (`~/.blockrun/.session`, `0600` — or the OS keychain once you opt into `BLOCKRUN_KEYCHAIN=strict`). BlockRun can't move your funds.
 
 ---
@@ -75,6 +76,7 @@ Every other data integration was built for **human developers** — create an ac
 | **Place real bets** | Build it yourself                | Rare                      | **Yes — Polymarket CLOB, confirm-gated**  |
 | **Pay-chain**       | —                                | —                         | **Base + Solana**                         |
 | **Agent budgets**   | Manual                           | —                         | **Built-in per-agent delegation**         |
+| **Spend approval**  | —                                | —                         | **Ask-before-pay dialog (MCP elicitation)** |
 | **Open source**     | Varies                           | Varies                    | **Yes (MIT)**                             |
 
 ✓ One wallet · ✓ Pay-per-call · ✓ Reads **and** trades · ✓ Multi-chain · ✓ Agent-ready · ✓ Open source
@@ -179,6 +181,19 @@ Prefer Solana? See [Fund your wallet](#fund-your-wallet) — two tool calls, no 
 
 Claude reads the odds with `blockrun_markets` and — with your confirmation — places the trade with `blockrun_polymarket`. One wallet. Gasless. Confirm-gated.
 
+### 5. Install the agent skills (optional)
+
+The package ships 16 skills — which tool answers what, worked examples, and a setup / debug / upgrade trio so the agent can install, troubleshoot and update the server on its own.
+
+```bash
+/plugin marketplace add BlockRunAI/blockrun-mcp            # Claude Code
+npx -y @blockrun/mcp@latest skills install                 # any project → ./.claude/skills
+npx -y @blockrun/mcp@latest skills install --global        # ~/.claude/skills
+npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
+```
+
+`skills list` shows what ships; `--only a,b` picks; `--force` refreshes copies after an upgrade.
+
 ---
 
 ## Demo
@@ -273,6 +288,39 @@ blockrun_polymarket action:"buy" token_id:"<id>" amount_usd:5 order_type:"FOK" c
 
 ---
 
+## 🛡️ Human-in-the-loop payments
+
+Turn on `BLOCKRUN_CONFIRM_SPEND=on` and **every paid tool pauses before it signs**. The server sends an MCP elicitation; your client renders it as a dialog with the estimated charge:
+
+```
+💸 BlockRun charge — video · bytedance/seedance-2.5 · 10s
+Estimated: $2.6500
+Approve this spend? (USDC is debited per call.)
+To stop the charge, choose Decline — Cancel/ESC lets it proceed.
+
+[ ] Approve all BlockRun charges for the rest of this session (don't ask again)
+
+                                          [ Decline ]  [ Approve ]
+```
+
+**Decline** → nothing is sent, nothing is charged, the tool reports *"Charge declined"*. **Approve** → the call proceeds. Tick the box and you're not asked again for the session. Free calls never prompt. Set `BLOCKRUN_CONFIRM_THRESHOLD=0.05` to only be asked above $0.05.
+
+```bash
+claude mcp add blockrun -s user -e BLOCKRUN_CONFIRM_SPEND=on -e BLOCKRUN_CONFIRM_THRESHOLD=0.05 -- npx -y @blockrun/mcp@latest
+```
+
+| Client | Dialog | | Client | Dialog |
+|---|---|---|---|---|
+| Claude Code | ✅ | | Claude Desktop | ⚠️ renders; OK reports *cancel* → proceeds |
+| Cursor | ✅ | | Windsurf | ❌ proceeds without asking |
+| VS Code Copilot | ✅ | | Codex CLI · Gemini CLI | ❌ proceeds without asking |
+
+On a client that can't ask, the gate **fails open** — the call proceeds and the cost footer reports the charge. The hard stop on every client is the budget: `BLOCKRUN_BUDGET_LIMIT` for the process, `blockrun_wallet action:"delegate"` per sub-agent. `blockrun_polymarket` keeps its own, stronger per-order `confirm:true`.
+
+**📖 When to use it, sources for the matrix, limitations:** [`docs/spend-confirmation.md`](docs/spend-confirmation.md)
+
+---
+
 ## Fund your wallet
 
 Run `blockrun_wallet` to see your address. The server pays on **Base** by default.
@@ -309,6 +357,7 @@ Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana")
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures / client timeouts do NOT charge. Don't retry-loop — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`, then pass `agent_id:"X"` to every downstream call. The child is auto-blocked at zero.
 - **Free tier first for drafts:** `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto/FX/commodity), and `blockrun_models` are $0.
+- **A declined spend confirmation is the user's decision.** Report it and stop — never re-issue the call with a cheaper model, smaller parameters, or split requests to get under their threshold.
 
 ---
 
@@ -357,6 +406,9 @@ One wallet. All sources. No dashboards.
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_KEYCHAIN` | `auto` | Key storage. `auto` — mirror the key into the OS keychain (macOS Keychain / Linux `secret-tool`) and keep the plaintext file, which stays authoritative so other BlockRun tools keep working and so replacing it still rotates your wallet. `off` — file only. `strict` — also delete `~/.blockrun/.session` once a read-back proves the keychain holds the same key; **this breaks other tools that read that file directly**. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
+| `BLOCKRUN_BUDGET_LIMIT` | unset (unlimited) | Hard USD cap on x402 spend for this server process. In-memory; resets on restart. Per-agent caps via `blockrun_wallet action:"delegate"`. |
+| `BLOCKRUN_CONFIRM_SPEND` | off | `on` — ask before every paid call via MCP elicitation. [Details](#%EF%B8%8F-human-in-the-loop-payments). Fails open on clients without elicitation. |
+| `BLOCKRUN_CONFIRM_THRESHOLD` | `0` | Only ask for calls estimated above this many USD. Malformed values fall back to `0` (ask for everything), never to "off". |
 | `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |
 | `POLYMARKET_MAX_BET_USD` | `25` | Hard per-order notional cap. |
 | `POLYMARKET_MAX_SESSION_USD` | unset | Optional cumulative per-process betting cap. |
@@ -375,6 +427,8 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 
 ## Troubleshooting
 
+> 🤖 Hand this to the agent: the [`blockrun-debug`](skills/blockrun-debug/SKILL.md) skill carries every row below as symptom → cause → fix, plus the diagnostics it can run itself. [`blockrun-setup`](skills/blockrun-setup/SKILL.md) and [`blockrun-upgrade`](skills/blockrun-upgrade/SKILL.md) cover the other two halves. Install: `npx -y @blockrun/mcp@latest skills install`.
+
 - **`Insufficient balance` / HTTP 402 after retry** → Run `blockrun_wallet action:"setup"`, send USDC on Base (or Solana).
 - **`blockrun` doesn't connect / "MCP server failed" / `spawn npx ENOENT`** → Almost always a **PATH issue**: Claude Code can't find `node`/`npx` on its launcher PATH (common with Homebrew / nvm, on CLI *and* desktop). Fix by passing your shell PATH at install:
   ```bash
@@ -385,6 +439,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 - **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (≥20.19). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install.
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
 - **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
+- **No spend-confirmation dialog although `BLOCKRUN_CONFIRM_SPEND=on`** → Your client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI); the server proceeds without asking by design. Use `BLOCKRUN_BUDGET_LIMIT` as the guard, or a client from the [support table](#%EF%B8%8F-human-in-the-loop-payments).
 - **Polymarket: neg-risk ("winner") market buy fails, or `redeem` reverts, though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approvals a pre-upgrade deposit wallet may lack — including the collateral-adapter approvals `redeem` needs). See the [setup guide](docs/polymarket-trading-setup.md).
 
 ---
@@ -404,7 +459,10 @@ Pay-per-call — fractions of a cent to a few cents. The free tier (`blockrun_ch
 Yes. Your private key never leaves your machine (`~/.blockrun/.session` by default, `0600`). x402 payments and Polymarket orders are signed locally — BlockRun forwards signed payloads and cannot move your funds.
 
 **Which clients work?**
-Claude Code, Claude Desktop, Cursor, Windsurf, and any MCP-compatible client.
+Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, and any MCP-compatible client. The spend-confirmation dialog needs a client with MCP elicitation — Claude Code, Cursor, VS Code; see the [support table](#%EF%B8%8F-human-in-the-loop-payments).
+
+**Can I make the agent ask before it spends?**
+Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated charge and nothing is signed until you approve. [Human-in-the-loop payments ↑](#%EF%B8%8F-human-in-the-loop-payments)
 
 **Can it really place real bets?**
 Yes. `blockrun_polymarket` places real, USDC-settled orders on Polymarket's CLOB — confirm-gated and capped. Read the odds with `blockrun_markets`, place with `blockrun_polymarket`.
