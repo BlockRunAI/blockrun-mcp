@@ -115,19 +115,24 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 > ```
 > See [Troubleshooting](#troubleshooting) if it persists.
 
+**Every MCP client** — one command or one JSON block. *Verified* = we ran the published package on that client and saw the tools listed (client version · date). *Documented* = install path from the client's own docs; not run by us yet — tell us if it works. The **Spend dialog** column is whether the client renders the [human-in-the-loop payment prompt](#%EF%B8%8F-human-in-the-loop-payments); on ❌ clients paid calls proceed without asking and `BLOCKRUN_BUDGET_LIMIT` is the guard.
+
+| Client | Status | Spend dialog | Install |
+|---|---|---|---|
+| **Claude Code** | ✅ Verified · 2.1.251 · 2026-08-30 | ✅ | `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest` |
+| **Codex CLI** | ✅ Verified · 0.142.5 · 2026-08-30 | ❌ | `codex mcp add blockrun -- npx -y @blockrun/mcp@latest` |
+| **OpenClaw** | 🟡 In use · 2026.5.2 (from a local build; the `npx` form below is not yet verified) | — not documented | `openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
+| **Claude Desktop** | 📝 Documented | ⚠️ renders; OK reports *cancel* → proceeds | `claude_desktop_config.json` — JSON below |
+| **Cursor** | 📝 Documented | ✅ | `~/.cursor/mcp.json` — JSON below |
+| **VS Code (Copilot)** | 📝 Documented | ✅ | `code --add-mcp '{"name":"blockrun","command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
+| **Gemini CLI** | 📝 Documented | ❌ | `gemini mcp add -s user blockrun npx -y @blockrun/mcp@latest` |
+| **Windsurf** | 📝 Documented | ❌ | `~/.codeium/windsurf/mcp_config.json` — JSON below |
+
+Any other MCP client that can spawn a stdio server works the same way: `command: npx`, `args: ["-y", "@blockrun/mcp@latest"]`. With nvm/Homebrew Node on a JSON-configured client, put the absolute path from `which npx` in `command`. Spend-dialog sources and what "proceeds without asking" means: [`docs/spend-confirmation.md`](docs/spend-confirmation.md).
+
 <details>
-<summary><strong>Other clients — Claude Desktop, Cursor, Windsurf</strong></summary>
+<summary><strong>JSON for Claude Desktop, Cursor, Windsurf</strong></summary>
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "blockrun": { "command": "npx", "args": ["-y", "@blockrun/mcp"] }
-  }
-}
-```
-
-**Cursor** — add to `~/.cursor/mcp.json` (macOS/Linux) or `%APPDATA%\Cursor\mcp.json` (Windows):
 ```json
 {
   "mcpServers": {
@@ -136,10 +141,13 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 }
 ```
 
-**Windsurf** — same JSON, in:
-- macOS: `~/.codeium/windsurf/mcp_config.json`
-- Linux: `~/.config/.codeium/windsurf/mcp_config.json`
-- Windows: `%APPDATA%\Codeium\windsurf\mcp_config.json`
+| Client | File |
+|---|---|
+| Claude Desktop | `claude_desktop_config.json` (Settings → Developer → Edit Config) |
+| Cursor | `~/.cursor/mcp.json` · Windows `%APPDATA%\Cursor\mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` · Linux `~/.config/.codeium/windsurf/mcp_config.json` · Windows `%APPDATA%\Codeium\windsurf\mcp_config.json` |
+
+Add `"env": { "BLOCKRUN_CONFIRM_SPEND": "on" }` inside the server object to turn on the spend dialog where the client supports it.
 
 </details>
 
@@ -459,7 +467,7 @@ Pay-per-call — fractions of a cent to a few cents. The free tier (`blockrun_ch
 Yes. Your private key never leaves your machine (`~/.blockrun/.session` by default, `0600`). x402 payments and Polymarket orders are signed locally — BlockRun forwards signed payloads and cannot move your funds.
 
 **Which clients work?**
-Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, and any MCP-compatible client. The spend-confirmation dialog needs a client with MCP elicitation — Claude Code, Cursor, VS Code; see the [support table](#%EF%B8%8F-human-in-the-loop-payments).
+Any MCP client that can spawn a stdio server. Verified on Claude Code and Codex CLI, in daily use on OpenClaw; install paths documented for Claude Desktop, Cursor, VS Code, Gemini CLI and Windsurf — see the [client table](#1-install). The spend-confirmation dialog additionally needs MCP elicitation (Claude Code, Cursor, VS Code).
 
 **Can I make the agent ask before it spends?**
 Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated charge and nothing is signed until you approve. [Human-in-the-loop payments ↑](#%EF%B8%8F-human-in-the-loop-payments)
