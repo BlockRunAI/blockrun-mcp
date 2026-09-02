@@ -34,6 +34,7 @@
  * percent higher on JSON, so every number here is a slight UNDER-count.
  */
 import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
 
@@ -129,6 +130,41 @@ export function measure(tools, prefix = "") {
 /** 12900 -> "12.9K". The form the README badge publishes. */
 export const asK = (n) => `${(Math.round(n / 100) / 10).toFixed(1)}K`;
 
+/* ── the context-cost card ──────────────────────────────────────────────────
+ *
+ * Generated, never hand-drawn: the figures come from the measurement above, so
+ * the card cannot say something the server stopped doing. `--svg` rewrites
+ * both variants; test/schema-tokens.test.ts fails if they drift.
+ *
+ * Two files because GitHub picks between them with <picture media=...>; an SVG
+ * cannot restyle itself from the host page's colour scheme. Text is left at a
+ * system font stack rather than converted to paths so it stays selectable and
+ * legible at any zoom — the tradeoff is that positions are hand-tuned with
+ * enough slack that a wider glyph set cannot collide.
+ */
+const REFERENCE_WINDOW = 200_000;
+
+export function renderCard({ total, tradingTotal, cut, dark }) {
+  const c = dark
+    ? { bg: "#0B0A0F", stroke: "#26242E", label: "#8A8797", value: "#FFFFFF", accent: "#5B9BF6", muted: "#6E6B7B" }
+    : { bg: "#FFFFFF", stroke: "#E4E2E8", label: "#6E6B7B", value: "#0B0A0F", accent: "#2563EB", muted: "#8A8797" };
+  const pct = Math.round((total / REFERENCE_WINDOW) * 100);
+  const sans = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+  const mono = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="620" height="150" viewBox="0 0 620 150" role="img" aria-label="Context cost: ${asK(total)} tokens, ${pct}% of a 200K context window; ${asK(tradingTotal)} with --profile trading, ${cut}% less">
+  <defs><clipPath id="card-${dark ? "d" : "l"}"><rect x="0.5" y="0.5" width="619" height="149" rx="12"/></clipPath></defs>
+  <rect x="0.5" y="0.5" width="619" height="149" rx="12" fill="${c.bg}" stroke="${c.stroke}"/>
+  <rect x="0.5" y="0.5" width="5" height="149" fill="${c.accent}" clip-path="url(#card-${dark ? "d" : "l"})"/>
+  <text x="28" y="34" font-family="${sans}" font-size="11" font-weight="600" letter-spacing="1.6" fill="${c.label}">CONTEXT COST</text>
+  <text x="28" y="78" font-family="${sans}" font-size="34" font-weight="700" fill="${c.value}">${asK(total)} tokens</text>
+  <text x="28" y="103" font-family="${sans}" font-size="13" fill="${c.muted}">${pct}% of a 200K context window · every turn, whether or not you call a tool</text>
+  <text x="28" y="127" font-family="${sans}" font-size="13" fill="${c.label}">${asK(tradingTotal)} with <tspan font-family="${mono}" fill="${c.accent}">--profile trading</tspan> — ${cut}% less</text>
+  <text x="592" y="34" text-anchor="end" font-family="${mono}" font-size="10.5" fill="${c.muted}">measured, not estimated</text>
+</svg>
+`;
+}
+
 // Importable: test/schema-tokens.test.ts reuses measure()/asK() to pin the
 // published number, so the CLI half must not run on import.
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -141,6 +177,17 @@ for (const profile of PROFILES) {
     ? userCmd
     : ["node", SERVER, ...(profile && profile !== "full" ? ["--profile", profile] : [])];
   results[profile ?? userCmd.join(" ")] = measure(await listTools(cmd), PREFIX);
+}
+
+if (flags.has("--svg")) {
+  const full = results.full, trading = results.trading;
+  if (!full || !trading) throw new Error("--svg needs the full and trading profiles (drop `-- <cmd>`)");
+  const cut = Math.round((1 - trading.total / full.total) * 100);
+  for (const dark of [false, true]) {
+    const file = new URL(`../assets/context-cost${dark ? "-dark" : ""}.svg`, import.meta.url);
+    writeFileSync(file, renderCard({ total: full.total, tradingTotal: trading.total, cut, dark }));
+    console.log(`wrote ${fileURLToPath(file).split("/").slice(-2).join("/")}`);
+  }
 }
 
 if (asJson) {
