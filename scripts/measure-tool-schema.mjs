@@ -49,13 +49,34 @@ const SERVER = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const PROFILES = userCmd.length ? [null] : ["full", "media", "trading", "research", "chat"];
 const PREFIX = process.env.MCP_PREFIX ?? (userCmd.length ? "" : "mcp__blockrun__");
 
-/** One MCP handshake over stdio. Returns the tools array verbatim. */
-function listTools(cmd) {
+/**
+ * One MCP handshake over stdio. Returns the tools array verbatim.
+ *
+ * A server that dies before answering is the common case when you point this
+ * at someone else's command — a typo'd package, a missing bin, a cold `npx`
+ * that 404s. Report THAT, with its stderr, instead of waiting out the timeout
+ * and blaming time: the first version of this reported "timed out" after a
+ * silent minute for what was actually `sh: foo: command not found` in the
+ * first 200ms.
+ */
+export function listTools(cmd, { timeoutMs = 120_000 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "ignore"] });
+    // stderr is piped, not ignored, so a failure can explain itself. Only the
+    // tail is kept — a server that logs a lot should not be buffered whole.
+    const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
     const pending = new Map();
     let buf = "";
+    let stderr = "";
     let id = 0;
+    let settled = false;
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      fn(arg);
+    };
 
     const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
     const rpc = (method, params) =>
@@ -64,11 +85,23 @@ function listTools(cmd) {
         send({ jsonrpc: "2.0", id, method, params });
       });
 
-    child.on("error", reject);
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`timed out waiting for ${cmd.join(" ")}`));
-    }, 60_000);
+    const timer = setTimeout(
+      () => finish(reject, new Error(
+        `${cmd.join(" ")} did not answer within ${timeoutMs / 1000}s. ` +
+        `A cold \`npx\` install of a large package can exceed this — run it once first.`,
+      )),
+      timeoutMs,
+    );
+
+    child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-2000); });
+    child.on("error", (e) => finish(reject, e));
+    child.on("exit", (code) => finish(reject, new Error(
+      `${cmd.join(" ")} exited with code ${code} before completing the handshake.\n` +
+      (stderr.trim() || "(no stderr output)"),
+    )));
+
+    // EPIPE rather than an unhandled crash when the child is already gone.
+    child.stdin.on("error", () => {});
 
     child.stdout.on("data", (chunk) => {
       buf += chunk;
@@ -92,10 +125,8 @@ function listTools(cmd) {
       });
       send({ jsonrpc: "2.0", method: "notifications/initialized" });
       const { result } = await rpc("tools/list", {});
-      clearTimeout(timer);
-      child.kill();
-      resolve(result?.tools ?? []);
-    })().catch(reject);
+      finish(resolve, result?.tools ?? []);
+    })().catch((e) => finish(reject, e));
   });
 }
 
