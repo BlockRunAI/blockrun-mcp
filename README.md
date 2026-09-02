@@ -12,7 +12,6 @@ Agents can only sign transactions.<br><br>
 <br>
 
 <img src="https://img.shields.io/badge/🧰_20_Tools-success?style=for-the-badge" alt="20 tools">&nbsp;
-<img src="https://img.shields.io/badge/🧮_12.9K_Context_Tokens-5B9BF6?style=for-the-badge" alt="12.9K context tokens">&nbsp;
 <img src="https://img.shields.io/badge/🤖_Agent--Native-black?style=for-the-badge" alt="Agent native">&nbsp;
 <img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="No API keys">&nbsp;
 <img src="https://img.shields.io/badge/📈_Read_+_Trade_Polymarket-e11d48?style=for-the-badge" alt="Read and trade Polymarket">&nbsp;
@@ -40,6 +39,15 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 ```
 
 <div align="center"><em>Wallet auto-created on first run. Fund with $5 USDC. Ask Claude anything.</em></div>
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 12.9K tokens, 6% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
+  </picture>
+</div>
+
+<div align="center"><sub>Every MCP server costs you this. Almost none of them tell you. <a href="#what-each-profile-costs-your-context">How we measure it →</a></sub></div>
 
 ---
 
