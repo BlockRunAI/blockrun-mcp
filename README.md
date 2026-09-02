@@ -47,7 +47,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
   </picture>
 </div>
 
-<div align="center"><sub>Every MCP server costs you this. Almost none of them tell you. <a href="#what-each-profile-costs-your-context">How we measure it →</a></sub></div>
+<div align="center"><sub>Every MCP server costs you this. Almost none of them tell you. <a href="docs/mcp-schema-overhead.md">How we measure it, and how to measure anyone else →</a></sub></div>
 
 ---
 
