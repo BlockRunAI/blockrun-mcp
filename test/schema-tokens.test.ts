@@ -24,8 +24,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { initializeMcpServer } from "../src/mcp-handler.js";
-// @ts-expect-error -- plain .mjs, no types; measure()/asK() are the contract.
-import { measure, asK } from "../scripts/measure-tool-schema.mjs";
+// @ts-expect-error -- plain .mjs, no types; measure()/asK()/listTools() are the contract.
+import { measure, asK, listTools } from "../scripts/measure-tool-schema.mjs";
 
 const README = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 const PREFIX = "mcp__blockrun__";
@@ -98,4 +98,21 @@ test("descriptions are the majority of the cost, which is why the table ranks th
     full.descriptions > full.total / 2,
     `descriptions ${full.descriptions} should exceed half of ${full.total}`,
   );
+});
+
+test("a server that dies reports why, instead of waiting out the timeout", async () => {
+  // We tell people to point this at other people's servers, where the common
+  // failure is a typo'd command. Reporting "timed out" after a silent minute
+  // for what was `command not found` in the first 200ms is the difference
+  // between a tool someone uses twice and one they use once.
+  const started = Date.now();
+  await assert.rejects(
+    () => listTools(["node", "/nonexistent-mcp-server.js"], { timeoutMs: 30_000 }),
+    (err: Error) => {
+      assert.match(err.message, /exited with code/, "names the exit");
+      assert.match(err.message, /Cannot find module/, "carries the child's stderr");
+      return true;
+    },
+  );
+  assert.ok(Date.now() - started < 10_000, "should fail fast, not on the timeout");
 });
