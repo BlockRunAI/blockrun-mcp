@@ -26,6 +26,7 @@ import { registerDefiTool } from "./tools/defi.js";
 import { registerPolymarketReadTool, registerPolymarketTool } from "./tools/polymarket.js";
 import { resolveTools, type ToolName } from "./profiles.js";
 import { registerAppResources } from "./apps.js";
+import { stripJsonSchemaDialect } from "./utils/strip-schema-dialect.js";
 
 /**
  * Initialize the MCP server. The active tool `profile` (resolved from
@@ -39,6 +40,10 @@ export function initializeMcpServer(
   server: McpServer,
   profileArgs?: { argv?: string[]; env?: NodeJS.ProcessEnv },
 ): { profile: string; tools: ToolName[] } {
+  // Must run before any tool is registered — that is when the SDK lazily
+  // installs the tools/list handler this wraps.
+  stripJsonSchemaDialect(server);
+
   // Default global spend cap from BLOCKRUN_BUDGET_LIMIT (USD). Without it the
   // ledger starts unlimited; the cap is in-memory and resets when the (npx-spawned)
   // process restarts, so an operator who wants a hard ceiling should set the env.
