@@ -115,6 +115,7 @@ client. Verified against each client's own documentation on 2026-08-29:
 | **Cursor** | ✅ Yes | Elicitation is listed as **Supported** in Cursor's MCP feature table. |
 | **VS Code (GitHub Copilot)** | ✅ Yes | Elicitation support landed in VS Code 1.102; URL-mode elicitation in 1.107. |
 | **Claude Desktop** | ⚠️ Partial | Observed while building this feature: a form dialog renders, but confirming it reports `cancel` rather than `accept`, so the call proceeds. Only an explicit **Decline** stops the charge. |
+| **OpenClaw** | ⚠️ Surface-dependent | Codex harness form elicitation is supported, but unmappable prompts are explicitly declined. On OpenClaw 2026.8.2 WebChat → Codex, this prompt returned `decline` without an actionable dialog, so paid calls stopped. Use the hard budget and OpenClaw tool approvals on that route. |
 | **Windsurf** | ❌ No | Windsurf documents support for tools, resources and prompts only. |
 | **Codex CLI** | ❌ Not documented | OpenAI's MCP docs list tool calling and server instructions; elicitation is not mentioned. |
 | **Gemini CLI** | ❌ Not documented | Tools, resources and prompts are documented; elicitation is not. |
@@ -123,6 +124,8 @@ Sources: [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) ·
 [Cursor MCP docs](https://cursor.com/docs/context/mcp) ·
 [VS Code 1.102](https://code.visualstudio.com/updates/v1_102) /
 [1.107 release notes](https://code.visualstudio.com/updates/v1_107) ·
+[OpenClaw MCP docs](https://docs.openclaw.ai/cli/mcp) /
+[Codex harness runtime](https://docs.openclaw.ai/plugins/codex-harness-runtime) ·
 [Windsurf MCP docs](https://docs.windsurf.com/windsurf/cascade/mcp) ·
 [Codex MCP docs](https://developers.openai.com/codex/mcp) ·
 [Gemini CLI MCP docs](https://geminicli.com/docs/tools/mcp-server/).

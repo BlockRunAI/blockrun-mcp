@@ -132,7 +132,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 |---|---|---|---|
 | **Claude Code** | ✅ Verified · 2.1.251 · 2026-08-30 | ✅ | `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest` |
 | **Codex CLI** | ✅ Verified · 0.142.5 · 2026-08-30 | ❌ | `codex mcp add blockrun -- npx -y @blockrun/mcp@latest` |
-| **OpenClaw** | 🟡 In use · 2026.5.2 (from a local build; the `npx` form below is not yet verified) | — not documented | `openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
+| **OpenClaw** | ✅ Verified · 2026.8.2 · 2026-09-02 | ⚠️ surface-dependent; see below | `openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
 | **Claude Desktop** | 📝 Documented | ⚠️ renders; OK reports *cancel* → proceeds | `claude_desktop_config.json` — JSON below |
 | **Cursor** | 📝 Documented | ✅ | `~/.cursor/mcp.json` — JSON below |
 | **VS Code (Copilot)** | 📝 Documented | ✅ | `code --add-mcp '{"name":"blockrun","command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
@@ -140,6 +140,15 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 | **Windsurf** | 📝 Documented | ❌ | `~/.codeium/windsurf/mcp_config.json` — JSON below |
 
 Any other MCP client that can spawn a stdio server works the same way: `command: npx`, `args: ["-y", "@blockrun/mcp@latest"]`. With nvm/Homebrew Node on a JSON-configured client, put the absolute path from `which npx` in `command`. Spend-dialog sources and what "proceeds without asking" means: [`docs/spend-confirmation.md`](docs/spend-confirmation.md).
+
+**OpenClaw:** the published `npx` package was verified end-to-end on 2026.8.2: all 20 tools were projected, free calls worked, and paid x402 calls settled. Add a hard session cap while installing:
+
+```bash
+openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"],"env":{"BLOCKRUN_BUDGET_LIMIT":"2"}}'
+openclaw mcp doctor blockrun --probe
+```
+
+Spend confirmation depends on the OpenClaw runtime and chat surface. Its Codex harness supports MCP form elicitation, but an unmappable prompt is returned as an explicit decline; in the WebChat → Codex route tested here, `BLOCKRUN_CONFIRM_SPEND=on` declined paid calls without presenting an actionable dialog. Keep confirmation off on that route and rely on `BLOCKRUN_BUDGET_LIMIT` plus OpenClaw's own tool-approval mode.
 
 <details>
 <summary><strong>JSON for Claude Desktop, Cursor, Windsurf</strong></summary>

@@ -38,7 +38,7 @@ test("estimateChatCost keeps genuinely-free paths at $0", () => {
 // loop can fall through to any of them — so coding ($5/$25) legitimately
 // reserves less than balanced ($5/$30).
 //
-// Amounts below are live unpaid 402 quotes, 2026-08-13, 100k-char prompt,
+// Amounts below are live unpaid 402 quotes, last refreshed 2026-09-02, 100k-char prompt,
 // max_tokens 1024. Re-probe with `npm run verify:prices` (which now carries one
 // row per tier) rather than adjusting them to match a failing build.
 const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> = [
@@ -53,7 +53,7 @@ const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> 
   [undefined, "openai/gpt-5.6-terra", 0.098269],
   [undefined, "google/gemini-3.5-flash", 0.073951],
   [undefined, "zai/glm-5", 0.049346],
-  [undefined, "deepseek/deepseek-v4-pro", 0.021977],
+  [undefined, "deepseek/deepseek-v4-pro", 0.064790],
   // Tier routing: the charge is that of the member the loop settles on, so each
   // tier is pinned against its most expensive member's live quote.
   ["powerful", undefined, 1.460020],   // gpt-5.4-pro
@@ -62,10 +62,10 @@ const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> 
   ["coding", undefined, 0.243655],     // claude-opus-5
   ["fast", undefined, 0.073951],       // gemini-3.5-flash
   ["glm", undefined, 0.049346],        // glm-5.x
-  ["cheap", undefined, 0.021977],      // deepseek-v4-pro
+  ["cheap", undefined, 0.064790],      // deepseek-v4-pro
 ];
 
-test("estimateChatCost never reserves less than the gateway charges (live 402, 2026-08-13)", () => {
+test("estimateChatCost never reserves less than the gateway charges (live 402, refreshed 2026-09-02)", () => {
   for (const [mode, model, charged] of LIVE_CHARGE_100K) {
     const reserved = estimateChatCost(1024, mode, model, undefined, 100_000);
     assert.ok(
