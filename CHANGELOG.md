@@ -2,6 +2,37 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.45.0
+
+**Every tool schema got smaller, and the README now tells you by how much.**
+Installing an MCP server spends your context on every turn — the client loads
+each tool's schema into the model's prompt and re-sends it for the whole
+session, whether or not you ever call the tools. Package managers have shown
+install size for thirty years; almost no MCP server shows this. Now ours does:
+a `🧮 12.9K Context Tokens` badge, and a table of what each profile costs at
+the point where you are already choosing one. `--profile trading` is **57% less
+context** than the default for the same trading workflow — already true, never
+stated. The harness that produces the number ships too:
+`npm run measure:schema`, and `-- <cmd>` points it at any other stdio MCP
+server, so the claim is checkable by anyone against anyone.
+`test/schema-tokens.test.ts` fails the build when the README disagrees with the
+live server, asserting the published figure rather than a raw count so wording
+edits do not break CI but a real regression does.
+
+Alongside it, 300 of those tokens are simply gone. The SDK's zod→JSON-Schema
+conversion stamps `"$schema": "http://json-schema.org/draft-07/schema#"` onto
+every tool's `inputSchema` — 15 tokens each, on all 20 tools, that no code path
+in the reference SDK ever reads and that its bundled validator never receives.
+It is not our string and the SDK exposes no way to suppress it, so
+`stripJsonSchemaDialect()` wraps the `tools/list` handler through the public
+`setRequestHandler`. It is never load-bearing: if a future SDK stops routing
+that way the wrapper stops matching and the header simply returns.
+
+Honest about the rest: 54% of what remains is tool *descriptions*, not schemas,
+and that work is not done. Numbers are `o200k_base`, a proxy — Claude's
+tokenizer is not public and runs higher on JSON — so every figure published is
+a slight under-count, never an over-count.
+
 ## 0.44.0
 
 **Two MCP Apps: a Polymarket order card and a wallet panel.** Hosts that

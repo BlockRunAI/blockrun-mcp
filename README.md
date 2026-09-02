@@ -12,6 +12,7 @@ Agents can only sign transactions.<br><br>
 <br>
 
 <img src="https://img.shields.io/badge/🧰_20_Tools-success?style=for-the-badge" alt="20 tools">&nbsp;
+<img src="https://img.shields.io/badge/🧮_12.9K_Context_Tokens-5B9BF6?style=for-the-badge" alt="12.9K context tokens">&nbsp;
 <img src="https://img.shields.io/badge/🤖_Agent--Native-black?style=for-the-badge" alt="Agent native">&nbsp;
 <img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="No API keys">&nbsp;
 <img src="https://img.shields.io/badge/📈_Read_+_Trade_Polymarket-e11d48?style=for-the-badge" alt="Read and trade Polymarket">&nbsp;
@@ -173,6 +174,49 @@ codex mcp add blockrun-trading -- npx -y @blockrun/mcp@latest --profile trading
 ```
 
 An unknown profile name falls back to `full`. `modal` and `phone` are `full`-profile only.
+
+#### What each profile costs your context
+
+Installing an MCP server spends context on **every turn**, whether or not you call the tools —
+the client loads each tool's schema into the model's prompt and re-sends it for the whole session.
+Package managers have shown install size for decades. Almost no MCP server shows this. Ours:
+
+| Profile | Tools | Context |
+|---------|-------|---------|
+| `full` *(default)* | 20 | 12,900 |
+| `trading` | 9 | 5,554 |
+| `media` | 7 | 5,436 |
+| `research` | 6 | 3,024 |
+| `chat` | 3 | 1,924 |
+
+Running `--profile trading` instead of the default costs **57% less context** for the same trading
+workflow. If you only ever ask about markets, that is the single cheapest change you can make.
+
+Measure it yourself — against us, or against any other stdio MCP server:
+
+```bash
+npm i gpt-tokenizer
+node scripts/measure-tool-schema.mjs                     # this server, every profile
+node scripts/measure-tool-schema.mjs -- npx -y @some/other-mcp-server
+```
+
+<details>
+<summary>How the number is computed, and why it is a slight under-count</summary>
+
+It counts the **model-visible projection** — `{name, description, input_schema}` per tool, with the
+`mcp__blockrun__` prefix the host prepends — because that is what lands in the API `tools` array.
+It excludes `annotations`, `_meta` and `outputSchema`, which the host consumes and never forwards
+to the model (a further ~3.7% on the wire).
+
+The tokenizer is `o200k_base`. Claude's tokenizer is not public and runs a few percent higher on
+JSON, so **every figure here is a slight under-count**, never an over-count.
+
+Two caveats worth stating plainly. Tool schemas sit at the front of the prompt and are covered by
+prompt caching, so after the first turn they re-send at cache-read rates — the *context-window*
+cost is 100% every turn, the *dollar* cost is roughly a tenth of that. And 54% of our own cost is
+tool **descriptions**, not schemas, which is where the remaining work is.
+
+</details>
 For a complete live signal → order-preview presentation, use
 [`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)
 with the [Stanford runbook](docs/stanford-trading-demo.md).
