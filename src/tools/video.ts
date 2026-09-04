@@ -12,6 +12,7 @@ import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
+import { isAccountMode, accountJson, PORTAL_URL } from "../utils/account.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -444,6 +445,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
 
+        if (isAccountMode()) {
+          const data=await accountJson("/v1/videos/generations",body,VIDEO_TOTAL_BUDGET_MS) as {data?:Array<{url?:string;duration_seconds?:number}>;model?:string};const clip=data.data?.[0];if(!clip?.url)throw new Error("Completed account video response missing URL");
+          return {content:[{type:"text",text:`🎬 Video ready!\nURL: ${clip.url}\nModel: ${data.model||selectedModel}\nBilling: account credits (${PORTAL_URL}/dashboard/credits)`}],structuredContent:{url:clip.url,model:data.model||selectedModel,auth_mode:"api-key",cost_source:"account_portal"}};
+        }
         if (getChain() === "solana") {
           // Loaded only on the Solana branch so Base-only test harnesses and
           // installations never need to initialize SVM payment dependencies.

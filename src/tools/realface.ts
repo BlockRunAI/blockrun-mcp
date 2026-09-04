@@ -11,6 +11,7 @@ import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
+import { isAccountMode, accountJson } from "../utils/account.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -32,6 +33,7 @@ async function payAndPostJson(
   reqBody: string,
   fallbackDescription: string,
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
+  if (isAccountMode()) return {status:200,data:await accountJson(new URL(url).pathname, JSON.parse(reqBody)),settledUsd:null};
   const privateKey = getOrCreateWalletKey();
   const account = privateKeyToAccount(privateKey);
 
@@ -123,6 +125,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           const body: Record<string, unknown> = { name };
           if (group_id) body.groupId = group_id;
 
+          if (isAccountMode()) {
+            const data=await accountJson("/v1/realface/init",body);return {content:[{type:"text",text:`RealFace enrollment started.\nGroup ID: ${data.group_id}\nStatus: ${data.status}`}],structuredContent:data};
+          }
           const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/realface/init`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -177,6 +182,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (!group_id) {
             return { content: [{ type: "text", text: formatError("group_id is required for action:\"status\".") }], isError: true };
           }
+          if (isAccountMode()) {
+            const data=await accountJson(`/v1/realface/status?groupId=${encodeURIComponent(group_id)}`);return {content:[{type:"text",text:`RealFace group ${data.group_id}\nStatus: ${data.status}`}],structuredContent:data};
+          }
           const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/realface/status?groupId=${encodeURIComponent(group_id)}`, {
             method: "GET",
           }, 30_000);
@@ -210,6 +218,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
         // ---- list (free) ----
         if (action === "list") {
+          if (isAccountMode()) return {content:[{type:"text",text:formatError("Listing wallet-owned RealFace assets requires a wallet. Account API mode can enroll and generate without one.")}],isError:true};
           const account = privateKeyToAccount(getOrCreateWalletKey());
           const [rfResp, vpResp] = await Promise.all([
             fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
@@ -260,7 +269,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
         // ---- portrait (paid, Base only — Virtual Portrait, no liveness) ----
         if (action === "portrait") {
-          if (getChain() !== "base") {
+          if (!isAccountMode() && getChain() !== "base") {
             return { content: [{ type: "text", text: formatError("blockrun_realface portrait settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
           }
           if (!name || !image_url) {
@@ -323,7 +332,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
         // ---- enroll (paid, Base only) ----
         if (action === "enroll") {
-          if (getChain() !== "base") {
+          if (!isAccountMode() && getChain() !== "base") {
             return { content: [{ type: "text", text: formatError("blockrun_realface enroll settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
           }
           if (!name || !image_url || !group_id) {

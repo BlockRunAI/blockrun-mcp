@@ -11,6 +11,7 @@ import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { pollDeadline, pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { isAccountMode, accountJson, PORTAL_URL } from "../utils/account.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -71,7 +72,7 @@ Returns a permanent BlockRun-hosted URL.`,
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
-        if (getChain() !== "base") {
+        if (!isAccountMode() && getChain() !== "base") {
           return {
             content: [{ type: "text", text: formatError("blockrun_music currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
             isError: true,

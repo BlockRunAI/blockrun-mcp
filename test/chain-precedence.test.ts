@@ -92,8 +92,8 @@ test("setChain clears the automatic pin so it cannot resurface", () => {
   assert.equal(getChain(), "base");
 });
 
-test("a fresh install with nothing set defaults to Base", () => {
-  assert.equal(getChain(), "base");
+test("a fresh install with nothing set defaults to Solana", () => {
+  assert.equal(getChain(), "solana");
 });
 
 // The end-to-end regression. Everything above writes the pin file directly,
@@ -105,12 +105,12 @@ test("a fresh install with nothing set defaults to Base", () => {
 test("a first run leaves SOLANA_WALLET_KEY able to switch chains afterwards", async () => {
   const { ensureBothWallets } = await import("../src/utils/wallet.js");
 
-  // Fresh install: no preference, no session, so getChain() === "base".
-  assert.equal(getChain(), "base");
+  // Fresh install: no preference or session, so Solana is preferred.
+  assert.equal(getChain(), "solana");
   await ensureBothWallets();
 
-  // The pin must have preserved Base against the freshly-created Solana session...
-  assert.equal(getChain(), "base", "provisioning a Solana wallet must not move an existing Base user");
+  // Provisioning both wallets preserves the Solana-first selection.
+  assert.equal(getChain(), "solana");
   // ...without writing an EXPLICIT preference the user never made.
   assert.equal(
     fs.existsSync(path.join(blockrunDir, ".chain")),

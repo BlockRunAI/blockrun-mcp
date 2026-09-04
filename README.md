@@ -1,3 +1,15 @@
+## Account API authentication
+
+Register at [user.blockrun.ai](https://user.blockrun.ai), create a key under [API Keys](https://user.blockrun.ai/dashboard/keys), and add [Credits](https://user.blockrun.ai/dashboard/credits). Then configure the MCP server with `BLOCKRUN_API_KEY=brk_live_...`. The shared `~/.blockrun/.api-key` written by ClawRouter or `blockrun login` is also accepted; environment configuration wins.
+
+Account mode starts without provisioning a wallet. Chat (including native Anthropic), model, image, video, music, speech and data tools use authenticated account requests. Async media polling keeps the key on the configured API origin. A malformed key fails closed and never falls back to an x402 wallet. Wallet-owned asset listing, Polymarket trading, transfers, deposits, withdrawals, and arbitrary signing remain wallet operations.
+
+`BLOCKRUN_API_BASE_URL` defaults to `https://api.blockrun.ai`. Credentials are never forwarded across an origin or redirect. Account credit usage is authoritative in the portal; MCP wallet budget and transaction reporting do not represent account charges.
+
+This review branch requires the TypeScript SDK implementation in [PR #36](https://github.com/BlockRunAI/blockrun-llm-ts/pull/36). Do not publish MCP until the canonical SDK release is available and `package.json` is updated from `^3.8.4`. For review, install the package built from exact commit `7a61b57`. Responses SSE and live video completion still depend on Enterprise PR #10 deployment and configuration. Native Gemini account availability is unverified.
+
+New wallet users default to Solana. Explicit/saved selections and existing Base-only wallets stay on Base.
+
 <div align="center">
 
 <h1>BlockRun MCP</h1>
@@ -6,14 +18,14 @@
 
 <p>Agents can't sign up for accounts. Agents can't enter credit cards.<br>
 Agents can only sign transactions.<br><br>
-<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call in USDC. No accounts. No API keys. No dashboards.</strong><br><br>
+<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call in USDC. No accounts. API keys or wallets. No dashboards.</strong><br><br>
 <em>Read the odds <strong>and</strong> place the bet, from one self-custody wallet.</em></p>
 
 <br>
 
 <img src="https://img.shields.io/badge/🧰_20_Tools-success?style=for-the-badge" alt="20 tools">&nbsp;
 <img src="https://img.shields.io/badge/🤖_Agent--Native-black?style=for-the-badge" alt="Agent native">&nbsp;
-<img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="No API keys">&nbsp;
+<img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="API keys or wallets">&nbsp;
 <img src="https://img.shields.io/badge/📈_Read_+_Trade_Polymarket-e11d48?style=for-the-badge" alt="Read and trade Polymarket">&nbsp;
 <img src="https://img.shields.io/badge/💰_x402_USDC-purple?style=for-the-badge" alt="x402 USDC">&nbsp;
 <img src="https://img.shields.io/badge/🔓_Open_Source-green?style=for-the-badge" alt="Open source">
@@ -66,7 +78,7 @@ Every other data integration was built for **human developers** — create an ac
 **Agents can't do any of that.** BlockRun MCP is built for the agent-first world:
 
 - **One wallet, every source** — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
-- **No API keys** — your wallet signature *is* authentication.
+- **API keys or wallets** — your wallet signature *is* authentication.
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.

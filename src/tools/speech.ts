@@ -21,6 +21,7 @@ import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { isAccountMode, accountJson, PORTAL_URL } from "../utils/account.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -149,7 +150,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           return await listVoices();
         }
 
-        if (getChain() !== "base") {
+        if (!isAccountMode() && getChain() !== "base") {
           return {
             content: [{ type: "text", text: formatError("blockrun_speech currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
             isError: true,
@@ -208,6 +209,11 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         const confirm = await confirmSpend(server, { usd: cost, label: `speech · ${action === "sound_effect" ? "sound effect" : model}` });
         if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
+        if (isAccountMode()) {
+          const route=action === "sound_effect" ? "/v1/audio/sound-effects" : "/v1/audio/speech";
+          const data=await accountJson(route,body,SPEECH_TIMEOUT) as {data?:Array<{url?:string;format?:string}>;model?:string};const clip=data.data?.[0];if(!clip?.url)throw new Error("No audio URL in account response");
+          return {content:[{type:"text",text:`Audio ready!\nURL: ${clip.url}\nBilling: account credits (${PORTAL_URL}/dashboard/credits)`}],structuredContent:{url:clip.url,model:data.model||model,auth_mode:"api-key",cost_source:"account_portal"}};
+        }
         const privateKey = getOrCreateWalletKey();
         const account = privateKeyToAccount(privateKey);
 

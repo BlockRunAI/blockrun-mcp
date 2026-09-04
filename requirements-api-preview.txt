@@ -1,0 +1,1 @@
+Review dependency: install @blockrun/llm built from BlockRunAI/blockrun-llm-ts commit 7a61b57 before installing/running this branch. Remove this file and update package.json to the canonical published release before publishing MCP.

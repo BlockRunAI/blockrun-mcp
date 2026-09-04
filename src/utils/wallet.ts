@@ -17,6 +17,7 @@ import {
   SOLANA_WALLET_FILE_PATH,
   WALLET_FILE_PATH,
 } from "@blockrun/llm";
+import { accountOptions, isAccountMode, PORTAL_URL } from "./account.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { USDC_ADDRESS, BASE_RPC_URLS } from "./constants.js";
 import {
@@ -142,7 +143,8 @@ export function getChain(): "base" | "solana" {
   //    "Base-only" refusals from a wallet they never funded.
   if (hasKeychainSolanaKey()) return "solana";
 
-  return "base";
+  const hasBase = Boolean(process.env.BLOCKRUN_WALLET_KEY || process.env.BASE_CHAIN_WALLET_KEY || fs.existsSync(WALLET_FILE_PATH));
+  return hasBase ? "base" : "solana";
 }
 
 // The canonical file we WRITE the chain preference to (getChain reads either,
@@ -225,7 +227,7 @@ export async function ensureBothWallets(): Promise<{
  * either chain via utils/solana-402.ts.
  */
 export function baseOnlyMessage(capability: string): string | null {
-  if (getChain() === "solana") {
+  if (!isAccountMode() && getChain() === "solana") {
     return `${capability} currently supports Base-chain payment only — your active chain is Solana. Switch with: blockrun_wallet action:"chain" chain:"base"  (switch back later with chain:"solana"). Solana support depends on the @blockrun/llm SDK adding this capability.`;
   }
   return null;
@@ -362,7 +364,19 @@ function buildSolanaClient(timeout?: number): SolanaLLMClient {
   return new SolanaLLMClient(Object.keys(opts).length ? opts : undefined);
 }
 
+function requireAccountSdk(): Record<string, unknown> | undefined {
+  const opts = accountOptions();
+  if (!opts) return undefined;
+  if (!Object.getOwnPropertyDescriptor(LLMClient.prototype, "authMode")) throw new Error("Account mode requires the release containing TypeScript SDK PR #36.");
+  return opts;
+}
+
 export function getClient(): ApiClient {
+  const account = requireAccountSdk();
+  if (account) {
+    if (!_evmClient) _evmClient = new LLMClient(account);
+    return _evmClient;
+  }
   if (getChain() === "solana") {
     if (!_solanaClient) {
       _solanaClient = buildSolanaClient();
@@ -389,6 +403,8 @@ export function getClient(): ApiClient {
  * fallback loop — see FREE_MODEL_TIMEOUT_MS. Same mechanism, opposite direction.
  */
 export function buildClientWithTimeout(timeoutMs: number): ApiClient {
+  const account = requireAccountSdk();
+  if (account) return new LLMClient({ ...account, timeout: timeoutMs });
   if (getChain() === "solana") {
     return buildSolanaClient(timeoutMs);
   }
@@ -405,6 +421,8 @@ export function buildClientWithTimeout(timeoutMs: number): ApiClient {
  * misattributing it across agent_ids.
  */
 export function buildClient(): ApiClient {
+  const account = requireAccountSdk();
+  if (account) return new LLMClient(account);
   if (getChain() === "solana") return buildSolanaClient();
   return new LLMClient({ privateKey: getOrCreateWalletKey() });
 }
@@ -420,16 +438,18 @@ export function buildClient(): ApiClient {
  */
 export function getAnthropicClient(): AnthropicClient {
   if (!_anthropicClient) {
-    const privateKey = getOrCreateWalletKey();
-    _anthropicClient = new AnthropicClient({ privateKey });
+    const account = requireAccountSdk();
+    if (account) _anthropicClient = new AnthropicClient(account);
+    else { const privateKey = getOrCreateWalletKey(); _anthropicClient = new AnthropicClient({ privateKey }); }
   }
   return _anthropicClient;
 }
 
 export function getImageClient(): ImageClient {
   if (!_imageClient) {
-    const privateKey = getOrCreateWalletKey();
-    _imageClient = new ImageClient({ privateKey });
+    const account = requireAccountSdk();
+    if (account) _imageClient = new ImageClient(account);
+    else { const privateKey = getOrCreateWalletKey(); _imageClient = new ImageClient({ privateKey }); }
   }
   return _imageClient;
 }
@@ -443,13 +463,16 @@ export function getPriceClient(requireWallet = true): PriceClient {
   }
 
   if (!_priceClient) {
-    const privateKey = getOrCreateWalletKey();
-    _priceClient = new PriceClient({ privateKey });
+    const account = requireAccountSdk();
+    if (account) _priceClient = new PriceClient(account);
+    else { const privateKey = getOrCreateWalletKey(); _priceClient = new PriceClient({ privateKey }); }
   }
   return _priceClient;
 }
 
-export async function getWalletInfo() {
+export async function getWalletInfo(): Promise<{address:string;network:string;chainId:number|null;currency:string;authMode?:string;portal?:string;explorerUrl?:string;fundingUrl?:string;isNew?:boolean}> {
+  const account = accountOptions();
+  if (account) return { address: "", network: "Account" as const, chainId: null, currency: "credits", authMode: "api-key", portal: `${PORTAL_URL}/dashboard/credits` };
   if (getChain() === "solana") {
     const client = getClient() as SolanaLLMClient;
     const address = await client.getWalletAddress();

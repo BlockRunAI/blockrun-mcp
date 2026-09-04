@@ -21,6 +21,7 @@ import {
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
+import { isAccountMode } from "../utils/account.js";
 import type { ApiClient } from "../utils/wallet.js";
 import type { BudgetState } from "../types.js";
 
@@ -77,7 +78,7 @@ export function freeTierTruncationNote(promptChars: number, model: string): stri
  * know a model's settled price until after the call, so for any path that CAN
  * pick an expensive model we reserve a frontier-ish worst-case scaled by
  * max_tokens — this stops a near-exhausted budget from authorizing one large
- * frontier completion. The post-call recordActualSpend() books the REAL settled
+ * frontier completion. The post-call recordMcpSpend() books the REAL settled
  * cost (LLMClient.getSpending delta), so over-reserving here only affects the
  * gate, never the ledger.
  */
@@ -131,7 +132,7 @@ export function estimateChatCost(
   // (11.4x short); this is the same defect, surviving in the coefficients.
   //
   // Over-reserving only tightens the gate and is released immediately after the
-  // call; recordActualSpend() then books the REAL settled cost. Under-reserving
+  // call; recordMcpSpend() then books the REAL settled cost. Under-reserving
   // is what lets one approved call blow a cap, so where the two disagree this
   // rounds toward reserving more (worst tier member, 2 chars/token).
   // hasOwn-guarded, NOT `?? DEFAULT`. Both tables are object literals, so they
@@ -178,11 +179,14 @@ export function estimateChatCost(
  * charge still gets booked; it fires only when the delta is real (> 0), so an
  * ordinary pre-payment failure (400, timeout, refusal) still books nothing.
  */
+function recordMcpSpend(...args: Parameters<typeof recordActualSpend>) { if (!isAccountMode()) recordActualSpend(...args); }
+
 async function withSettledCost<T>(
   client: ApiClient,
   run: () => Promise<T>,
   onSettledThrow?: (settledUsd: number) => void,
 ): Promise<{ result: T; settledUsd: number }> {
+  if (isAccountMode()) return { result: await run(), settledUsd: 0 };
   const before = client.getSpending().totalUsd;
   try {
     const result = await run();
@@ -354,8 +358,8 @@ Run blockrun_models to see all available models with pricing.`,
               stop,
             });
             return r.choices?.[0]?.message?.content || "";
-          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
-          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+          }, (usd) => recordMcpSpend(budget, usd, estimatedCost, agent_id));
+          recordMcpSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, targetModel);
           return {
             content: [{ type: "text", text: `[${targetModel} | ${fullMessages.length} msgs]\n\n${reply}${note ?? ""}` }],
@@ -385,8 +389,8 @@ Run blockrun_models to see all available models with pricing.`,
               responseFormat,
               stop,
             });
-          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
-          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+          }, (usd) => recordMcpSpend(budget, usd, estimatedCost, agent_id));
+          recordMcpSpend(budget, settledUsd, estimatedCost, agent_id);
           return { content: [{ type: "text", text: `${response}${freeTierTruncationNote(promptChars, model) ?? ""}` }] };
         } catch (error) {
           return {
@@ -441,10 +445,10 @@ Run blockrun_models to see all available models with pricing.`,
           }, (usd) => {
             // Settled, then failed. Book it and remember that this tool call has
             // already cost the caller money — see the break below.
-            recordActualSpend(budget, usd, estimatedCost, agent_id);
+            recordMcpSpend(budget, usd, estimatedCost, agent_id);
             settledOnFailure = usd;
           });
-          recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
+          recordMcpSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, m);
           return {
             content: [{ type: "text", text: `[${m}]\n\n${response}${note ?? ""}` }],
