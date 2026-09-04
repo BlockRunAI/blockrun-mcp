@@ -68,8 +68,8 @@ export const BASE_RPC_URLS = [
 // ZAI (4): glm-5.2 ($1.4/$4.4, 1M), glm-5.1 ($1.4/$4.4), glm-5 ($1/$3.2 —
 //   Z.AI RAISED the list rate; still the cheapest ZAI, but no longer a
 //   cheap-tier pick), glm-5-turbo ($1.2/$4)
-// xAI (3): grok-4.5 ($2.5/$9, 500K, native search), grok-4.3 ($1.5/$4, 1M),
-//   grok-build-0.1 ($1.5/$3, coding)
+// xAI (3): grok-4.5 ($2/$6, 500K, native search), grok-4.3 ($1.25/$2.5, 1M),
+//   grok-build-0.1 ($1/$2, coding)
 // MiniMax (2): minimax-m3 ($0.3/$1.2, 1M), minimax-m2.7 ($0.3/$1.2, 200K)
 // Qwen (3): qwen3.7-max ($1.475/$4.425, 1M), qwen3.7-plus ($0.32/$1.28, 1M),
 //   qwen3.7-flash ($0.03/$0.13, 1M — the cheapest PAID model in the catalogue;
@@ -204,9 +204,9 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "moonshot/kimi-k3": { input: 3, output: 15 },
-  "xai/grok-4.5": { input: 2.5, output: 9 },
-  "xai/grok-4.3": { input: 1.5, output: 4 },
-  "xai/grok-build-0.1": { input: 1.5, output: 3 },
+  "xai/grok-4.5": { input: 2, output: 6 },
+  "xai/grok-4.3": { input: 1.25, output: 2.5 },
+  "xai/grok-build-0.1": { input: 1, output: 2 },
   "qwen/qwen3.7-max": { input: 1.475, output: 4.425 },
   "qwen/qwen3.7-flash": { input: 0.03, output: 0.13 },
   "zai/glm-5.2": { input: 1.4, output: 4.4 },
