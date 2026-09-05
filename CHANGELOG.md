@@ -2,6 +2,32 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.48.0
+
+**A key can live in a file, not just an environment variable.** Write it to
+`~/.blockrun/.api-key` and account mode picks it up — same directory the wallet
+already uses, and for the same reason that file exists: a stdio MCP server is
+launched by its client, and several clients make setting an environment variable
+awkward or impossible. `BLOCKRUN_API_KEY` still wins when both are present,
+mirroring how `BLOCKRUN_WALLET_KEY` outranks `~/.blockrun/.session` — an
+explicitly exported key is a deliberate override and must not be shadowed by
+whatever is left on disk from an earlier account. An empty or unreadable file
+falls through to wallet mode rather than taking the server down; a malformed one
+still fails loudly, and now names which source it came from.
+
+Also: a 429 from the account API surfaces its `Retry-After` instead of burying
+it in the response body. It is the one part of a rate-limit response a caller can
+act on, and an agent told only "rate limited" retries immediately and is refused
+again.
+
+Both were carried over from **@KillerQueen-Z's PR #136**, which implemented
+account-key support in parallel and had these two details the shipped
+implementation did not. That PR is closed as superseded — 0.46.0 and 0.47.0 had
+already landed the same feature, and it could no longer merge — but the ideas
+were the better ones and are here with credit.
+
+Tests 458 → 462.
+
 ## 0.47.0
 
 **Account mode stops guessing.** 0.46.0 shipped API-key billing with one honest

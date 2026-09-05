@@ -3,7 +3,8 @@
 // Which credential is this process paying with — an account API key, or a
 // wallet signing x402?
 //
-// This module is deliberately DEPENDENCY-FREE. It is imported by utils/wallet.ts
+// This module imports nothing from the rest of this codebase (node builtins
+// only). It is imported by utils/wallet.ts
 // (which owns the chain and the SDK clients) and by the four tools that build
 // gateway requests by hand, so anything it imported back from wallet.ts would be
 // an import cycle across the hottest path in the server.
@@ -14,6 +15,10 @@
 // once, and the result was six `getChain() !== "base"` refusals that stayed in
 // the code for months after the Solana gateway started serving those routes.
 // One decision point, or it drifts again.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /**
  * The shape the gateway issues and the SDK validates (`resolveApiKeyAuth` in
@@ -38,7 +43,22 @@ export type AuthMode = "api-key" | "wallet";
 let _apiKey: string | null | undefined;
 
 /**
+ * Where a key lives when it is not in the environment.
+ *
+ * Sits beside ~/.blockrun/.session for the same reason that file exists: a
+ * stdio MCP server is launched by a client, and several of those clients make
+ * setting an environment variable awkward or impossible. Carried over from
+ * @KillerQueen-Z's PR #136, which had this and the env-only implementation did
+ * not.
+ */
+const API_KEY_FILE = path.join(os.homedir(), ".blockrun", ".api-key");
+
+/**
  * The account API key, or undefined when this process pays from a wallet.
+ *
+ * Precedence is env then file, matching the wallet path (BLOCKRUN_WALLET_KEY
+ * outranks ~/.blockrun/.session): an explicitly exported key is a deliberate
+ * override and must not be shadowed by whatever is on disk.
  *
  * A MALFORMED key THROWS rather than falling back to the wallet. Falling back
  * silently is how someone who believes they are spending prepaid credit starts
@@ -49,15 +69,26 @@ let _apiKey: string | null | undefined;
 export function getApiKey(): string | undefined {
   if (_apiKey !== undefined) return _apiKey ?? undefined;
 
-  const raw = process.env.BLOCKRUN_API_KEY?.trim();
+  let raw = process.env.BLOCKRUN_API_KEY?.trim();
+  let origin = "BLOCKRUN_API_KEY";
+  if (!raw) {
+    try {
+      // An unreadable file is not a configured key: fall through to wallet mode
+      // rather than taking the whole server down over a permissions error.
+      if (fs.existsSync(API_KEY_FILE)) {
+        raw = fs.readFileSync(API_KEY_FILE, "utf-8").trim();
+        origin = API_KEY_FILE;
+      }
+    } catch { /* ignore */ }
+  }
   if (!raw) {
     _apiKey = null;
     return undefined;
   }
   if (!API_KEY_PATTERN.test(raw)) {
     throw new Error(
-      `BLOCKRUN_API_KEY is not a valid BlockRun API key (expected brk_…). ` +
-        `Create one at ${PORTAL_KEYS_URL}, or unset BLOCKRUN_API_KEY to pay from a wallet instead.`,
+      `${origin} does not contain a valid BlockRun API key (expected brk_…). ` +
+        `Create one at ${PORTAL_KEYS_URL}, or remove it to pay from a wallet instead.`,
     );
   }
   _apiKey = raw;
