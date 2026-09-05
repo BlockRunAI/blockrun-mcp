@@ -2,6 +2,74 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.46.0
+
+**An API key is now a way to pay, and Solana is the chain you start on.**
+
+Until now there was exactly one way to use this server: hold a wallet, fund it
+with USDC, sign every call. That is the right default and it stays the default —
+but it rules out every team that cannot hand a private key to an agent. So
+`BLOCKRUN_API_KEY=brk_live_…` is a second rail: sign in at
+[user.blockrun.ai](https://user.blockrun.ai), mint a key, add credit, and the
+same 20 tools bill an account instead of a wallet — post-paid at exact usage,
+with no per-call minimum and no per-call transaction fee. No wallet is created,
+read, or stored in that mode.
+
+It is not a chat-only shortcut. `api.blockrun.ai` vendors the gateway's routes,
+so a key reaches the whole tool surface: chat, images, video, music, speech,
+search, Exa, Surf, prediction markets, DefiLlama, RPC. Verified against the live
+service, then reconciled against the account ledger — music billed $0.1575
+against a $0.1595 estimate, speech $0.001050 against $0.0031, each high by
+exactly the $0.002 transaction fee the account rail does not charge. Costs
+displayed in this mode are therefore labelled estimates and point at
+`/dashboard/activity`, because the account API returns no per-call price and
+there is nothing this process could read back. Polymarket trading, wallet
+balances and top-ups, and `blockrun_realface action:"list"` genuinely need a
+keypair; they now say so in a sentence instead of failing with an SDK error.
+
+Two defects found while wiring it, both of which would have cost real money.
+`client.getSpending()` **throws** on the account rail, and `blockrun_chat`
+called it three times per call outside its try block — unguarded, setting a key
+would not have degraded chat, it would have broken every call before the request
+was sent. And every client factory called `getOrCreateWalletKey()` eagerly,
+which *mints*: writes `~/.blockrun/.session`, mirrors the key into the OS
+keychain, announces a new wallet. Someone paying by invoice would have had a
+keypair created and stored for them on their first call. Credentials now resolve
+inside the branch that needs them, and a test asserts nothing appears under
+`~/.blockrun`.
+
+**Solana is now the default chain for a fresh install** — but only for a genuinely
+fresh one. `getChain()` gained a step ahead of the fallback: an existing Base
+wallet keeps Base. Without it this release would have been a silent destructive
+migration, moving every Base-only user with no `.chain` file onto an empty
+wallet, their next paid call failing on a zero balance with nothing on screen
+connecting the two. That is the same class of bug `.chain-auto` exists to
+prevent, arriving from the opposite direction.
+
+**Five "Base-only" refusals are gone, because they were stale rather than
+protective.** Unpaid 402 probes against `sol.blockrun.ai` cost nothing — the
+quote arrives before any signature — and they settle it: music, speech,
+sound-effects, RealFace and Portrait enrolment, and native `/v1/messages` are all
+served there, and have been for a while. `blockrun_music`, `blockrun_speech` and
+`blockrun_realface` were sending funded Solana users to switch chains for no
+reason. Only `blockrun_defi` (404) and `blockrun_modal` (503, unconfigured) are
+real gaps, and both now route through `baseOnlyMessage()`, which is inert on the
+account rail — so an API key reaches them anyway.
+
+Also fixed: async job poll URLs resolve through `resolveGatewayUrl()` instead of
+string concatenation. A job is billed at submit, and the old
+`BLOCKRUN_API.replace(/\/api$/, "") + poll_url` would have sent every
+account-mode poll to the wallet gateway, unauthenticated, for a result that could
+then never be collected. And `/v1/audio/voices` needs a Bearer token on the
+account rail — 401 without one, where both wallet gateways serve it open — so
+`action:"voices"` was silently degrading to the built-in alias list, a fallback
+that looks exactly like success.
+
+README, skills and the configuration table updated throughout: a comparison of
+the two rails, the signup and top-up walkthrough, a capability matrix, and Solana
+ahead of Base. The absolute "no API keys" claims become "no API key **required**"
+— the differentiator survives, and it is now true. Tests 431 → 449.
+
 ## 0.45.1
 
 **The context number gets its own card instead of being the second of nineteen
