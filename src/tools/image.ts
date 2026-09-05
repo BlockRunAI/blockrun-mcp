@@ -10,6 +10,7 @@ import { launchTopUp } from "../utils/onramp.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
+import { apiKeyPost } from "../utils/api-key-call.js";
 import { solanaPaidPost } from "../utils/solana-402.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
@@ -399,11 +400,46 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           // (which mirrors the live price table) is the best available figure;
           // Solana returns the real 402-quoted amount.
           let billedUsd = estimatedCost;
+          // Whether `billedUsd` is still our own guess rather than a figure the
+          // rail settled. Seeded to the previous behaviour — the Base SDK rail
+          // reports the catalog price and has always been labelled exact — so
+          // this change only affects the account rail, which is the one that can
+          // now do better.
+          let costIsEstimate = isApiKeyMode();
           // isApiKeyMode() first: on the account rail getChain() can still say
           // "solana" (it is the default for a machine with no wallet), and this
           // branch would then look for a Solana key that a key-only user has
           // never had. getImageClient() below is already API-key aware.
-          if (!isApiKeyMode() && getChain() === "solana") {
+          if (isApiKeyMode()) {
+            // ---- Account rail: one POST, exact cost from the response. ----
+            //
+            // This used to go through getImageClient(), which parses the body
+            // and drops the Response — so `x-blockrun-cost-usd` was unreadable
+            // and the tool reported its own estimate. That estimate is high by
+            // construction: estimateCost adds the $0.001 transaction fee the
+            // account rail does not charge. Verified against the gateway on
+            // 2026-09-05 — a nano-banana image settles at $0.052500 and returns
+            // both the header and `price.amount`, against a $0.0535 estimate.
+            //
+            // apiKeyPost is the same helper music, speech, video and realface
+            // already use; image was the odd one out only because an SDK client
+            // existed for it.
+            const { endpoint, body } = buildSolanaImageRequest(action, {
+              model: selectedModel,
+              prompt,
+              size,
+              quality,
+              image: normalizedImage,
+              mask: normalizedMask,
+            });
+            const r = await apiKeyPost(endpoint, body, { timeoutMs: SOLANA_IMAGE_TIMEOUT_MS });
+            // paidUsd null is "the rail settled nothing at response time", NOT
+            // "free" — fall back to the estimate and say so, never book $0.
+            billedUsd = r.paidUsd ?? estimatedCost;
+            costIsEstimate = r.paidUsd === null;
+            recordActualSpend(budget, r.paidUsd, estimatedCost, agent_id);
+            imageUrl = (r.data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
+          } else if (getChain() === "solana") {
             // Solana: manual x402 against the sol.blockrun.ai gateway (the SDK's
             // ImageClient signs Base/EVM payments only). Record the ACTUAL cost
             // from the 402 quote — the Solana gateway prices carry a markup over
@@ -430,6 +466,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             });
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
             billedUsd = paidUsd ?? estimatedCost;
+            costIsEstimate = paidUsd === null;
             imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
           } else {
             const response = action === "edit"
@@ -458,8 +495,11 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           // estimateCost adds the $0.001 transaction fee that account billing
           // does not charge. Printing that unlabelled invites someone to
           // reconcile an invoice against a number we invented.
-          const costLine = isApiKeyMode()
-            ? `Cost: ~$${billedUsd.toFixed(4)} (estimated — billed to your BlockRun account at exact usage; see https://user.blockrun.ai/dashboard/activity)`
+          // Label what the number IS, not which rail produced it. Calling a
+          // settled amount "estimated" is as misleading as the reverse, and it
+          // invites someone to discount a figure that reconciles exactly.
+          const costLine = costIsEstimate
+            ? `Cost: ~$${billedUsd.toFixed(4)} (estimated${isApiKeyMode() ? " — billed to your BlockRun account at exact usage; see https://user.blockrun.ai/dashboard/activity" : ""})`
             : `Cost: $${billedUsd.toFixed(4)}`;
           const textBlock = {
             type: "text" as const,
@@ -471,7 +511,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
 
           return {
             content: previewBlock ? [previewBlock, textBlock] : [textBlock],
-            structuredContent: { url: delivered, prompt, model: selectedModel, cost_usd: billedUsd, cost_is_estimate: isApiKeyMode(), inlined: Boolean(previewBlock) },
+            structuredContent: { url: delivered, prompt, model: selectedModel, cost_usd: billedUsd, cost_is_estimate: costIsEstimate, inlined: Boolean(previewBlock) },
           };
         } finally {
           gate.release();
