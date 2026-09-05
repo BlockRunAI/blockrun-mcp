@@ -100,8 +100,18 @@ async function throwForStatus(response: Response, what: string): Promise<never> 
   }
   if (response.status === 401) {
     throw new Error(
-      `${what} was refused: BLOCKRUN_API_KEY was rejected. ` +
+      `${what} was refused: the BlockRun API key was rejected. ` +
         `Check the key at https://user.blockrun.ai/dashboard/keys.`,
+    );
+  }
+  // Surface Retry-After rather than burying it in the body. It is the one piece
+  // of a 429 a caller can act on, and an agent told "rate limited" with no
+  // interval will retry immediately and be refused again. (Carried over from
+  // PR #136, which surfaced it and this path did not.)
+  if (response.status === 429) {
+    const retry = response.headers.get("retry-after");
+    throw new Error(
+      `${what} was rate limited${retry ? ` — retry after ${retry}s` : ""}.`,
     );
   }
   throw new Error(`API error ${response.status}: ${JSON.stringify(body)}`);

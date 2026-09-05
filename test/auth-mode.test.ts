@@ -45,7 +45,7 @@ const wallet = await import("../src/utils/wallet.js");
 const VALID_KEY = "brk_live_H4OzmQQDX09FElTg06Gv3Wh7i6C5jIozzVH0QBW5";
 
 beforeEach(() => {
-  for (const f of [".chain", ".chain-auto", ".solana-session", ".session"]) {
+  for (const f of [".chain", ".chain-auto", ".solana-session", ".session", ".api-key"]) {
     fs.rmSync(path.join(blockrunDir, f), { force: true });
   }
   delete process.env.BLOCKRUN_API_KEY;
@@ -106,8 +106,48 @@ test("a malformed key throws instead of silently falling back to the wallet", ()
   for (const bad of ["sk-not-a-blockrun-key", "brk", "brk_live_has spaces", "hello"]) {
     process.env.BLOCKRUN_API_KEY = bad;
     auth.resetAuthCache();
-    assert.throws(() => auth.getApiKey(), /not a valid BlockRun API key/, `should reject ${bad}`);
+    assert.throws(() => auth.getApiKey(), /does not contain a valid BlockRun API key/, `should reject ${bad}`);
+    assert.throws(() => auth.getApiKey(), /BLOCKRUN_API_KEY/, "the message names where the bad key came from");
   }
+});
+
+// Carried over from PR #136. A stdio MCP server is launched by its client, and
+// several clients make setting an environment variable awkward — the wallet has
+// always had ~/.blockrun/.session for exactly that reason, and the key needs the
+// same escape hatch.
+test("a key in ~/.blockrun/.api-key is used when the env var is unset", () => {
+  fs.writeFileSync(path.join(blockrunDir, ".api-key"), `${VALID_KEY}\n`);
+  auth.resetAuthCache();
+  assert.equal(auth.getApiKey(), VALID_KEY);
+  assert.equal(auth.getAuthMode(), "api-key");
+  fs.rmSync(path.join(blockrunDir, ".api-key"), { force: true });
+});
+
+// Mirrors the wallet precedence (BLOCKRUN_WALLET_KEY outranks .session): an
+// explicitly exported key is a deliberate override and must not be shadowed by
+// whatever happens to be on disk from an earlier account.
+test("the env var outranks the file", () => {
+  const other = "brk_live_ffffffffffffffffffffffffffffffff";
+  fs.writeFileSync(path.join(blockrunDir, ".api-key"), other);
+  process.env.BLOCKRUN_API_KEY = VALID_KEY;
+  auth.resetAuthCache();
+  assert.equal(auth.getApiKey(), VALID_KEY, "the exported key wins");
+  fs.rmSync(path.join(blockrunDir, ".api-key"), { force: true });
+});
+
+test("a malformed key IN THE FILE throws, naming the file rather than the env var", () => {
+  fs.writeFileSync(path.join(blockrunDir, ".api-key"), "sk-wrong-vendor");
+  auth.resetAuthCache();
+  assert.throws(() => auth.getApiKey(), /\.api-key/, "the message must name where the bad key came from");
+  fs.rmSync(path.join(blockrunDir, ".api-key"), { force: true });
+});
+
+test("an empty .api-key file is treated as unset, not as malformed", () => {
+  fs.writeFileSync(path.join(blockrunDir, ".api-key"), "  \n");
+  auth.resetAuthCache();
+  assert.equal(auth.getApiKey(), undefined);
+  assert.equal(auth.getAuthMode(), "wallet");
+  fs.rmSync(path.join(blockrunDir, ".api-key"), { force: true });
 });
 
 test("an empty key is treated as unset, not as malformed", () => {

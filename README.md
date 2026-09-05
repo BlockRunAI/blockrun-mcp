@@ -258,6 +258,10 @@ claude mcp add blockrun -s user -e BLOCKRUN_API_KEY=brk_live_… -- npx -y @bloc
 ```
 
    Or `export BLOCKRUN_API_KEY=brk_live_…` in the environment the client launches from.
+
+   If your client makes environment variables awkward, write the key to
+   **`~/.blockrun/.api-key`** instead (`chmod 600`) — same file directory the
+   wallet uses. The environment variable wins when both are present.
 4. **[Dashboard → Activity](https://user.blockrun.ai/dashboard/activity)** — every call, priced at exact usage.
 
 Verify with `blockrun_wallet action:"status"` — it reports the account, its real
@@ -561,6 +565,7 @@ One wallet. All sources. No dashboards.
 | Variable / File | Default | Effect |
 |---|---|---|
 | `BLOCKRUN_API_KEY` | unset | A BlockRun account key (`brk_live_…`) from [user.blockrun.ai/dashboard/keys](https://user.blockrun.ai/dashboard/keys). **Set → account billing: no wallet is created, read or used, and no chain applies.** Takes priority over every wallet setting below. A malformed value is a startup error, never a silent fall back to the wallet. |
+| `~/.blockrun/.api-key` | not created | The same key on disk, for clients that make env vars awkward. Read only when `BLOCKRUN_API_KEY` is unset; an empty or unreadable file falls through to wallet mode. |
 | `BLOCKRUN_API_BASE_URL` | `https://api.blockrun.ai` | Account API base, for staging. Accepts the OpenAI-style `…/v1` form too. |
 | `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
 | `BLOCKRUN_WALLET_KEY` | unset | Env override of the EVM key — takes precedence over `.session` / `wallet.json` as the Base + Polymarket signer. |
