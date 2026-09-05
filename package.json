@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, and crypto data. Pay per call from a USDC wallet (Solana or Base) or a BlockRun API key.",
   "type": "module",

@@ -7,20 +7,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { baseOnlyMessage, buildClientWithTimeout } from "../utils/wallet.js";
+import { type RawClient, rawPost } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { normalizeClassifyPath } from "../utils/path-safety.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
-type RawClient = {
-  getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
-  requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
-};
 
 // sandbox/create is priced off the BODY, not the path. Mirrors
 // getModalCreatePricing() in the gateway's src/lib/modal.ts:
@@ -172,8 +169,8 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
           // lengthening the 60s timeout the shared getClient() gives every other tool.
           const client = buildClientWithTimeout(modalTimeoutMs(body)) as unknown as RawClient;
           const endpoint = `/v1/modal/${cleanPath}`;
-          const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
-          recordSpending(budget, estimatedCost, agent_id);
+          const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: asStructuredContent(result),

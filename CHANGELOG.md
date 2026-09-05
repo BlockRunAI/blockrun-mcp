@@ -2,6 +2,65 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.47.0
+
+**Account mode stops guessing.** 0.46.0 shipped API-key billing with one honest
+limitation: it could not tell you what a call cost or how much credit was left,
+so it printed a local estimate with a `~` and a dashboard link. The account API
+gained both signals today, and this release consumes them.
+
+`blockrun_wallet action:"status"` now reads the real balance from
+`GET /v1/credits`:
+
+```
+  Account:  acme (ungated)
+  Spent to date: $4.5239 (invoiced account — no prepaid ceiling)
+```
+
+A prepaid account shows `Credit remaining: $12.50 of $50.00 granted`; a blocked
+one says so, and why, *before* you spend a call discovering it. A read failure
+degrades to the session figure rather than failing the whole status call.
+
+**Per-call costs are now the settled amount, not an estimate**, everywhere the
+account API reports one: `search`, `exa`, `surf`, `markets`, `rpc`, `defi`,
+`phone`, `modal`, `music`, `speech`, `video`, `realface`. That is not cosmetic —
+`BLOCKRUN_BUDGET_LIMIT` and the per-agent `delegate` caps book what they are
+told, and they were booking an estimate that ran high by exactly the transaction
+fee this rail does not charge. A 19-character speech render now books $0.000998
+where it used to book $0.0031. `blockrun_chat` keeps its estimate, because chat
+settles after the response by design and holding the answer until the money
+landed would be a worse trade; anything still estimated prints a `~` and says so.
+
+Getting there meant routing account calls around the SDK. On that rail there is
+no 402 to perform — no quote, nothing to sign, no retry-after-payment — so
+`requestWithPaymentRaw` degrades to a fetch with a Bearer header, which
+`utils/api-key-call.ts` already does, and does better: it reads the response
+instead of discarding it. `utils/raw-call.ts` is now the single place that picks
+a rail, so eight path-based tools stopped choosing one for themselves. Wallet
+calls still go through the SDK, where the 402 dance is real work worth not
+reimplementing.
+
+**Two traps worth naming, because both read as success.**
+
+`Number("")` is `0`, not `NaN`. A present-but-empty cost header parsed with a
+bare `Number()` would book $0 against a genuinely billed call — the exact
+confusion the header exists to remove, reintroduced in the reader. Empty,
+malformed and negative all read as absent; an explicit `0.000000` is preserved,
+because a charge that really settled at zero is not the same as no charge
+settling at all.
+
+`remaining_usd ?? 0` would tell a paying customer in good standing that they are
+broke. An invoiced account legitimately has no prepaid ceiling, so `remaining` is
+null and the correct thing to show is spend-to-date. Two independent clients hit
+this within a day of the endpoint shipping.
+
+`blocked_reason` is a code, not a message, so it is mapped to a remedy here —
+`ACCOUNT_SUSPENDED` must not advise topping up, which would not lift it. An
+unrecognised code degrades to naming the code rather than reading as "not
+blocked", which would send an agent on to a call the proxy has already refused.
+
+Tests 449 → 458.
+
 ## 0.46.0
 
 **An API key is now a way to pay, and Solana is the chain you start on.**
