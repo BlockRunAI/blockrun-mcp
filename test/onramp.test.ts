@@ -29,6 +29,9 @@ mock.module("open", { defaultExport: async (url: string) => { openCalls.push(url
 mock.module("../src/utils/http.js", { namedExports: { fetchWithTimeout: fakeFetch, isTimeoutError: () => false } });
 mock.module("../src/utils/wallet.js", {
   namedExports: {
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`),
+
     getChain: () => "base",
     getOrCreateWalletKey: () => TEST_KEY,
     getWalletInfo: async () => ({ address: "0x34913A202138c83D0ed5FcA84E15da456d24402E" }),

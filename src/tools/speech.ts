@@ -2,7 +2,7 @@
 //
 // AI voice via BlockRun x402 — text-to-speech (ElevenLabs + ByteDance Seed
 // Audio), sound effects, and free voice discovery. Mirrors the music.ts
-// manual-402 pattern (Base only).
+// three-rail pattern: account API key, Solana wallet, Base wallet.
 //
 // Pricing mirrors the server exactly. ElevenLabs: (chars / 1000) × rate × 1.05
 // margin, minimum $0.001 per request; sound effects flat $0.05 × 1.05 =
@@ -20,7 +20,9 @@ import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
-import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { apiAuthHeaders, isApiKeyMode } from "../utils/auth.js";
+import { apiKeyPost } from "../utils/api-key-call.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -28,7 +30,6 @@ import {
   extractPaymentDetails,
 } from "@blockrun/llm";
 
-const BLOCKRUN_API = "https://blockrun.ai/api";
 // TTS is synchronous — the HTTP call stays open for the whole synthesis. Flash
 // answers in <1s and the ElevenLabs models are comfortably inside a minute, but
 // 0.40.0 added bytedance/seed-audio-1.0, which can emit up to 120 SECONDS of
@@ -149,12 +150,10 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           return await listVoices();
         }
 
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_speech currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
-        }
+        // NO CHAIN GUARD — see the note on baseOnlyMessage in utils/wallet.ts.
+        // sol.blockrun.ai quotes both routes this tool uses (audio/speech at
+        // amount 1000, audio/sound-effects at 52501, probed 2026-09-05), so the
+        // "Base only" refusal this tool carried was stale, not protective.
 
         if (!input?.trim()) {
           return {
@@ -163,7 +162,10 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           };
         }
 
-        let endpoint: string;
+        // A ROOTED PATH, not a full URL. The three rails mount /v1 differently
+        // (blockrun.ai/api, sol.blockrun.ai/api, api.blockrun.ai) and each helper
+        // prefixes its own base, so anything built here must be base-relative.
+        let path: string;
         let body: Record<string, unknown>;
         let cost: number;
 
@@ -174,7 +176,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
               isError: true,
             };
           }
-          endpoint = `${BLOCKRUN_API}/v1/audio/sound-effects`;
+          path = "/v1/audio/sound-effects";
           body = { model: "elevenlabs/sound-effects", text: input, response_format };
           if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
           if (prompt_influence !== undefined) body.prompt_influence = prompt_influence;
@@ -189,7 +191,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
               isError: true,
             };
           }
-          endpoint = `${BLOCKRUN_API}/v1/audio/speech`;
+          path = "/v1/audio/speech";
           body = { model, input, voice: voice || "sarah", response_format };
           if (speed !== undefined) body.speed = speed;
           cost = speechCost(model, input);
@@ -208,6 +210,41 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         const confirm = await confirmSpend(server, { usd: cost, label: `speech · ${action === "sound_effect" ? "sound effect" : model}` });
         if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
+        let data: { data?: Array<{ url: string; format?: string; characters?: number; duration_seconds?: number }>; model?: string };
+        let billedUsd: number;
+        let txHash: string | null | undefined;
+        let estimated = false;
+
+        // ---- Rail 1: account API key. One POST, no quote, no signature. ----
+        if (isApiKeyMode()) {
+          const r = await apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT });
+          data = r.data as typeof data;
+          // No per-call figure comes back on this rail, so the local estimate is
+          // both what we book and what we show — labelled as an estimate.
+          billedUsd = cost;
+          estimated = true;
+          txHash = r.txHash;
+          recordActualSpend(budget, null, cost, agent_id);
+        } else if (getChain() === "solana") {
+          // ---- Rail 2: Solana wallet, via the shared manual-x402 helper. ----
+          const { solanaPaidPost } = await import("../utils/solana-402.js");
+          const r = await solanaPaidPost(path, body, SPEECH_TIMEOUT, {
+            onQuote: (quotedUsd) => {
+              // Re-check the REAL price against the budget before signing: the
+              // Solana gateway quotes independently of our local estimate.
+              if (quotedUsd === null || quotedUsd <= cost) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
+          });
+          data = r.data as typeof data;
+          billedUsd = r.paidUsd ?? cost;
+          txHash = r.txHash;
+          recordActualSpend(budget, r.paidUsd, cost, agent_id);
+        } else {
+        // ---- Rail 3: Base wallet. The original EIP-3009 402 flow. ----
+        const endpoint = `${getApiBase()}${path}`;
         const privateKey = getOrCreateWalletKey();
         const account = privateKeyToAccount(privateKey);
 
@@ -230,7 +267,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         const details = extractPaymentDetails(paymentRequired);
         // Prefer the exact 402-quoted price (handles sound-effect duration and any
         // server-side price change) over the local estimate for billing + display.
-        const billedUsd = amountToUsd(details.amount) ?? cost;
+        billedUsd = amountToUsd(details.amount) ?? cost;
 
         const paymentPayload = await createPaymentPayload(
           privateKey,
@@ -268,13 +305,14 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         // A 200 means the call settled on-chain (X-Payment-Receipt is set). Book
         // the charge NOW, before reading the body — a truncated/unreadable body
         // below must not un-record a spend that already left the wallet.
-        const txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
+        txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
         recordActualSpend(budget, billedUsd, cost, agent_id);
 
-        const data = await resp.json() as {
+        data = await resp.json() as {
           data: Array<{ url: string; format?: string; characters?: number; duration_seconds?: number }>;
           model?: string;
         };
+        }
 
         const clip = data.data?.[0];
         if (!clip?.url) throw new Error("No audio URL in response");
@@ -286,7 +324,9 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           ...(clip.characters !== undefined ? [`Characters: ${clip.characters}`] : []),
           ...(clip.duration_seconds !== undefined ? [`Duration: ${clip.duration_seconds}s`] : []),
           `Model: ${data.model || (action === "sound_effect" ? "elevenlabs/sound-effects" : model)}`,
-          `Cost: $${billedUsd.toFixed(4)}`,
+          estimated
+            ? `Cost: ~$${billedUsd.toFixed(4)} (estimated — billed to your BlockRun account at exact usage; see https://user.blockrun.ai/dashboard/activity)`
+            : `Cost: $${billedUsd.toFixed(4)}`,
           ...(txHash ? [`Tx: ${txHash}`] : []),
           ``,
           `Note: This URL may expire — download it now if you need to keep the file.`,
@@ -301,12 +341,15 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             ...(clip.duration_seconds !== undefined ? { duration_seconds: clip.duration_seconds } : {}),
             model: data.model || (action === "sound_effect" ? "elevenlabs/sound-effects" : model),
             cost_usd: billedUsd,
+            cost_is_estimate: estimated,
             ...(txHash ? { txHash } : {}),
           },
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (isPaymentRejectionError(errMsg)) {
+        // Account mode has no wallet to fund — apiKeyPost already returns the
+        // right remedy (top up credit at the portal), so don't overwrite it.
+        if (isPaymentRejectionError(errMsg) && !isApiKeyMode()) {
           return {
             content: [{ type: "text", text: `Speech generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
@@ -339,7 +382,15 @@ type ToolResult = {
 // endpoint is unavailable, so agents can always pick a voice.
 async function listVoices(): Promise<ToolResult> {
   try {
-    const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/audio/voices`, { method: "GET" }, VOICES_TIMEOUT);
+    // Free, but NOT unauthenticated on the account rail: api.blockrun.ai answers
+    // 401 without a Bearer token (probed 2026-09-05), where both wallet gateways
+    // serve it open. Without the header this silently degraded to the built-in
+    // alias list for every API-key user — a fallback that looks like success.
+    const resp = await fetchWithTimeout(
+      `${getApiBase()}/v1/audio/voices`,
+      { method: "GET", headers: { ...apiAuthHeaders() } },
+      VOICES_TIMEOUT,
+    );
     if (resp.ok) {
       const payload = await resp.json() as {
         data?: Array<{ voice_id: string; name?: string; alias?: string; category?: string; labels?: Record<string, string> }>;

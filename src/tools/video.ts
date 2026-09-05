@@ -10,7 +10,9 @@ import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
-import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
+import { isApiKeyMode } from "../utils/auth.js";
+import { apiKeyAsyncPost } from "../utils/api-key-call.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -19,7 +21,6 @@ import {
   extractPaymentDetails,
 } from "@blockrun/llm";
 
-const BLOCKRUN_API = "https://blockrun.ai/api";
 // Overall budget for the async flow (submit + client-side polling).
 // Seedance 2.5 30s jobs can take 5-8 minutes in production.
 //
@@ -444,6 +445,46 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
 
+        // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
+        if (isApiKeyMode()) {
+          const { data, txHash } = await apiKeyAsyncPost("/v1/videos/generations", body, {
+            pollBudgetMs: VIDEO_TOTAL_BUDGET_MS,
+            pollIntervalMs: POLL_INTERVAL_MS,
+            pollTimeoutMs: VIDEO_POLL_TIMEOUT_MS,
+          });
+          recordActualSpend(budget, null, estimatedCost, agent_id);
+          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean }> }).data?.[0];
+          if (!clip?.url) throw new Error("Completed video response missing video URL");
+          const modelOut = (data as { model?: string }).model || selectedModel;
+          const lines = [
+            "🎬 Video ready!",
+            `URL: ${clip.url}`,
+            `Duration: ${clip.duration_seconds ?? billedSeconds}s`,
+            `Model: ${modelOut}`,
+            "Billing: BlockRun account (API key)",
+            `Cost: ~$${estimatedCost.toFixed(4)} (estimated — billed at exact usage; see https://user.blockrun.ai/dashboard/activity)`,
+            ...(clip.backed_up ? ["Backed up to BlockRun storage (URL is permanent)"] : clip.source_url ? [`Source URL: ${clip.source_url}`] : []),
+            ...(clip.request_id ? [`Request ID: ${clip.request_id}`] : []),
+            ...(txHash ? [`Receipt: ${txHash}`] : []),
+          ];
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            structuredContent: {
+              url: clip.url,
+              ...(clip.source_url ? { source_url: clip.source_url } : {}),
+              duration_seconds: clip.duration_seconds,
+              model: modelOut,
+              cost_usd: estimatedCost,
+              cost_is_estimate: true,
+              billing: "account",
+              ...(clip.request_id ? { request_id: clip.request_id } : {}),
+              ...(clip.backed_up !== undefined ? { backed_up: clip.backed_up } : {}),
+              ...(txHash ? { txHash } : {}),
+            },
+          };
+        }
+
+        // ---- Rail 2: Solana wallet. ----
         if (getChain() === "solana") {
           // Loaded only on the Solana branch so Base-only test harnesses and
           // installations never need to initialize SVM payment dependencies.
@@ -500,7 +541,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         const privateKey = getOrCreateWalletKey();
         const account = privateKeyToAccount(privateKey);
-        const submitUrl = `${BLOCKRUN_API}/v1/videos/generations`;
+        // ---- Rail 3: Base wallet. ----
+        const submitUrl = `${getApiBase()}/v1/videos/generations`;
 
         // Step 1: get 402 with price + requirements
         const resp402 = await fetchWithTimeout(submitUrl, {
@@ -600,9 +642,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         // Step 3: poll with the SAME payment header. Settlement happens on the
         // first completed poll; failure or caller giving up = no charge.
-        const pollAbsoluteUrl = submitData.poll_url.startsWith("http")
-          ? submitData.poll_url
-          : `${BLOCKRUN_API.replace(/\/api$/, "")}${submitData.poll_url}`;
+        // resolveGatewayUrl, not concatenation: it keeps the poll on the origin
+        // that took the payment. A paid job polled on the wrong host is money
+        // spent for a result that can never be collected.
+        const pollAbsoluteUrl = resolveGatewayUrl(submitData.poll_url);
 
         let lastStatus = submitData.status || "queued";
         let spendBooked = false;

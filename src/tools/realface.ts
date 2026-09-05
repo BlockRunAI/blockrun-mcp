@@ -8,7 +8,8 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
-import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -18,20 +19,57 @@ import {
   extractPaymentDetails,
 } from "@blockrun/llm";
 
-const BLOCKRUN_API = "https://blockrun.ai/api";
 // Promotional flat fee charged by the gateway for finalizing an enrollment.
 // Source: blockrun/src/app/api/v1/realface/enroll/route.ts (ENROLLMENT_PRICE_USD).
 // withTxFee: missed by the sweep. The gateway charges base + $0.002, so a $0.01
 // enrolment settles $0.012 — reserving the base was 20% short.
 const ENROLLMENT_PRICE_USD = withTxFee(0.01);
 
-// x402 pay-and-POST: probe for the 402 challenge, sign, resubmit with payment.
-// Same flow the enroll action uses inline; shared by the portrait action.
+// Paid POST across all three rails. `path` is ROOTED (e.g. "/v1/portrait/enroll")
+// because each rail mounts /v1 under a different base.
+//
+// Returns the raw status rather than throwing on it: both callers need to tell
+// 402 (payment), 422 (image rejected, NOT charged) and 2xx apart, and collapsing
+// those into an exception loses the distinction that decides whether a refund
+// message is warranted.
 async function payAndPostJson(
-  url: string,
+  path: string,
   reqBody: string,
   fallbackDescription: string,
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
+  // ---- Rail 1: account API key. ----
+  if (isApiKeyMode()) {
+    const resp = await fetchWithTimeout(`${getApiBase()}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
+      body: reqBody,
+    }, 90_000);
+    const data = await resp.json().catch(() => ({})) as Record<string, any>;
+    // settledUsd null: the account API returns no per-call cost, so callers fall
+    // back to ENROLLMENT_PRICE_USD as an estimate.
+    return { status: resp.status, data, settledUsd: null };
+  }
+
+  // ---- Rail 2: Solana wallet. sol.blockrun.ai serves both enroll routes
+  // (probed 2026-09-05: 400 on a missing `name`, i.e. the route is live). ----
+  if (getChain() === "solana") {
+    const { solanaPaidPost } = await import("../utils/solana-402.js");
+    try {
+      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000);
+      return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
+    } catch (err) {
+      // solanaPaidPost throws on a non-2xx terminal response. Recover the status
+      // when it is one the callers branch on, so a 422 still reads as "rejected,
+      // not charged" rather than as an opaque failure.
+      const msg = err instanceof Error ? err.message : String(err);
+      const m = /\b(4\d\d|5\d\d)\b/.exec(msg);
+      if (m) return { status: Number(m[1]), data: { error: msg }, settledUsd: null };
+      throw err;
+    }
+  }
+
+  // ---- Rail 3: Base wallet. Probe for the 402 challenge, sign, resubmit. ----
+  const url = `${getApiBase()}${path}`;
   const privateKey = getOrCreateWalletKey();
   const account = privateKeyToAccount(privateKey);
 
@@ -90,9 +128,9 @@ A RealFace asset (ta_xxxx) lets Seedance 2.0 / 2.0-fast / 2.0-mini generate vide
 Actions:
 - init: FREE. Create an asset group + a phone H5 link. The tool renders the link as a QR code and opens it; the real person scans it on their phone and completes the ~1 min liveness check. Pass group_id to refresh an expired link.
 - status: FREE. Poll a group until status:"active" (ready_to_finalize:true). The H5 link is valid ~120s — re-init if it expires.
-- enroll: PAID ($0.01 USDC, Base only). After the group is active, upload a clear front-facing photo (image_url) of the SAME person. Returns the ta_xxxx asset id.
-- portrait: PAID ($0.01 USDC, Base only). Virtual Portrait — enroll an AI-GENERATED character from an image URL directly, NO liveness needed (one step: name + image_url → ta_xxxx). For fictional/AI characters only; for a real person use the init→status→enroll liveness flow.
-- list: FREE. List the RealFace + Virtual Portrait assets enrolled by this wallet (their ta_xxxx ids + names) so you can pick one for blockrun_video.
+- enroll: PAID ($0.01). Settles on Solana or Base from a wallet, or against your BlockRun account key. After the group is active, upload a clear front-facing photo (image_url) of the SAME person. Returns the ta_xxxx asset id.
+- portrait: PAID ($0.01). Settles on Solana or Base from a wallet, or against your BlockRun account key. Virtual Portrait — enroll an AI-GENERATED character from an image URL directly, NO liveness needed (one step: name + image_url → ta_xxxx). For fictional/AI characters only; for a real person use the init→status→enroll liveness flow.
+- list: FREE, WALLET MODE ONLY (assets are indexed by wallet address). List the RealFace + Virtual Portrait assets enrolled by this wallet (their ta_xxxx ids + names) so you can pick one for blockrun_video.
 
 Typical flow:
   1. blockrun_realface action:"init" name:"Alice"          → scan QR on phone, do liveness
@@ -123,9 +161,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           const body: Record<string, unknown> = { name };
           if (group_id) body.groupId = group_id;
 
-          const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/realface/init`, {
+          const resp = await fetchWithTimeout(`${getApiBase()}/v1/realface/init`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
             body: JSON.stringify(body),
           }, 30_000);
 
@@ -177,7 +215,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (!group_id) {
             return { content: [{ type: "text", text: formatError("group_id is required for action:\"status\".") }], isError: true };
           }
-          const resp = await fetchWithTimeout(`${BLOCKRUN_API}/v1/realface/status?groupId=${encodeURIComponent(group_id)}`, {
+          const resp = await fetchWithTimeout(`${getApiBase()}/v1/realface/status?groupId=${encodeURIComponent(group_id)}`, {
             method: "GET",
           }, 30_000);
           const data = await resp.json().catch(() => ({})) as Record<string, any>;
@@ -210,10 +248,16 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
         // ---- list (free) ----
         if (action === "list") {
+          // Wallet-only by construction: the gateway indexes enrolled assets by
+          // the WALLET ADDRESS that paid for them (/v1/wallet/{address}/…), and
+          // an account key has no address to look up. Guarding here also stops
+          // getOrCreateWalletKey() below from minting one to ask with.
+          const listBlock = requireWalletMode('blockrun_realface action:"list"');
+          if (listBlock) return { content: [{ type: "text", text: listBlock }], isError: true };
           const account = privateKeyToAccount(getOrCreateWalletKey());
           const [rfResp, vpResp] = await Promise.all([
-            fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
-            fetchWithTimeout(`${BLOCKRUN_API}/v1/wallet/${account.address}/portraits`, { method: "GET" }, 30_000)
+            fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
+            fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/portraits`, { method: "GET" }, 30_000)
               .catch(() => null),
           ]);
           const data = await rfResp.json().catch(() => ({})) as Record<string, any>;
@@ -260,9 +304,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
 
         // ---- portrait (paid, Base only — Virtual Portrait, no liveness) ----
         if (action === "portrait") {
-          if (getChain() !== "base") {
-            return { content: [{ type: "text", text: formatError("blockrun_realface portrait settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
-          }
+          // No chain guard: sol.blockrun.ai serves /v1/portrait/enroll (probed
+          // 2026-09-05 — 400 on a missing `name`, so the route is live), and
+          // payAndPostJson pays on whichever rail is active.
           if (!name || !image_url) {
             return { content: [{ type: "text", text: formatError("portrait requires name and image_url (public HTTPS URL of an AI-generated character image).") }], isError: true };
           }
@@ -278,7 +322,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
           const { status, data, settledUsd } = await payAndPostJson(
-            `${BLOCKRUN_API}/v1/portrait/enroll`,
+            "/v1/portrait/enroll",
             JSON.stringify({ name, image_url }),
             "BlockRun Virtual Portrait enrollment",
           );
@@ -321,11 +365,11 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           };
         }
 
-        // ---- enroll (paid, Base only) ----
+        // ---- enroll (paid) ----
         if (action === "enroll") {
-          if (getChain() !== "base") {
-            return { content: [{ type: "text", text: formatError("blockrun_realface enroll settles on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }], isError: true };
-          }
+          // No chain guard: sol.blockrun.ai serves /v1/realface/enroll (probed
+          // 2026-09-05 — 400 on a missing `name`), and payAndPostJson pays on
+          // whichever rail is active.
           if (!name || !image_url || !group_id) {
             return { content: [{ type: "text", text: formatError("enroll requires name, image_url, and group_id (from init, after the group is active).") }], isError: true };
           }
@@ -344,7 +388,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           // via payAndPostJson. The server uploads the photo, waits for the
           // BytePlus face-match, and only settles once the asset is active.
           const { status, data, settledUsd } = await payAndPostJson(
-            `${BLOCKRUN_API}/v1/realface/enroll`,
+            "/v1/realface/enroll",
             JSON.stringify({ name, image_url, group_id }),
             "BlockRun RealFace enrollment",
           );

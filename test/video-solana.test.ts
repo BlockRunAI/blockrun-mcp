@@ -10,6 +10,9 @@ beforeEach(() => { solanaCalls = 0; quoteUsd = 0.5; completedHasUrl = true; });
 
 mock.module("../src/utils/wallet.js", {
   namedExports: {
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`),
+
     getChain: () => "solana",
     getOrCreateWalletKey: () => { throw new Error("Base wallet must not be touched on the Solana route"); },
     getWalletInfo: async () => ({ address: "So1anaTest" }),

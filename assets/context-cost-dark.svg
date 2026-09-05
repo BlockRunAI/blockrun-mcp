@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="620" height="150" viewBox="0 0 620 150" role="img" aria-label="Context cost: 12.9K tokens, 6% of a 200K context window; 5.6K with --profile trading, 57% less">
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="150" viewBox="0 0 620 150" role="img" aria-label="Context cost: 13.0K tokens, 6% of a 200K context window; 5.6K with --profile trading, 57% less">
   <defs><clipPath id="card-d"><rect x="0.5" y="0.5" width="619" height="149" rx="12"/></clipPath></defs>
   <rect x="0.5" y="0.5" width="619" height="149" rx="12" fill="#0B0A0F" stroke="#26242E"/>
   <rect x="0.5" y="0.5" width="5" height="149" fill="#5B9BF6" clip-path="url(#card-d)"/>
   <text x="28" y="34" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11" font-weight="600" letter-spacing="1.6" fill="#8A8797">CONTEXT COST</text>
-  <text x="28" y="78" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="34" font-weight="700" fill="#FFFFFF">12.9K tokens</text>
+  <text x="28" y="78" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="34" font-weight="700" fill="#FFFFFF">13.0K tokens</text>
   <text x="28" y="103" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#6E6B7B">6% of a 200K context window · every turn, whether or not you call a tool</text>
   <text x="28" y="127" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#8A8797">5.6K with <tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#5B9BF6">--profile trading</tspan> — 57% less</text>
   <text x="592" y="34" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10.5" fill="#6E6B7B">measured, not estimated</text>

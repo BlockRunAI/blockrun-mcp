@@ -17,6 +17,7 @@
 import { fetchWithTimeout } from "./http.js";
 import { openUrl } from "./qr.js";
 import { getChain, getOrCreateWalletKey, getWalletInfo } from "./wallet.js";
+import { isApiKeyMode, PORTAL_CREDITS_URL } from "./auth.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -95,8 +96,23 @@ export interface TopUpResult {
  * manual-funding note so it's safe to call from a tool's error path.
  */
 export async function launchTopUp(): Promise<TopUpResult> {
+  // Account billing tops up with credit, not with USDC into an address. This is
+  // reached from every paid tool's out-of-funds error path, so getting it wrong
+  // would answer "your BlockRun account is out of credit" with a card-onramp
+  // link for a wallet that does not exist — and provisioning one to mint the
+  // link against would be worse still.
+  if (isApiKeyMode()) {
+    return {
+      opened: false,
+      note: `Your BlockRun account is out of credit. Top up at ${PORTAL_CREDITS_URL} (the key itself stays the same).`,
+    };
+  }
+
   const chain = getChain();
   const { address } = await getWalletInfo();
+  if (address === null) {
+    return { opened: false, note: `No wallet on this machine. Run blockrun_wallet action:"setup" to provision one.` };
+  }
 
   if (chain !== "base") {
     return {

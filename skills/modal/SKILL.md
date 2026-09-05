@@ -18,7 +18,7 @@ triggers:
 
 Disposable remote containers (with optional GPU) via Modal, paid per call in USDC. No Modal account, no GPU procurement.
 
-**Base only.** `sol.blockrun.ai` carries the `/v1/modal/*` routes but has no Modal backend
+**Base only in wallet mode; fine on an API key.** `sol.blockrun.ai` carries the `/v1/modal/*` routes but has no Modal backend
 configured, so every action — create, exec, status, terminate — answers `503`. That reads
 as "the sandbox service is down" rather than "wrong chain", which is exactly the wrong
 conclusion to act on: retrying will not help. The tool checks the active chain first and

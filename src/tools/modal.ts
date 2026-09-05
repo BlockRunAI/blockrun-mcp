@@ -11,7 +11,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
-import { buildClientWithTimeout, getChain } from "../utils/wallet.js";
+import { baseOnlyMessage, buildClientWithTimeout } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { normalizeClassifyPath } from "../utils/path-safety.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
@@ -141,11 +141,12 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
         // scripts/verify-prices.ts (all six modal probes, create and exec). A
         // raw 503 reads as "the service is down" rather than "wrong chain", so
         // say which it is before spending the round trip.
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_modal is served on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
+        // baseOnlyMessage returns null on the ACCOUNT rail: the 503 below is a
+        // property of the SOLANA gateway, and api.blockrun.ai vendors the Base
+        // routes, so an account key reaches Modal normally.
+        const chainBlock = baseOnlyMessage("blockrun_modal");
+        if (chainBlock) {
+          return { content: [{ type: "text", text: formatError(chainBlock) }], isError: true };
         }
         body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/modal\//, "");

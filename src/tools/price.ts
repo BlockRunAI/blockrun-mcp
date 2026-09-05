@@ -18,7 +18,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
-import { getChain, getPriceClient } from "../utils/wallet.js";
+import { baseOnlyMessage, getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
@@ -78,11 +78,9 @@ Examples:
         }
 
         const paid = isPaidPriceCall(action, category);
-        if (paid && getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("Paid stock price/history calls currently settle on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
+        const chainBlock = paid ? baseOnlyMessage("Paid stock price/history calls") : null;
+        if (chainBlock) {
+          return { content: [{ type: "text", text: formatError(chainBlock) }], isError: true };
         }
 
         // withTxFee: the gateway charges base + $0.002 (src/utils/tx-fee.ts), so a

@@ -102,7 +102,7 @@ blockrun_dex({ query: "WETH", chain: "base" })      // scope to a chain
 
 ## blockrun_defi — TVL & yields (DefiLlama)
 
-Path-based, GET only. **Base only** — `sol.blockrun.ai` does not serve `/v1/defillama/*`
+Path-based, GET only. **Base only in wallet mode; fine on an API key** — `sol.blockrun.ai` does not serve `/v1/defillama/*`
 and answers `404`, which reads like a bad path rather than a wrong chain. The tool checks
 the active chain and refuses with that explanation before spending the round trip; if the
 user needs DeFi data, switch back with `blockrun_wallet action:"chain" chain:"base"`.
