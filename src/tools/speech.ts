@@ -219,12 +219,12 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         if (isApiKeyMode()) {
           const r = await apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT });
           data = r.data as typeof data;
-          // No per-call figure comes back on this rail, so the local estimate is
-          // both what we book and what we show — labelled as an estimate.
-          billedUsd = cost;
-          estimated = true;
+          // The settled figure when the rail reports one, the local estimate
+          // otherwise — and `estimated` says which, so the two are never mixed up.
+          billedUsd = r.paidUsd ?? cost;
+          estimated = r.paidUsd === null;
           txHash = r.txHash;
-          recordActualSpend(budget, null, cost, agent_id);
+          recordActualSpend(budget, r.paidUsd, cost, agent_id);
         } else if (getChain() === "solana") {
           // ---- Rail 2: Solana wallet, via the shared manual-x402 helper. ----
           const { solanaPaidPost } = await import("../utils/solana-402.js");

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { BudgetState } from "../types.js";
 import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase } from "../utils/wallet.js";
 import { isApiKeyMode, requireWalletMode, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
+import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
@@ -167,22 +168,40 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       // ---------------------------------------------------------------------
       if (isApiKeyMode()) {
         if (action === "status") {
-          const spent = `$${budget.spent.toFixed(4)} estimated${budget.limit ? ` / $${budget.limit.toFixed(2)} local limit` : ""} — ${budget.calls} calls`;
-          const text = `Paying with: BlockRun account API key (no wallet, no chain)
-
-  Endpoint: ${getApiBase()}
-  Credit + real ledger: ${PORTAL_CREDITS_URL}
-  Per-call activity:    ${PORTAL_ACTIVITY_URL}
-
-This session (local estimate): ${spent}
-
-The figure above is this server's own ESTIMATE, computed before each call so it
-can enforce your budget limits. It is not the invoice. Actual usage is metered
-by the account API at exact token counts and is only authoritative at the
-dashboard links above.
-
-Wallet actions (setup, qr, deposit, chain) need wallet mode — unset
-BLOCKRUN_API_KEY and restart to use one.`;
+          // Read the REAL balance. This used to print only a local estimate and
+          // a link, because no key-authenticated endpoint existed; GET /v1/credits
+          // closed that on 2026-09-05. A read failure degrades to the session
+          // figure rather than failing the whole status call — knowing nothing
+          // about the account is not a reason to also refuse to say what this
+          // process has spent.
+          let credit: Awaited<ReturnType<typeof getAccountCredit>> | null = null;
+          let creditError: string | null = null;
+          try {
+            credit = await getAccountCredit();
+          } catch (err) {
+            creditError = err instanceof Error ? err.message : String(err);
+          }
+          const blockNote = credit ? describeBlock(credit.blocked ? credit.blockedReason : null) : null;
+          const session = `$${budget.spent.toFixed(4)}${budget.limit ? ` / $${budget.limit.toFixed(2)} local cap` : ""} — ${budget.calls} calls`;
+          const text = [
+            `Paying with: BlockRun account API key (no wallet, no chain)`,
+            ``,
+            credit
+              ? `  Account:  ${credit.accountId} (${credit.billingMode})\n  ${formatCredit(credit)}`
+              : `  Account credit unavailable: ${creditError}`,
+            `  Top up:   ${PORTAL_CREDITS_URL}`,
+            `  Activity: ${PORTAL_ACTIVITY_URL}`,
+            ``,
+            `This session: ${session}`,
+            ...(blockNote ? [``, `BLOCKED — ${blockNote}`] : []),
+            ``,
+            `Per-call costs are the amount the account API actually settled, where it`,
+            `reports one. Chat settles after the response by design, so chat figures`,
+            `stay estimates; the ledger above is always authoritative.`,
+            ``,
+            `Wallet actions (setup, qr, deposit, chain) need wallet mode — unset`,
+            `BLOCKRUN_API_KEY and restart to use one.`,
+          ].join("\n");
           return {
             content: [{ type: "text", text }],
             structuredContent: {
@@ -190,9 +209,19 @@ BLOCKRUN_API_KEY and restart to use one.`;
               endpoint: getApiBase(),
               creditsUrl: PORTAL_CREDITS_URL,
               activityUrl: PORTAL_ACTIVITY_URL,
-              sessionEstimatedSpend: budget.spent,
+              sessionSpend: budget.spent,
               calls: budget.calls,
-              costsAreEstimates: true,
+              ...(credit
+                ? {
+                    accountId: credit.accountId,
+                    billingMode: credit.billingMode,
+                    grantedUsd: credit.grantedUsd,
+                    spentUsd: credit.spentUsd,
+                    remainingUsd: credit.remainingUsd,
+                    blocked: credit.blocked,
+                    blockedReason: credit.blockedReason,
+                  }
+                : { creditError }),
             },
           };
         }

@@ -8,18 +8,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
+import { type RawClient, rawPost } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
-type RawClient = {
-  getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
-  requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
-};
 
 // Pricing scales with max_results (capped 1–50, default 10 upstream) at
 // $0.025 per returned source. Mirrors getSearchPrice() in
@@ -107,8 +104,8 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
-          const result = await client.requestWithPaymentRaw(endpoint, body ?? {});
-          recordSpending(budget, estimatedCost, agent_id);
+          const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: asStructuredContent(result),

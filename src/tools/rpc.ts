@@ -10,18 +10,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
+import { type RawClient, rawPost } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { isValidNetworkSlug } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
-type RawClient = {
-  requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
-};
 
 const RPC_PRICE_USD = 0.002;
 
@@ -97,8 +95,8 @@ Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_s
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `rpc · ${cleanNetwork}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
-          const result = await client.requestWithPaymentRaw(`/v1/rpc/${cleanNetwork}`, body);
-          recordSpending(budget, estimatedCost, agent_id);
+          const { data: result, paidUsd } = await rawPost(client, `/v1/rpc/${cleanNetwork}`, body);
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)

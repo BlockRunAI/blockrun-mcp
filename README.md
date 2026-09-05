@@ -260,7 +260,19 @@ claude mcp add blockrun -s user -e BLOCKRUN_API_KEY=brk_live_… -- npx -y @bloc
    Or `export BLOCKRUN_API_KEY=brk_live_…` in the environment the client launches from.
 4. **[Dashboard → Activity](https://user.blockrun.ai/dashboard/activity)** — every call, priced at exact usage.
 
-Verify with `blockrun_wallet action:"status"` — it should report *"Paying with: BlockRun account API key"*.
+Verify with `blockrun_wallet action:"status"` — it reports the account, its real
+balance, and what this session has spent:
+
+```
+Paying with: BlockRun account API key (no wallet, no chain)
+
+  Account:  acme (ungated)
+  Spent to date: $4.5239 (invoiced account — no prepaid ceiling)
+  Top up:   https://user.blockrun.ai/dashboard/credits
+```
+
+A prepaid account shows `Credit remaining: $12.50 of $50.00 granted` instead. If
+the account is blocked, status says so and why *before* you spend a call finding out.
 
 **Option B — wallet (no account).** Run `blockrun_wallet` to see your addresses. New installs default to **Solana**; send USDC (SPL) on Solana from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. To pay on Base instead: `blockrun_wallet action:"chain" chain:"base"`, then send USDC on Base. Full instructions: [Fund your wallet](#fund-your-wallet).
 
@@ -481,6 +493,20 @@ Almost everything now settles on either chain. The exceptions:
 
 A blocked capability returns a message naming the fix, not a raw error.
 
+### What a call costs, and how sure we are
+
+| Mode | Reported cost |
+|---|---|
+| API key — most tools | **The amount actually settled**, read from the account API's per-call response |
+| API key — `blockrun_chat` | An estimate. Chat settles *after* the response by design, so no figure exists when the answer is sent |
+| API key — `blockrun_image`, paid `blockrun_price` | An estimate, until the SDK surfaces the settled figure on those paths |
+| Wallet | The amount signed and settled on-chain, from the 402 quote |
+
+Anything estimated is printed with a `~` and says so. Estimates run **high** on
+the account rail — they add a transaction fee it does not charge — so a budget
+cap trips early rather than late. The invoice is always
+[Dashboard → Activity](https://user.blockrun.ai/dashboard/activity).
+
 ---
 
 ## For agents & LLMs
@@ -544,7 +570,7 @@ One wallet. All sources. No dashboards.
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_KEYCHAIN` | `auto` | Key storage. `auto` — mirror the key into the OS keychain (macOS Keychain / Linux `secret-tool`) and keep the plaintext file, which stays authoritative so other BlockRun tools keep working and so replacing it still rotates your wallet. `off` — file only. `strict` — also delete `~/.blockrun/.session` once a read-back proves the keychain holds the same key; **this breaks other tools that read that file directly**. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
-| `BLOCKRUN_BUDGET_LIMIT` | unset (unlimited) | Hard USD cap on x402 spend for this server process. In-memory; resets on restart. Per-agent caps via `blockrun_wallet action:"delegate"`. |
+| `BLOCKRUN_BUDGET_LIMIT` | unset (unlimited) | Hard USD cap on spend for this server process (both rails). In-memory; resets on restart. Per-agent caps via `blockrun_wallet action:"delegate"`. |
 | `BLOCKRUN_CONFIRM_SPEND` | off | `on` — ask before every paid call via MCP elicitation. [Details](#%EF%B8%8F-human-in-the-loop-payments). Fails open on clients without elicitation. |
 | `BLOCKRUN_CONFIRM_THRESHOLD` | `0` | Only ask for calls estimated above this many USD. Malformed values fall back to `0` (ask for everything), never to "off". |
 | `POLYMARKET_CLOB_HOST` | BlockRun Finland relay | Geoblock egress for order placement — **defaulted for you**. Override to go direct (`https://clob.polymarket.com`) or your own egress. |

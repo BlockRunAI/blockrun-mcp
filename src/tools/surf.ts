@@ -13,10 +13,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
+import { type RawClient, rawPost, rawGet } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -106,10 +107,10 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as SurfClient;
           const endpoint = `/v1/surf/${cleanPath}`;
-          const result = body !== undefined
-            ? await client.requestWithPaymentRaw(endpoint, body)
-            : await client.getWithPaymentRaw(endpoint, params);
-          recordSpending(budget, estimatedCost, agent_id);
+          const { data: result, paidUsd } = body !== undefined
+            ? await rawPost(client, endpoint, body)
+            : await rawGet(client, endpoint, params);
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: asStructuredContent(result),

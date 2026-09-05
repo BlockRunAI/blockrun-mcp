@@ -1,10 +1,11 @@
 // src/tools/markets.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
+import { type RawClient, rawGet, rawPost } from "../utils/raw-call.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -122,11 +123,17 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           // reservation. No-ops when off, sub-threshold, or unsupported by the client.
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `markets · ${path}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
-          const llm = getClient();
-          const result = body !== undefined
-            ? await llm.pmQuery(path, body)
-            : await llm.pm(path, params);
-          recordSpending(budget, estimatedCost, agent_id);
+          // rawGet/rawPost rather than the SDK's pm()/pmQuery(): those are one-line
+          // wrappers over exactly `/v1/pm/${path}` on the same raw methods
+          // (client.ts:1534, 1552), so the wallet rail is byte-identical — but the
+          // account rail then goes through utils/api-key-call.ts, which reads the
+          // settled `x-blockrun-cost-usd` instead of discarding the response.
+          const llm = getClient() as unknown as RawClient;
+          const endpoint = `/v1/pm/${path}`;
+          const { data: result, paidUsd } = body !== undefined
+            ? await rawPost(llm, endpoint, body)
+            : await rawGet(llm, endpoint, params);
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
 
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

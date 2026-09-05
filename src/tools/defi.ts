@@ -8,17 +8,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending } from "../utils/budget.js";
+import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { baseOnlyMessage, getClient } from "../utils/wallet.js";
+import { type RawClient, rawGet } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
-type RawClient = {
-  getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
-};
 
 // prices/* is $0.001; protocols / protocol/{slug} / chains / yields are $0.005.
 function estimateDefiCost(path: string): number {
@@ -86,8 +84,8 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `defi · ${cleanPath}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
-          const result = await client.getWithPaymentRaw(`/v1/defillama/${cleanPath}`);
-          recordSpending(budget, estimatedCost, agent_id);
+          const { data: result, paidUsd } = await rawGet(client, `/v1/defillama/${cleanPath}`);
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)

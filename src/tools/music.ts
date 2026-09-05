@@ -150,15 +150,16 @@ Returns a permanent BlockRun-hosted URL.`,
 
         // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
         if (isApiKeyMode()) {
-          const { data, txHash } = await apiKeyAsyncPost("/v1/audio/generations", body, {
+          const { data, paidUsd, txHash } = await apiKeyAsyncPost("/v1/audio/generations", body, {
             pollBudgetMs: MUSIC_POLL_BUDGET_MS,
             pollIntervalMs: MUSIC_POLL_INTERVAL_MS,
             pollTimeoutMs: MUSIC_POLL_TIMEOUT_MS,
           });
-          recordActualSpend(budget, null, MUSIC_COST, agent_id);
+          recordActualSpend(budget, paidUsd, MUSIC_COST, agent_id);
           const t = (data as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }> }).data?.[0];
           if (!t?.url) throw new Error("Completed response missing track URL");
-          return musicResult(t, (data as { model?: string }).model || model, MUSIC_COST, txHash, true);
+          // Estimated only when the rail gave us nothing to settle against.
+          return musicResult(t, (data as { model?: string }).model || model, paidUsd ?? MUSIC_COST, txHash, paidUsd === null);
         }
 
         // ---- Rail 2: Solana wallet. Same reusable helper blockrun_video uses. ----

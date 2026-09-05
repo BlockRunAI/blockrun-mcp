@@ -447,12 +447,12 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
         if (isApiKeyMode()) {
-          const { data, txHash } = await apiKeyAsyncPost("/v1/videos/generations", body, {
+          const { data, paidUsd, txHash } = await apiKeyAsyncPost("/v1/videos/generations", body, {
             pollBudgetMs: VIDEO_TOTAL_BUDGET_MS,
             pollIntervalMs: POLL_INTERVAL_MS,
             pollTimeoutMs: VIDEO_POLL_TIMEOUT_MS,
           });
-          recordActualSpend(budget, null, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
           const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean }> }).data?.[0];
           if (!clip?.url) throw new Error("Completed video response missing video URL");
           const modelOut = (data as { model?: string }).model || selectedModel;
@@ -462,7 +462,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             `Duration: ${clip.duration_seconds ?? billedSeconds}s`,
             `Model: ${modelOut}`,
             "Billing: BlockRun account (API key)",
-            `Cost: ~$${estimatedCost.toFixed(4)} (estimated — billed at exact usage; see https://user.blockrun.ai/dashboard/activity)`,
+            paidUsd === null
+              ? `Cost: ~$${estimatedCost.toFixed(4)} (estimated — billed at exact usage; see https://user.blockrun.ai/dashboard/activity)`
+              : `Cost: $${paidUsd.toFixed(6)}`,
             ...(clip.backed_up ? ["Backed up to BlockRun storage (URL is permanent)"] : clip.source_url ? [`Source URL: ${clip.source_url}`] : []),
             ...(clip.request_id ? [`Request ID: ${clip.request_id}`] : []),
             ...(txHash ? [`Receipt: ${txHash}`] : []),
@@ -474,8 +476,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               ...(clip.source_url ? { source_url: clip.source_url } : {}),
               duration_seconds: clip.duration_seconds,
               model: modelOut,
-              cost_usd: estimatedCost,
-              cost_is_estimate: true,
+              cost_usd: paidUsd ?? estimatedCost,
+              cost_is_estimate: paidUsd === null,
               billing: "account",
               ...(clip.request_id ? { request_id: clip.request_id } : {}),
               ...(clip.backed_up !== undefined ? { backed_up: clip.backed_up } : {}),

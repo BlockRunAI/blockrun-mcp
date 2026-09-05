@@ -23,22 +23,53 @@ import { getApiBase, resolveGatewayUrl } from "./wallet.js";
 export interface ApiKeyPostResult {
   data: Record<string, unknown>;
   /**
-   * ALWAYS NULL, and that is a fact about the account API rather than a gap here.
+   * What this call ACTUALLY cost, from the `x-blockrun-cost-usd` response header,
+   * or null when the account API did not settle a price at response time.
    *
-   * A wallet call learns its price from the 402 quote before it signs. An
-   * account call has no quote: it is metered server-side at exact upstream token
-   * counts, billed post-hoc, and the response carries no cost header (probed
-   * 2026-09-05 — the only billing-ish headers are `x-blockrun-request-id` and
-   * `x-payment-receipt: credit:<uuid>`). Callers therefore fall back to their
-   * own pre-call estimate, which recordActualSpend already does for null.
+   * Null is not "free". The header is absent for two different reasons the wire
+   * cannot tell apart: a genuinely free family (catalogue reads, job polls), and
+   * chat — where the charge settles after the response is sent, by design, so
+   * emitting it would mean holding the answer until the money landed. Callers
+   * pass null to recordActualSpend, which falls back to their pre-call estimate.
    *
-   * Returning null rather than 0 matters: recordActualSpend treats 0 as
-   * "unknown" too, but null says so on purpose instead of by accident.
+   * Until 2026-09-05 this was ALWAYS null: the header did not exist, and the
+   * estimates it replaces are high by exactly the transaction fee this rail does
+   * not charge (reconciled against the account ledger: music billed $0.157500
+   * against a $0.1595 estimate, speech $0.001050 against $0.0031).
    */
-  paidUsd: null;
+  paidUsd: number | null;
   /** The `credit:<uuid>` receipt, when the gateway returns one. */
   txHash?: string;
   jobId?: string;
+}
+
+/**
+ * Read `x-blockrun-cost-usd`, refusing anything that is not a settled amount.
+ *
+ * EMPTY, MALFORMED AND NEGATIVE ALL READ AS ABSENT, and that is the whole point
+ * of doing this by hand rather than with `Number(...)`. `Number("")` is 0, not
+ * NaN — so a header present but empty would parse as a settled zero and book $0
+ * against a call that was genuinely billed, reintroducing in the reader exactly
+ * the confusion the header exists to remove. (ClawRouter's first parser had this
+ * bug; a test caught it there.) The emitter cannot currently produce an empty
+ * value, but a reader that is only correct because of what the writer happens to
+ * do is not correct.
+ *
+ * A settled ZERO is meaningful and preserved: the gateway writes "0.000000"
+ * explicitly for a charge that really did resolve to nothing, as distinct from
+ * omitting the header.
+ */
+export function parseCostHeader(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function costFrom(response: Response): number | null {
+  return parseCostHeader(response.headers.get("x-blockrun-cost-usd"));
 }
 
 /** Statuses the gateway uses for a job that will never complete. */
@@ -92,7 +123,30 @@ export async function apiKeyPost(
     opts.timeoutMs ?? 120_000,
   );
   if (!response.ok) await throwForStatus(response, `POST ${endpoint}`);
-  return { data: await readJson(response), paidUsd: null, txHash: receiptFrom(response) };
+  return { data: await readJson(response), paidUsd: costFrom(response), txHash: receiptFrom(response) };
+}
+
+/**
+ * GET a priced endpoint. `endpoint` is rooted, e.g. "/v1/pm/polymarket/markets".
+ *
+ * Paid GETs settle inline on this rail, so the cost header is present on the
+ * response — the three families that had it missing until 0fff304 (pm, surf,
+ * defillama) are all GETs, and they were the whole reason it was worth verifying
+ * per family rather than trusting one probe.
+ */
+export async function apiKeyGet(
+  endpoint: string,
+  params?: Record<string, string>,
+  opts: { timeoutMs?: number } = {},
+): Promise<ApiKeyPostResult> {
+  const qs = params && Object.keys(params).length ? `?${new URLSearchParams(params)}` : "";
+  const response = await fetchWithTimeout(
+    `${getApiBase()}${endpoint}${qs}`,
+    { method: "GET", headers: { ...apiAuthHeaders() } },
+    opts.timeoutMs ?? 120_000,
+  );
+  if (!response.ok) await throwForStatus(response, `GET ${endpoint}`);
+  return { data: await readJson(response), paidUsd: costFrom(response), txHash: receiptFrom(response) };
 }
 
 /**
@@ -136,11 +190,12 @@ export async function apiKeyAsyncPost(
   if (!submit.ok && submit.status !== 202) await throwForStatus(submit, `POST ${endpoint}`);
 
   const submitted = await readJson(submit);
+  const submitCost = costFrom(submit);
   const pollUrl = typeof submitted.poll_url === "string" ? submitted.poll_url : undefined;
   const jobId = typeof submitted.id === "string" ? submitted.id : undefined;
 
   if (submit.status !== 202 && !pollUrl) {
-    return { data: submitted, paidUsd: null, txHash: receiptFrom(submit), jobId };
+    return { data: submitted, paidUsd: costFrom(submit), txHash: receiptFrom(submit), jobId };
   }
   if (!pollUrl) {
     throw new Error(`Async submit missing poll_url: ${JSON.stringify(submitted)}`);
@@ -179,7 +234,10 @@ export async function apiKeyAsyncPost(
       throw new Error(`Upstream generation failed: ${String(data.error ?? "unknown")}. ${billing}`);
     }
     if (poll.ok && lastStatus === "completed") {
-      return { data, paidUsd: null, txHash: receiptFrom(poll), jobId };
+      // Async media bills at SUBMIT and the polls are free, so the price rides
+      // the submit response and the completed poll carries nothing. Prefer the
+      // poll's header if one ever appears, but fall back to the submit's.
+      return { data, paidUsd: costFrom(poll) ?? submitCost, txHash: receiptFrom(poll), jobId };
     }
     // 504 is a transient upstream poll timeout on this gateway, same as the
     // wallet rails — keep polling rather than abandoning a paid job.
