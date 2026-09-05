@@ -37,7 +37,9 @@ process.env.BLOCKRUN_KEYCHAIN = "off";
 const { getChain, setChain } = await import("../src/utils/wallet.js");
 
 beforeEach(() => {
-  for (const f of [".chain", ".chain-auto", ".solana-session"]) {
+  // .session included: the Solana-first default consults it to decide whether
+  // this machine already has a Base wallet that must not be migrated.
+  for (const f of [".chain", ".chain-auto", ".solana-session", ".session"]) {
     fs.rmSync(path.join(blockrunDir, f), { force: true });
   }
   delete process.env.SOLANA_WALLET_KEY;
@@ -58,6 +60,9 @@ process.on("exit", () => {
 
 const writeAuto = (v: string) => fs.writeFileSync(path.join(blockrunDir, ".chain-auto"), v);
 const writeExplicit = (v: string) => fs.writeFileSync(path.join(blockrunDir, ".chain"), v);
+// A pre-existing Base wallet, as ~/.blockrun/.session actually stores it.
+const writeBaseSession = () =>
+  fs.writeFileSync(path.join(blockrunDir, ".session"), `0x${"1".repeat(64)}`);
 const writeSolanaSession = () => fs.writeFileSync(path.join(blockrunDir, ".solana-session"), "someprivatekeymaterial");
 
 test("SOLANA_WALLET_KEY beats the automatic pin — the bug this fixes", () => {
@@ -92,8 +97,48 @@ test("setChain clears the automatic pin so it cannot resurface", () => {
   assert.equal(getChain(), "base");
 });
 
-test("a fresh install with nothing set defaults to Base", () => {
+test("a fresh install with nothing set defaults to Solana", () => {
+  assert.equal(getChain(), "solana");
+});
+
+// THE MIGRATION GUARD, and the reason the default could be flipped at all.
+//
+// An existing Base user is identified by ~/.blockrun/.session with no Solana
+// signal anywhere. Before the guard existed, flipping the fallback would have
+// moved every one of them onto an empty Solana wallet on upgrade — their funded
+// Base wallet silently unused, their next paid call failing on zero balance,
+// and nothing on screen connecting the two. Same class of silent substitution
+// as the .chain-auto bug, arriving from the opposite direction.
+test("an existing Base wallet is NOT migrated to Solana by the new default", () => {
+  writeBaseSession();
   assert.equal(getChain(), "base");
+});
+
+test("an existing Base wallet still yields to every explicit Solana signal", () => {
+  writeBaseSession();
+
+  writeExplicit("solana");
+  assert.equal(getChain(), "solana", "an explicit .chain outranks the Base session");
+  fs.rmSync(path.join(blockrunDir, ".chain"), { force: true });
+
+  process.env.SOLANA_WALLET_KEY = "fake-key-for-precedence-only";
+  assert.equal(getChain(), "solana", "SOLANA_WALLET_KEY outranks the Base session");
+  delete process.env.SOLANA_WALLET_KEY;
+
+  writeAuto("solana");
+  assert.equal(getChain(), "solana", "an auto pin outranks the Base session");
+  fs.rmSync(path.join(blockrunDir, ".chain-auto"), { force: true });
+
+  fs.writeFileSync(path.join(blockrunDir, ".solana-session"), "solana-key");
+  assert.equal(getChain(), "solana", "a Solana session outranks the Base session");
+});
+
+// An empty/truncated .session is not a wallet. Treating it as one would pin a
+// genuinely fresh install to Base off a zero-byte file — the mirror of the
+// non-empty check step 4 already makes for .solana-session.
+test("an empty .session is not mistaken for an existing Base wallet", () => {
+  fs.writeFileSync(path.join(blockrunDir, ".session"), "   \n");
+  assert.equal(getChain(), "solana");
 });
 
 // The end-to-end regression. Everything above writes the pin file directly,
@@ -105,12 +150,14 @@ test("a fresh install with nothing set defaults to Base", () => {
 test("a first run leaves SOLANA_WALLET_KEY able to switch chains afterwards", async () => {
   const { ensureBothWallets } = await import("../src/utils/wallet.js");
 
-  // Fresh install: no preference, no session, so getChain() === "base".
-  assert.equal(getChain(), "base");
+  // Fresh install: no preference, no session of either kind, so the
+  // Solana-first default applies.
+  assert.equal(getChain(), "solana");
   await ensureBothWallets();
 
-  // The pin must have preserved Base against the freshly-created Solana session...
-  assert.equal(getChain(), "base", "provisioning a Solana wallet must not move an existing Base user");
+  // Provisioning must not move the chain the user was already on. It is now
+  // Solana rather than Base, but the property under test is unchanged.
+  assert.equal(getChain(), "solana", "provisioning must not move the chain in use");
   // ...without writing an EXPLICIT preference the user never made.
   assert.equal(
     fs.existsSync(path.join(blockrunDir, ".chain")),
@@ -122,4 +169,10 @@ test("a first run leaves SOLANA_WALLET_KEY able to switch chains afterwards", as
   // assertion that fails on the old code.
   process.env.SOLANA_WALLET_KEY = "fake-key-for-precedence-only";
   assert.equal(getChain(), "solana", "SOLANA_WALLET_KEY set after first run must still select Solana");
+
+  // The mirror: an explicit switch to Base must stick, even though the fresh
+  // install defaulted to Solana and a Solana session now exists on disk.
+  delete process.env.SOLANA_WALLET_KEY;
+  setChain("base");
+  assert.equal(getChain(), "base", "an explicit switch to Base must outrank the Solana session");
 });

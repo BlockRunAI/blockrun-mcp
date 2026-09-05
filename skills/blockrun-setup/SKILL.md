@@ -90,13 +90,35 @@ install works. Do not "test" with a paid tool.
   (`0600`). On macOS/Linux it is also mirrored into the OS keychain, but the file stays
   authoritative unless the user opts into `BLOCKRUN_KEYCHAIN=strict`. Tell the user to
   **back that file up** — it is the only copy of the key; BlockRun cannot recover it.
-- Payment is **USDC per call over x402**, on **Base** by default. There is no account,
-  API key, or card. Free tools (`blockrun_wallet`, `blockrun_models`, `blockrun_dex`,
-  crypto `blockrun_price`, `blockrun_chat mode:"free"`) work with a $0 balance.
-- To fund: `blockrun_wallet action:"setup"` shows the address and a QR. Send USDC on the
-  **Base** network (Coinbase → Send → USDC → Base). $5 covers hundreds of data calls.
-- Prefer Solana: `blockrun_wallet action:"chain" chain:"solana"` then `action:"setup"`.
-  Send USDC (SPL) on Solana. No restart. A few media/paid tools are Base-only and say so.
+- Payment is **per call**, and there are two ways to pay. Free tools (`blockrun_wallet`,
+  `blockrun_models`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_chat mode:"free"`)
+  need neither.
+
+**Wallet (the default — no account, no signup).** USDC over x402. New installs default to
+**Solana**; an install that already has a Base wallet stays on Base.
+
+- `blockrun_wallet action:"setup"` shows the address and a QR. Send USDC (SPL) on Solana
+  — Coinbase (pick "Solana"), Phantom, Solflare or Backpack. $5 covers hundreds of calls.
+- To use Base instead: `blockrun_wallet action:"chain" chain:"base"` then `action:"setup"`,
+  and send USDC on the Base network. No restart either way.
+- Only `blockrun_defi`, `blockrun_modal` and native `claude-*` chat are Base-only; they say
+  so rather than charging.
+
+**API key (for teams who cannot hand a wallet to an agent).** Ask the user whether they want
+this before setting it up — it is a real account, not a local file.
+
+1. Sign in at <https://user.blockrun.ai> (Google).
+2. Mint a key at <https://user.blockrun.ai/dashboard/keys> — `brk_live_…`, shown once.
+3. Add credit at <https://user.blockrun.ai/dashboard/credits> (card or wire).
+4. Set `BLOCKRUN_API_KEY` in the client's MCP server config, e.g.
+   `claude mcp add blockrun -s user -e BLOCKRUN_API_KEY=brk_live_… -- npx -y @blockrun/mcp@latest`
+5. Confirm with `blockrun_wallet action:"status"` — it must say *"Paying with: BlockRun
+   account API key"*.
+
+In this mode no wallet is created or read, billing is post-hoc at exact usage (no per-call
+minimum, no transaction fee), and the ledger is <https://user.blockrun.ai/dashboard/activity>.
+Polymarket trading, wallet balances/top-ups and `blockrun_realface action:"list"` need a
+keypair and are unavailable; everything else works.
 
 ## 5. Optional: install the agent skills
 

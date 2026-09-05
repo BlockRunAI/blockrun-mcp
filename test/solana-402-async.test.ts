@@ -36,7 +36,7 @@ mock.module("../src/utils/http.js", {
 // SDK's file-only loader (strict keychain mode retires the session file).
 let walletKey: string | undefined = "test-solana-key";
 mock.module("../src/utils/wallet.js", {
-  namedExports: { resolveSolanaKey: () => walletKey },
+  namedExports: { resolveSolanaKey: () => walletKey, getApiBase: () => "https://blockrun.ai/api", resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`), },
 });
 
 const baseDetails = () => ({

@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { buildClient, buildClientWithTimeout, getAnthropicClient, baseOnlyMessage } from "../utils/wallet.js";
+import { isApiKeyMode } from "../utils/auth.js";
 import { streamChatText, supportsStreaming, type StreamChatMessage } from "../utils/chat-stream.js";
 import { handleAnthropicNative, isAnthropicModel } from "./chat-anthropic.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
@@ -177,12 +178,32 @@ export function estimateChatCost(
  * reservation — the ledger recorded a free call. `onSettledThrow` is how the
  * charge still gets booked; it fires only when the delta is real (> 0), so an
  * ordinary pre-payment failure (400, timeout, refusal) still books nothing.
+ *
+ * ON THE ACCOUNT RAIL THERE IS NO COUNTER TO READ. getSpending() does not return
+ * zero for an API-key client — it THROWS:
+ *
+ *   "Account usage is available at https://user.blockrun.ai/dashboard;
+ *    getSpending() tracks x402 settlements only."
+ *
+ * and it is called three times here, on the very first line, outside the try.
+ * Left alone, setting BLOCKRUN_API_KEY would not degrade blockrun_chat, it would
+ * break every single call before the request was even sent. So account mode
+ * skips the counter entirely and reports settledUsd 0, which every caller
+ * already handles as "delta unavailable — fall back to the estimate".
+ *
+ * The estimate is genuinely all we have: the account API returns no per-call
+ * cost header, and its dashboard is cookie-authenticated, so there is nothing
+ * this process could read back. Callers label the number accordingly rather
+ * than printing an estimate that looks like a settlement.
  */
 async function withSettledCost<T>(
   client: ApiClient,
   run: () => Promise<T>,
   onSettledThrow?: (settledUsd: number) => void,
 ): Promise<{ result: T; settledUsd: number }> {
+  if (isApiKeyMode()) {
+    return { result: await run(), settledUsd: 0 };
+  }
   const before = client.getSpending().totalUsd;
   try {
     const result = await run();

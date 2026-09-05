@@ -9,6 +9,7 @@ import { formatError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
+import { isApiKeyMode } from "../utils/auth.js";
 import { solanaPaidPost } from "../utils/solana-402.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
@@ -398,7 +399,11 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           // (which mirrors the live price table) is the best available figure;
           // Solana returns the real 402-quoted amount.
           let billedUsd = estimatedCost;
-          if (getChain() === "solana") {
+          // isApiKeyMode() first: on the account rail getChain() can still say
+          // "solana" (it is the default for a machine with no wallet), and this
+          // branch would then look for a Solana key that a key-only user has
+          // never had. getImageClient() below is already API-key aware.
+          if (!isApiKeyMode() && getChain() === "solana") {
             // Solana: manual x402 against the sol.blockrun.ai gateway (the SDK's
             // ImageClient signs Base/EVM payments only). Record the ACTUAL cost
             // from the 402 quote — the Solana gateway prices carry a markup over
@@ -447,9 +452,18 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
 
           const delivered = await materializeImageUrl(imageUrl);
           const savedLocally = delivered !== imageUrl;
+          // On the wallet rails billedUsd is what was actually signed and settled
+          // (from the 402 quote). On the account rail nothing comes back to read,
+          // so it is this server's own estimate — and it is estimated HIGH, since
+          // estimateCost adds the $0.001 transaction fee that account billing
+          // does not charge. Printing that unlabelled invites someone to
+          // reconcile an invoice against a number we invented.
+          const costLine = isApiKeyMode()
+            ? `Cost: ~$${billedUsd.toFixed(4)} (estimated — billed to your BlockRun account at exact usage; see https://user.blockrun.ai/dashboard/activity)`
+            : `Cost: $${billedUsd.toFixed(4)}`;
           const textBlock = {
             type: "text" as const,
-            text: `Image: ${delivered}${savedLocally ? " (saved locally — the gateway returned inline image data)" : ""}\nPrompt: ${prompt}\nModel: ${selectedModel}\nCost: $${billedUsd.toFixed(4)}`,
+            text: `Image: ${delivered}${savedLocally ? " (saved locally — the gateway returned inline image data)" : ""}\nPrompt: ${prompt}\nModel: ${selectedModel}\n${costLine}`,
           };
           // Optional inline preview (thumbnail) for rich clients. Best-effort:
           // on failure or if disabled, fall back to the URL-only text block.
@@ -457,7 +471,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
 
           return {
             content: previewBlock ? [previewBlock, textBlock] : [textBlock],
-            structuredContent: { url: delivered, prompt, model: selectedModel, cost_usd: billedUsd, inlined: Boolean(previewBlock) },
+            structuredContent: { url: delivered, prompt, model: selectedModel, cost_usd: billedUsd, cost_is_estimate: isApiKeyMode(), inlined: Boolean(previewBlock) },
           };
         } finally {
           gate.release();

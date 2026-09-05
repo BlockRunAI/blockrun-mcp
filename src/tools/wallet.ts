@@ -2,7 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
-import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance } from "../utils/wallet.js";
+import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase } from "../utils/wallet.js";
+import { isApiKeyMode, requireWalletMode, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
@@ -19,17 +20,21 @@ Call this FIRST if any other blockrun_* tool returns a payment/balance error.
 Call this to check your current USDC balance before expensive operations.
 Call this to set spending limits before spawning child agents.
 
-The server holds TWO wallets — one on Base, one on Solana — but pays on ONE
-active chain at a time. status shows both addresses/balances and which is active.
-Default chain is Base.
+If this server is running on a BlockRun API key (BLOCKRUN_API_KEY), there is no
+wallet and no chain: status reports the account, and setup/qr/deposit/chain do
+not apply. Credit is managed at https://user.blockrun.ai/dashboard/credits.
 
-To pay on Solana (no env vars, no file editing, no restart):
+In wallet mode the server holds TWO wallets — one on Solana, one on Base — but
+pays on ONE active chain at a time. status shows both addresses/balances and
+which is active. New installs default to Solana; an existing Base wallet keeps
+Base until you switch.
+
+To switch chain (no env vars, no file editing, no restart):
   1. action:"chain" chain:"solana"   → provisions + activates the Solana wallet
-  2. action:"setup"                   → Solana address + funding QR (send USDC SPL on Solana)
-Switch back with action:"chain" chain:"base". Base-only — these ignore Solana and
-need Base: blockrun_music, blockrun_speech, blockrun_realface,
-paid blockrun_price, blockrun_chat routing:"smart", and native Anthropic
-(claude-*). blockrun_image and blockrun_video pay on either chain.
+  2. action:"setup"                   → address + funding QR for the active chain
+Switch back with action:"chain" chain:"base". Almost everything now settles on
+either chain; only blockrun_defi (DefiLlama) and blockrun_modal are Base-only,
+plus native Anthropic (claude-*) in blockrun_chat.
 
 Actions:
 - status (default): Both wallet addresses + USDC balances, active chain, session spending
@@ -151,6 +156,52 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
         };
       }
 
+      // ---------------------------------------------------------------------
+      // Everything past this point needs a WALLET. The budget actions above
+      // (delegate/revoke/report) are local bookkeeping and work on either rail.
+      //
+      // The guard sits here rather than inside each branch because the failure
+      // it prevents is not an error message — it is ensureBothWallets() minting
+      // an EVM and a Solana keypair, persisting both and mirroring them into the
+      // OS keychain, for someone who pays by invoice and asked a status question.
+      // ---------------------------------------------------------------------
+      if (isApiKeyMode()) {
+        if (action === "status") {
+          const spent = `$${budget.spent.toFixed(4)} estimated${budget.limit ? ` / $${budget.limit.toFixed(2)} local limit` : ""} — ${budget.calls} calls`;
+          const text = `Paying with: BlockRun account API key (no wallet, no chain)
+
+  Endpoint: ${getApiBase()}
+  Credit + real ledger: ${PORTAL_CREDITS_URL}
+  Per-call activity:    ${PORTAL_ACTIVITY_URL}
+
+This session (local estimate): ${spent}
+
+The figure above is this server's own ESTIMATE, computed before each call so it
+can enforce your budget limits. It is not the invoice. Actual usage is metered
+by the account API at exact token counts and is only authoritative at the
+dashboard links above.
+
+Wallet actions (setup, qr, deposit, chain) need wallet mode — unset
+BLOCKRUN_API_KEY and restart to use one.`;
+          return {
+            content: [{ type: "text", text }],
+            structuredContent: {
+              authMode: "api-key",
+              endpoint: getApiBase(),
+              creditsUrl: PORTAL_CREDITS_URL,
+              activityUrl: PORTAL_ACTIVITY_URL,
+              sessionEstimatedSpend: budget.spent,
+              calls: budget.calls,
+              costsAreEstimates: true,
+            },
+          };
+        }
+        return {
+          content: [{ type: "text", text: requireWalletMode(`blockrun_wallet action:"${action}"`)! }],
+          isError: true,
+        };
+      }
+
       // Switch / inspect the active payment chain
       if (action === "chain") {
         const both = await ensureBothWallets();
@@ -169,8 +220,8 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
   Base:   ${both.base.address}
   Solana: ${both.solana.address}
 
-All blockrun_* calls now pay on ${active}. Note: price, music, speech and
-RealFace are Base-only — switch back with chain:"base" for those.`;
+All blockrun_* calls now pay on ${active}. Still Base-only: blockrun_defi
+(DefiLlama) and blockrun_modal — switch back with chain:"base" for those.`;
         return {
           content: [{ type: "text", text }],
           structuredContent: {
@@ -183,6 +234,13 @@ RealFace are Base-only — switch back with chain:"base" for those.`;
       }
 
       const info = await getWalletInfo();
+      // Non-null past the isApiKeyMode() guard above: only account mode has no
+      // address, and it returned there. Asserted rather than assumed so that
+      // moving the guard breaks the build instead of printing "null" as an
+      // address in a funding QR someone is about to send USDC to.
+      if (info.address === null) {
+        return { content: [{ type: "text", text: requireWalletMode(`blockrun_wallet action:"${action}"`)! }], isError: true };
+      }
       const address = info.address;
       const chain = getChain();
 

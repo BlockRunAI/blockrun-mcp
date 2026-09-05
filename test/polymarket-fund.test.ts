@@ -30,6 +30,9 @@ mock.module("@blockrun/llm", {
 });
 mock.module("../src/utils/wallet.js", {
   namedExports: {
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`),
+
     getOrCreateWalletKey: () => "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     getChainBalance: async () => baseBalance,
   },

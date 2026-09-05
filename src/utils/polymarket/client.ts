@@ -22,6 +22,7 @@ import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { polygon } from "viem/chains";
 import { ClobClient, SignatureTypeV2 } from "@polymarket/clob-client-v2";
 import { getOrCreateWalletKey } from "../wallet.js";
+import { requireWalletMode } from "../auth.js";
 import {
   assertContractConfig,
   CLOB_HOST,
@@ -89,8 +90,24 @@ export function installUnderscoreHeaderBridge(instance: {
 installUnderscoreHeaderBridge(axios as never);
 _bridgeApplied = true;
 
-/** The local EOA account (BlockRun session key) used as the Polymarket signer. */
+/**
+ * The local EOA account (BlockRun session key) used as the Polymarket signer.
+ *
+ * The single chokepoint for every Polymarket action that touches a key —
+ * credential derivation, order signing, approvals, funding, withdrawal — which
+ * is why the account-mode guard lives here rather than in each of them. Two
+ * things follow from getting it wrong: an API-key user would see a viem error
+ * instead of an explanation, and getOrCreateWalletKey() would MINT the very
+ * wallet they chose not to have in order to produce it.
+ *
+ * Polymarket is genuinely wallet-only. It is not a BlockRun-priced endpoint we
+ * could bill to an account: orders are signed EIP-712 payloads submitted to
+ * Polymarket's own CLOB, and positions are ERC-1155 balances held by an address.
+ * Account credit cannot stand in for a keypair.
+ */
 export function getPolymarketAccount(): PrivateKeyAccount {
+  const block = requireWalletMode("Polymarket trading");
+  if (block) throw new Error(block);
   if (!_account) {
     _account = privateKeyToAccount(getOrCreateWalletKey());
   }

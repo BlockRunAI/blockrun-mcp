@@ -27,6 +27,7 @@ import {
   keychainRead,
   persistKey,
 } from "./keychain.js";
+import { getApiKey, getApiKeyBase, isApiKeyMode, PORTAL_CREDITS_URL } from "./auth.js";
 
 export type ApiClient = LLMClient | SolanaLLMClient;
 
@@ -99,9 +100,41 @@ function hasKeychainSolanaKey(): boolean {
   return _keychainSolanaKeyPresent;
 }
 
-/** Test seam — clears the memoized keychain probe. */
+// Same memoization, for the mirror-image probe used by the Solana-first default.
+let _keychainEvmKeyPresent: boolean | undefined;
+
+function hasKeychainEvmKey(): boolean {
+  if (getKeychainMode() === "off") return false;
+  if (_keychainEvmKeyPresent === undefined) {
+    _keychainEvmKeyPresent = keychainLoad(EVM_KEY_ACCOUNT) !== null;
+  }
+  return _keychainEvmKeyPresent;
+}
+
+/**
+ * Does this machine already hold a BASE wallet the user may have funded?
+ *
+ * Only consulted by getChain()'s final fallback, and only to stop the
+ * Solana-first default from being a silent migration. Checks all three stores
+ * the EVM key can live in, for the same reason ensureEvmWallet() does: under
+ * BLOCKRUN_KEYCHAIN=strict the plaintext file is deleted once the key is in the
+ * keychain, so a file-only check would read a hardened Base user as a fresh
+ * install and move them to a chain they have never funded.
+ */
+function hasExistingBaseWallet(): boolean {
+  if (process.env.BLOCKRUN_WALLET_KEY) return true;
+  try {
+    if (fs.existsSync(WALLET_FILE_PATH) && fs.readFileSync(WALLET_FILE_PATH, "utf-8").trim()) {
+      return true;
+    }
+  } catch { /* an unreadable file is not evidence either way — fall through */ }
+  return hasKeychainEvmKey();
+}
+
+/** Test seam — clears the memoized keychain probes. */
 export function resetKeychainProbeCache(): void {
   _keychainSolanaKeyPresent = undefined;
+  _keychainEvmKeyPresent = undefined;
 }
 
 export function getChain(): "base" | "solana" {
@@ -142,7 +175,22 @@ export function getChain(): "base" | "solana" {
   //    "Base-only" refusals from a wallet they never funded.
   if (hasKeychainSolanaKey()) return "solana";
 
-  return "base";
+  // 6. No Solana signal anywhere — but that is not the same as "new user".
+  //
+  //    Solana is the chain we lead with now, so a FRESH install defaults there
+  //    (step 7). Flipping the fallback unconditionally, however, would be a
+  //    silent destructive migration: every existing Base-only user who never
+  //    wrote a .chain file would be moved onto an empty Solana wallet, and
+  //    their next paid call would fail on zero balance with nothing on screen
+  //    explaining why their funded wallet stopped being used.
+  //
+  //    That is exactly the failure CHAIN_AUTO_FILE was introduced to prevent,
+  //    arriving from the opposite direction. So the default only applies when
+  //    there is no Base wallet to strand.
+  if (hasExistingBaseWallet()) return "base";
+
+  // 7. Genuinely fresh install: no chain preference, no wallet of either kind.
+  return "solana";
 }
 
 // The canonical file we WRITE the chain preference to (getChain reads either,
@@ -217,18 +265,85 @@ export async function ensureBothWallets(): Promise<{
 }
 
 /**
- * Guard for capabilities the Solana SDK path doesn't cover yet (price data,
- * music, speech, RealFace). Returns an actionable message when the
- * active chain is Solana, otherwise null. Tools call this before paying so
- * they never silently drain the Base wallet while the user believes they're
- * on Solana. Image and video generation are NOT on this list — they pay on
- * either chain via utils/solana-402.ts.
+ * Guard for the two capabilities the Solana rail genuinely does not serve.
+ *
+ * WHAT THIS LIST IS FOR. It is a statement about the SOLANA GATEWAY, not about
+ * this client, and it must be re-probed rather than assumed. Six tools carried
+ * this refusal until 2026-09-05, long after sol.blockrun.ai started serving
+ * them; an unpaid 402 probe (which costs nothing — the quote comes back before
+ * any signature) settled every case:
+ *
+ *   POST /v1/audio/generations    402, amount 157500   -> serves; guard removed
+ *   POST /v1/audio/speech         402, amount 1000     -> serves; guard removed
+ *   POST /v1/audio/sound-effects  402, amount 52501    -> serves; guard removed
+ *   POST /v1/realface/enroll      400 (missing `name`) -> serves; guard removed
+ *   POST /v1/portrait/enroll      400 (missing `name`) -> serves; guard removed
+ *   GET  /v1/defillama/protocols  404                  -> genuine gap; kept
+ *   POST /v1/modal/sandbox/create 503 "not configured" -> genuine gap; kept
+ *
+ * A stale entry here is not harmless: it refuses a call the user has already
+ * funded and sends them to switch chains for no reason. Re-probe before adding
+ * one, and re-probe before trusting one.
+ *
+ * Returns null in API-KEY mode regardless of capability: account billing runs
+ * against api.blockrun.ai, which serves the whole catalogue over one credential
+ * and has no chain at all.
  */
 export function baseOnlyMessage(capability: string): string | null {
+  if (isApiKeyMode()) return null;
   if (getChain() === "solana") {
-    return `${capability} currently supports Base-chain payment only — your active chain is Solana. Switch with: blockrun_wallet action:"chain" chain:"base"  (switch back later with chain:"solana"). Solana support depends on the @blockrun/llm SDK adding this capability.`;
+    return `${capability} currently supports Base-chain payment only — your active chain is Solana. Switch with: blockrun_wallet action:"chain" chain:"base"  (switch back later with chain:"solana"). Alternatively, API-key billing reaches it on either rail — see ${PORTAL_CREDITS_URL}.`;
   }
   return null;
+}
+
+/**
+ * Base URL for hand-built gateway requests, WITHOUT a trailing slash, such that
+ * `${getApiBase()}/v1/<path>` is always the right URL for the active credential.
+ *
+ * The three rails do not share a path prefix — the wallet gateways mount the API
+ * under /api and the account API mounts it at the root — which is why four tools
+ * hardcoding `https://blockrun.ai/api` could not simply have a hostname swapped.
+ */
+export function getApiBase(): string {
+  if (isApiKeyMode()) return getApiKeyBase();
+  return getChain() === "solana" ? "https://sol.blockrun.ai/api" : "https://blockrun.ai/api";
+}
+
+/**
+ * Resolve a `poll_url` handed back by an async job (video, music, image) into an
+ * absolute URL on the SAME rail that accepted the submission.
+ *
+ * This is the sharp edge of multi-rail support. A submitted job is ALREADY PAID;
+ * if its poll URL resolves to a different host than the one that took the money,
+ * the result can never be collected and the charge is simply lost. The gateway
+ * returns a root-relative `/api/v1/...`, so the old
+ * `BLOCKRUN_API.replace(/\/api$/, "") + poll_url` reconstruction silently sent
+ * every account-mode poll back to the wallet gateway, unauthenticated.
+ *
+ * Mirrors ApiKeyAuth.resolveUrl in @blockrun/llm: on the account rail the
+ * gateway's `/api` prefix is stripped, and an absolute URL pointing at another
+ * origin is refused rather than followed with our credential attached.
+ */
+export function resolveGatewayUrl(pollUrl: string): string {
+  const base = getApiBase();
+  if (/^https?:\/\//i.test(pollUrl)) {
+    const target = new URL(pollUrl);
+    const expected = new URL(base);
+    if (target.origin !== expected.origin) {
+      throw new Error(
+        `Refusing to follow a job poll URL to a different origin (${target.origin}); ` +
+          `the job was submitted to ${expected.origin}.`,
+      );
+    }
+    return target.href;
+  }
+  const path = pollUrl.startsWith("/") ? pollUrl : `/${pollUrl}`;
+  // The account API serves /v1/... at the root; the wallet gateways serve it
+  // under /api. `base` already carries whichever prefix applies, so a poll path
+  // that arrives with its own /api prefix must have it removed exactly once.
+  const relative = path.startsWith("/api/") ? path.slice("/api".length) : path;
+  return `${base}${relative}`;
 }
 
 /**
@@ -356,13 +471,52 @@ export function resetSolanaKeyCache(): void {
   _solanaKey = undefined;
 }
 
+/**
+ * Client options for the ACTIVE credential.
+ *
+ * The SDK throws when handed both `apiKey` and `privateKey`, which is the
+ * behaviour we want mirrored here rather than worked around: there is one payer
+ * per process, and a call that could settle from either a prepaid account or a
+ * funded wallet depending on which branch ran is a billing bug waiting for a
+ * user to find it.
+ *
+ * The second job of this helper is what it does NOT do. Every factory below
+ * used to call getOrCreateWalletKey() eagerly, and that call MINTS a key: it
+ * writes ~/.blockrun/.session, mirrors it into the OS keychain, and announces a
+ * new wallet on stderr. Someone who set BLOCKRUN_API_KEY and never intends to
+ * touch a wallet would have had one created, persisted and stored in their
+ * keychain on the first paid call. Resolving credentials lazily, inside the
+ * branch that needs them, is the whole point.
+ */
+function evmClientOptions(timeout?: number): { apiKey: string } | { privateKey: `0x${string}` } {
+  const apiKey = getApiKey();
+  const base = apiKey ? { apiKey } : { privateKey: getOrCreateWalletKey() };
+  return (timeout ? { ...base, timeout } : base) as
+    | { apiKey: string }
+    | { privateKey: `0x${string}` };
+}
+
 function buildSolanaClient(timeout?: number): SolanaLLMClient {
+  const apiKey = getApiKey();
+  if (apiKey) {
+    return new SolanaLLMClient({ apiKey, ...(timeout ? { timeout } : {}) });
+  }
   const privateKey = resolveSolanaKey();
   const opts = { ...(privateKey ? { privateKey } : {}), ...(timeout ? { timeout } : {}) };
   return new SolanaLLMClient(Object.keys(opts).length ? opts : undefined);
 }
 
 export function getClient(): ApiClient {
+  // On the account rail there is no chain to branch on: both SDK clients resolve
+  // to the same api.blockrun.ai base with the same Bearer credential. Returning
+  // early also keeps getChain() out of the path, and getChain() is not free for
+  // a user who has no wallet — its steps 4-6 stat the session files and can
+  // spawn a `security` keychain probe, on a machine that was never meant to hold
+  // a key at all.
+  if (isApiKeyMode()) {
+    if (!_evmClient) _evmClient = new LLMClient(evmClientOptions());
+    return _evmClient;
+  }
   if (getChain() === "solana") {
     if (!_solanaClient) {
       _solanaClient = buildSolanaClient();
@@ -370,8 +524,7 @@ export function getClient(): ApiClient {
     return _solanaClient;
   }
   if (!_evmClient) {
-    const privateKey = getOrCreateWalletKey();
-    _evmClient = new LLMClient({ privateKey });
+    _evmClient = new LLMClient(evmClientOptions());
   }
   return _evmClient;
 }
@@ -389,11 +542,10 @@ export function getClient(): ApiClient {
  * fallback loop — see FREE_MODEL_TIMEOUT_MS. Same mechanism, opposite direction.
  */
 export function buildClientWithTimeout(timeoutMs: number): ApiClient {
-  if (getChain() === "solana") {
+  if (!isApiKeyMode() && getChain() === "solana") {
     return buildSolanaClient(timeoutMs);
   }
-  const privateKey = getOrCreateWalletKey();
-  return new LLMClient({ privateKey, timeout: timeoutMs });
+  return new LLMClient(evmClientOptions(timeoutMs));
 }
 
 /**
@@ -405,8 +557,8 @@ export function buildClientWithTimeout(timeoutMs: number): ApiClient {
  * misattributing it across agent_ids.
  */
 export function buildClient(): ApiClient {
-  if (getChain() === "solana") return buildSolanaClient();
-  return new LLMClient({ privateKey: getOrCreateWalletKey() });
+  if (!isApiKeyMode() && getChain() === "solana") return buildSolanaClient();
+  return new LLMClient(evmClientOptions());
 }
 
 /**
@@ -420,16 +572,14 @@ export function buildClient(): ApiClient {
  */
 export function getAnthropicClient(): AnthropicClient {
   if (!_anthropicClient) {
-    const privateKey = getOrCreateWalletKey();
-    _anthropicClient = new AnthropicClient({ privateKey });
+    _anthropicClient = new AnthropicClient(evmClientOptions());
   }
   return _anthropicClient;
 }
 
 export function getImageClient(): ImageClient {
   if (!_imageClient) {
-    const privateKey = getOrCreateWalletKey();
-    _imageClient = new ImageClient({ privateKey });
+    _imageClient = new ImageClient(evmClientOptions());
   }
   return _imageClient;
 }
@@ -443,13 +593,38 @@ export function getPriceClient(requireWallet = true): PriceClient {
   }
 
   if (!_priceClient) {
-    const privateKey = getOrCreateWalletKey();
-    _priceClient = new PriceClient({ privateKey });
+    _priceClient = new PriceClient(evmClientOptions());
   }
   return _priceClient;
 }
 
-export async function getWalletInfo() {
+export type AccountInfo = {
+  address: string | null;
+  network: "Base" | "Solana" | "BlockRun account";
+  chainId: number | null;
+  currency: string;
+  isNew: boolean;
+  explorerUrl: string | null;
+  fundingUrl: string;
+};
+
+export async function getWalletInfo(): Promise<AccountInfo> {
+  // Account billing has no address, no chain and no explorer page — and asking
+  // for one must not CREATE one. Reading blockrun://wallet is a status check;
+  // before this branch existed it would have minted an EVM keypair, written it
+  // to disk and mirrored it into the OS keychain, for a user who pays by invoice
+  // and will never fund it.
+  if (isApiKeyMode()) {
+    return {
+      address: null,
+      network: "BlockRun account",
+      chainId: null,
+      currency: "USD credit",
+      isNew: false,
+      explorerUrl: null,
+      fundingUrl: PORTAL_CREDITS_URL,
+    };
+  }
   if (getChain() === "solana") {
     const client = getClient() as SolanaLLMClient;
     const address = await client.getWalletAddress();

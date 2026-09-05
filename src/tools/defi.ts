@@ -11,7 +11,7 @@ import { z } from "zod";
 import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
-import { getClient, getChain } from "../utils/wallet.js";
+import { baseOnlyMessage, getClient } from "../utils/wallet.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -59,11 +59,13 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
         // reaches the agent as a bare "Not Found" with nothing to act on. Probed
         // 2026-08-07 by the dual-chain sweep in scripts/verify-prices.ts. Fail
         // fast and name the fix, the way music/video/image/speech already do.
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_defi is served on Base only. Switch BlockRun to Base (run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
+        // baseOnlyMessage, not a raw getChain() check: it returns null on the
+        // ACCOUNT rail, where there is no chain and api.blockrun.ai does serve
+        // this family (GET /v1/defillama/protocols -> 200, probed 2026-09-05).
+        // A bare chain test would have refused a call that works.
+        const chainBlock = baseOnlyMessage("blockrun_defi (DefiLlama)");
+        if (chainBlock) {
+          return { content: [{ type: "text", text: formatError(chainBlock) }], isError: true };
         }
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/defillama\//, "").replace(/^api\/v1\/defillama\//, "");
         if (hasPathTraversal(cleanPath)) {

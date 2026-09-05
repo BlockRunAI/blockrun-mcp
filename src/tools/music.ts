@@ -10,15 +10,15 @@ import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { pollDeadline, pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
-import { getChain, getOrCreateWalletKey } from "../utils/wallet.js";
+import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
+import { isApiKeyMode } from "../utils/auth.js";
+import { apiKeyAsyncPost } from "../utils/api-key-call.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
   parsePaymentRequired,
   extractPaymentDetails,
 } from "@blockrun/llm";
-
-const BLOCKRUN_API = "https://blockrun.ai/api";
 // withTxFee: music.ts was never in the tx-fee sweep. Live-verified:
 // audio/generations charges $0.1595 against a $0.1575 reserve — short exactly
 // the gateway's $0.002 flat fee.
@@ -37,6 +37,53 @@ export const MUSIC_PAYMENT_AUTH_SECONDS = 600;
 // Settle-side slack: stop polling this far before validBefore so the gateway
 // still has room to settle the poll we just accepted as completed.
 export const MUSIC_AUTH_MARGIN_MS = 60_000;
+
+type Track = { url: string; duration_seconds?: number; lyrics?: string };
+
+/**
+ * One result shape for all three rails.
+ *
+ * `estimated` is not cosmetic. On the wallet rails the cost is the amount that
+ * was actually signed and settled; on the account rail there is no per-call
+ * figure to read back, so the number shown is this server's own pre-call
+ * estimate. Printing the two identically would be the more comfortable choice
+ * and the wrong one — it invites someone to reconcile an invoice against a
+ * number we invented.
+ */
+function musicResult(
+  track: Track,
+  model: string,
+  billedUsd: number,
+  txHash: string | null | undefined,
+  estimated: boolean,
+) {
+  const cost = estimated
+    ? `Cost: ~$${billedUsd.toFixed(4)} (estimated — billed to your BlockRun account at exact usage; see https://user.blockrun.ai/dashboard/activity)`
+    : `Cost: $${billedUsd.toFixed(4)}`;
+  const lines = [
+    `🎵 Track ready!`,
+    `URL: ${track.url}`,
+    `Duration: ${track.duration_seconds ? `${track.duration_seconds}s` : "~3 min"}`,
+    `Model: ${model}`,
+    cost,
+    ...(track.lyrics ? [`Lyrics: ${track.lyrics.slice(0, 200)}${track.lyrics.length > 200 ? "..." : ""}`] : []),
+    ...(txHash ? [`Tx: ${txHash}`] : []),
+    ``,
+    `Note: The URL is a permanent BlockRun-hosted link.`,
+  ];
+  return {
+    content: [{ type: "text" as const, text: lines.join("\n") }],
+    structuredContent: {
+      url: track.url,
+      duration_seconds: track.duration_seconds,
+      model,
+      cost_usd: billedUsd,
+      cost_is_estimate: estimated,
+      ...(track.lyrics ? { lyrics: track.lyrics } : {}),
+      ...(txHash ? { txHash } : {}),
+    },
+  };
+}
 
 export function registerMusicTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -71,12 +118,12 @@ Returns a permanent BlockRun-hosted URL.`,
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
       try {
-        if (getChain() !== "base") {
-          return {
-            content: [{ type: "text", text: formatError("blockrun_music currently settles on Base only. Switch BlockRun to Base (for example: run blockrun_wallet with action:chain chain:base) and fund the Base wallet with USDC.") }],
-            isError: true,
-          };
-        }
+        // NO CHAIN GUARD. This tool refused every Solana call until 2026-09-05
+        // ("settles on Base only"), which stopped being true well before that:
+        // POST https://sol.blockrun.ai/api/v1/audio/generations answers 402 with
+        // a quote of 157500, i.e. the Solana gateway prices and serves it. The
+        // refusal was a stale client-side belief, and its cost was sending
+        // funded Solana users to switch chains for nothing.
 
         if (instrumental && lyrics?.trim()) {
           return {
@@ -98,12 +145,40 @@ Returns a permanent BlockRun-hosted URL.`,
         const confirm = await confirmSpend(server, { usd: MUSIC_COST, label: `music · ${model}` });
         if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
-        const privateKey = getOrCreateWalletKey();
-        const account = privateKeyToAccount(privateKey);
-        const url = `${BLOCKRUN_API}/v1/audio/generations`;
-
         const body: Record<string, unknown> = { model, prompt, instrumental };
         if (lyrics?.trim()) body.lyrics = lyrics.trim();
+
+        // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
+        if (isApiKeyMode()) {
+          const { data, txHash } = await apiKeyAsyncPost("/v1/audio/generations", body, {
+            pollBudgetMs: MUSIC_POLL_BUDGET_MS,
+            pollIntervalMs: MUSIC_POLL_INTERVAL_MS,
+            pollTimeoutMs: MUSIC_POLL_TIMEOUT_MS,
+          });
+          recordActualSpend(budget, null, MUSIC_COST, agent_id);
+          const t = (data as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }> }).data?.[0];
+          if (!t?.url) throw new Error("Completed response missing track URL");
+          return musicResult(t, (data as { model?: string }).model || model, MUSIC_COST, txHash, true);
+        }
+
+        // ---- Rail 2: Solana wallet. Same reusable helper blockrun_video uses. ----
+        if (getChain() === "solana") {
+          const { solanaPaidAsyncPost } = await import("../utils/solana-402.js");
+          const { data, paidUsd, txHash } = await solanaPaidAsyncPost("/v1/audio/generations", body, {
+            pollBudgetMs: MUSIC_POLL_BUDGET_MS,
+          });
+          // Book before validating the payload: a malformed completed body must
+          // not make a settled charge vanish from the local ledger.
+          recordActualSpend(budget, paidUsd, MUSIC_COST, agent_id);
+          const t = (data as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }> }).data?.[0];
+          if (!t?.url) throw new Error("Completed Solana response missing track URL");
+          return musicResult(t, (data as { model?: string }).model || model, paidUsd ?? MUSIC_COST, txHash, false);
+        }
+
+        // ---- Rail 3: Base wallet. The original EIP-3009 402 flow. ----
+        const privateKey = getOrCreateWalletKey();
+        const account = privateKeyToAccount(privateKey);
+        const url = `${getApiBase()}/v1/audio/generations`;
 
         // Step 1: get 402
         const resp402 = await fetchWithTimeout(url, {
@@ -175,9 +250,9 @@ Returns a permanent BlockRun-hosted URL.`,
           // = no charge.
           const submitData = await submitResp.json() as { id?: string; poll_url?: string; status?: string };
           if (!submitData.poll_url) throw new Error(`Async submit missing poll_url: ${JSON.stringify(submitData)}`);
-          const pollAbsoluteUrl = submitData.poll_url.startsWith("http")
-            ? submitData.poll_url
-            : `${BLOCKRUN_API.replace(/\/api$/, "")}${submitData.poll_url}`;
+          // resolveGatewayUrl, not concatenation: it pins the poll to the same
+          // origin that took the payment and refuses a cross-origin redirect.
+          const pollAbsoluteUrl = resolveGatewayUrl(submitData.poll_url);
 
           const startedAt = Date.now();
           // Two independent deadlines, and the loop must respect BOTH. The poll
@@ -251,32 +326,14 @@ Returns a permanent BlockRun-hosted URL.`,
         const billedUsd = amountToUsd(details.amount) ?? MUSIC_COST;
         recordActualSpend(budget, amountToUsd(details.amount), MUSIC_COST, agent_id);
 
-        const lines = [
-          `🎵 Track ready!`,
-          `URL: ${track.url}`,
-          `Duration: ${track.duration_seconds ? `${track.duration_seconds}s` : "~3 min"}`,
-          `Model: ${modelReturned || model}`,
-          `Cost: $${billedUsd.toFixed(4)}`,
-          ...(track.lyrics ? [`Lyrics: ${track.lyrics.slice(0, 200)}${track.lyrics.length > 200 ? "..." : ""}`] : []),
-          ...(txHash ? [`Tx: ${txHash}`] : []),
-          ``,
-          `Note: The URL is a permanent BlockRun-hosted link.`,
-        ];
-
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-          structuredContent: {
-            url: track.url,
-            duration_seconds: track.duration_seconds,
-            model: modelReturned || model,
-            cost_usd: billedUsd,
-            ...(track.lyrics ? { lyrics: track.lyrics } : {}),
-            ...(txHash ? { txHash } : {}),
-          },
-        };
+        return musicResult(track, modelReturned || model, billedUsd, txHash, false);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (isPaymentRejectionError(errMsg)) {
+        // "Fund your wallet" is the wrong remedy on the account rail — there is
+        // no wallet, and launchTopUp() would try to provision one to send a card
+        // onramp to. apiKeyAsyncPost already returns the correct message for a
+        // 402 there (top up credit at the portal), so let it through untouched.
+        if (isPaymentRejectionError(errMsg) && !isApiKeyMode()) {
           return {
             content: [{ type: "text", text: `Music generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,

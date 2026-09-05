@@ -6,14 +6,15 @@
 
 <p>Agents can't sign up for accounts. Agents can't enter credit cards.<br>
 Agents can only sign transactions.<br><br>
-<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call in USDC. No accounts. No API keys. No dashboards.</strong><br><br>
+<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call.</strong><br><br>
+<strong>Two ways to pay, same tools:</strong> a self-custody <strong>wallet</strong> (USDC on Solana or Base, no account needed) — or a <strong>BlockRun API key</strong> for teams that can't run wallets. <a href="https://user.blockrun.ai">Sign up at user.blockrun.ai →</a><br><br>
 <em>Read the odds <strong>and</strong> place the bet, from one self-custody wallet.</em></p>
 
 <br>
 
 <img src="https://img.shields.io/badge/🧰_20_Tools-success?style=for-the-badge" alt="20 tools">&nbsp;
 <img src="https://img.shields.io/badge/🤖_Agent--Native-black?style=for-the-badge" alt="Agent native">&nbsp;
-<img src="https://img.shields.io/badge/🔑_Zero_API_Keys-blue?style=for-the-badge" alt="No API keys">&nbsp;
+<img src="https://img.shields.io/badge/🔑_Wallet_or_API_Key-blue?style=for-the-badge" alt="Wallet or API key">&nbsp;
 <img src="https://img.shields.io/badge/📈_Read_+_Trade_Polymarket-e11d48?style=for-the-badge" alt="Read and trade Polymarket">&nbsp;
 <img src="https://img.shields.io/badge/💰_x402_USDC-purple?style=for-the-badge" alt="x402 USDC">&nbsp;
 <img src="https://img.shields.io/badge/🔓_Open_Source-green?style=for-the-badge" alt="Open source">
@@ -38,7 +39,7 @@ Agents can only sign transactions.<br><br>
 claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 ```
 
-<div align="center"><em>Wallet auto-created on first run. Fund with $5 USDC. Ask Claude anything.</em></div>
+<div align="center"><em>Wallet auto-created on first run. Fund with $5 USDC — or set <code>BLOCKRUN_API_KEY</code> and skip the wallet entirely. Ask Claude anything.</em></div>
 
 <div align="center">
   <picture>
@@ -51,7 +52,9 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**. Authentication is a wallet signature (no API keys); you pay per call in USDC via the [x402](https://x402.org) protocol (no credit cards, no subscriptions). One self-custody wallet on Base or Solana. MIT licensed.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
+
+You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana or Base. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai) and bills prepaid credit at exact usage — for teams that can't hand a wallet to an agent. Same 20 tools either way. MIT licensed.
 
 ## 🏆 First of its kind — the signal → trade loop in Claude Code
 
@@ -66,7 +69,7 @@ Every other data integration was built for **human developers** — create an ac
 **Agents can't do any of that.** BlockRun MCP is built for the agent-first world:
 
 - **One wallet, every source** — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
-- **No API keys** — your wallet signature *is* authentication.
+- **No API key required** — your wallet signature *is* authentication. (One is available at [user.blockrun.ai](https://user.blockrun.ai) for teams who need an invoice instead of a keypair.)
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
 - **Reads *and* acts** — most tools deliver data; `blockrun_polymarket` places real, confirm-gated trades.
@@ -80,11 +83,11 @@ Every other data integration was built for **human developers** — create an ac
 
 |                     | Raw provider APIs                | Typical single-vendor MCP | **BlockRun MCP**                          |
 | ------------------- | -------------------------------- | ------------------------- | ----------------------------------------- |
-| **Setup**           | Account + API key *per vendor*   | Account/key for 1 vendor  | **Wallet auto-created, no signup**        |
-| **Payment**         | Credit card, monthly minimums    | Credit card / vendor plan | **USDC per-call via x402**                |
+| **Setup**           | Account + API key *per vendor*   | Account/key for 1 vendor  | **Wallet auto-created — or one key for everything** |
+| **Payment**         | Credit card, monthly minimums    | Credit card / vendor plan | **USDC per-call via x402, or prepaid credit** |
 | **Data sources**    | One per integration              | One vendor                | **<!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — LLMs, media, markets, chain**|
 | **Place real bets** | Build it yourself                | Rare                      | **Yes — Polymarket CLOB, confirm-gated**  |
-| **Pay-chain**       | —                                | —                         | **Base + Solana**                         |
+| **Pay-chain**       | —                                | —                         | **Solana + Base (or no chain at all)**    |
 | **Agent budgets**   | Manual                           | —                         | **Built-in per-agent delegation**         |
 | **Spend approval**  | —                                | —                         | **Ask-before-pay dialog (MCP elicitation)** |
 | **Generative UI**   | —                                | Rare                      | **Order card + wallet panel (MCP Apps)**  |
@@ -104,11 +107,24 @@ Before BlockRun, Claude can't answer:
 - *"What's the 24h volume on the PEPE/ETH pair on Uniswap?"*
 - *"Polymarket has the Fed holding at 73% — put $2 on it."* ← and now it can **place the trade**, not just read the odds.
 
-After BlockRun, it can. Each query costs fractions of a cent, billed from a local USDC wallet. No subscriptions. No API dashboards. No key rotation.
+After BlockRun, it can. Each query costs fractions of a cent — billed from a local USDC wallet, or from prepaid credit on a [BlockRun account](https://user.blockrun.ai). No subscriptions, no per-vendor signups.
 
 ---
 
 ## Quick Start
+
+### 0. Choose how you pay
+
+|  | **Wallet** *(default)* | **API key** |
+|---|---|---|
+| Setup | Nothing — a wallet is created on first run | Sign in at [user.blockrun.ai](https://user.blockrun.ai), mint a key |
+| Funding | Send USDC (Solana or Base) | Card / wire → prepaid credit |
+| Billing | Per call, settled on-chain, + $0.001 network fee | Post-paid at **exact** usage, no per-call fee, no minimum |
+| Identity | A keypair on your machine | An account with members and an invoice |
+| Best for | Agents, solo devs, anything self-custody | Teams, companies, anyone who can't run a wallet |
+| Trade on Polymarket | ✅ | ❌ — needs a keypair to sign |
+
+Both modes reach the same <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools. You can switch at any time; setting `BLOCKRUN_API_KEY` takes priority over a wallet, and unsetting it hands the wallet back.
 
 ### 1. Install
 
@@ -191,11 +207,11 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 20 | 12,900 |
-| `trading` | 9 | 5,554 |
-| `media` | 7 | 5,436 |
-| `research` | 6 | 3,024 |
-| `chat` | 3 | 1,924 |
+| `full` *(default)* | 20 | 12,991 |
+| `trading` | 9 | 5,605 |
+| `media` | 7 | 5,527 |
+| `research` | 6 | 3,075 |
+| `chat` | 3 | 1,975 |
 
 Running `--profile trading` instead of the default costs **57% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
@@ -229,13 +245,26 @@ For a complete live signal → order-preview presentation, use
 [`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)
 with the [Stanford runbook](docs/stanford-trading-demo.md).
 
-### 3. Fund your wallet
+### 3. Add funds
 
-Run `blockrun_wallet` to see your address. The server pays on **Base** by default — send USDC on Base (Coinbase → USDC → Base network → paste address, or bridge via [bridge.base.org](https://bridge.base.org)).
+**Option A — API key (no wallet).** Sign in at **[user.blockrun.ai](https://user.blockrun.ai)** with Google, then:
+
+1. **[Dashboard → Keys](https://user.blockrun.ai/dashboard/keys)** — mint a key. It looks like `brk_live_…` and is shown once.
+2. **[Dashboard → Credits](https://user.blockrun.ai/dashboard/credits)** — top up by card or wire.
+3. Point the server at it:
+
+```bash
+claude mcp add blockrun -s user -e BLOCKRUN_API_KEY=brk_live_… -- npx -y @blockrun/mcp@latest
+```
+
+   Or `export BLOCKRUN_API_KEY=brk_live_…` in the environment the client launches from.
+4. **[Dashboard → Activity](https://user.blockrun.ai/dashboard/activity)** — every call, priced at exact usage.
+
+Verify with `blockrun_wallet action:"status"` — it should report *"Paying with: BlockRun account API key"*.
+
+**Option B — wallet (no account).** Run `blockrun_wallet` to see your addresses. New installs default to **Solana**; send USDC (SPL) on Solana from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. To pay on Base instead: `blockrun_wallet action:"chain" chain:"base"`, then send USDC on Base. Full instructions: [Fund your wallet](#fund-your-wallet).
 
 **$5 covers** ~525 market queries · ~500 Exa searches · ~250 image generations · ~14 Seedance 1.5-pro clips.
-
-Prefer Solana? See [Fund your wallet](#fund-your-wallet) — two tool calls, no restart.
 
 ### 4. Ask Claude anything
 
@@ -402,27 +431,55 @@ On hosts that support the [MCP Apps extension](https://modelcontextprotocol.io/e
 
 ## Fund your wallet
 
-Run `blockrun_wallet` to see your address. The server pays on **Base** by default.
+> Paying with an API key instead? There is no wallet to fund — top up credit at **[user.blockrun.ai/dashboard/credits](https://user.blockrun.ai/dashboard/credits)** and skip this section.
+
+The server keeps **two** wallets — one on Solana, one on Base — and pays from one at a time. Run `blockrun_wallet` to see both addresses, balances, and which is active.
+
+$5 covers ~525 market queries, ~500 Exa searches, ~250 image generations, or ~14 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.35 each).
+
+### Pay on Solana *(default for new installs)*
+
+```
+blockrun_wallet action:"setup"    # shows the Solana address + funding QR
+```
+
+Send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack.
+
+### Pay on Base
+
+One tool call — no env vars, no file editing, no restart:
+
+```
+blockrun_wallet action:"chain" chain:"base"   # provisions + activates the Base wallet
+blockrun_wallet action:"setup"                # shows the Base address + funding QR
+```
 
 | Method | Steps |
 |--------|-------|
 | Coinbase | Send → USDC → Base network → paste address |
 | Bridge from Ethereum | [bridge.base.org](https://bridge.base.org) |
+| Card | `blockrun_wallet action:"deposit"` — Coinbase Onramp, Base only |
 
-$5 covers ~525 market queries, ~500 Exa searches, ~250 image generations, or ~14 Seedance 1.5-pro clips (5s @ 720p+audio, ~$0.35 each).
+Switch back with `blockrun_wallet action:"chain" chain:"solana"`. Switching only changes which wallet pays; both keep their balances.
 
-### Pay on Solana
+> **Upgrading from an older version?** Nothing moves. The Solana-first default applies only to installs with no wallet and no saved chain preference — if you already have a Base wallet, you stay on Base until you switch.
 
-Two tool calls — no env vars, no file editing, no restart:
+### What each mode reaches
 
-```
-blockrun_wallet action:"chain" chain:"solana"   # provisions + activates the Solana wallet
-blockrun_wallet action:"setup"                  # shows the Solana address + funding QR
-```
+Almost everything now settles on either chain. The exceptions:
 
-Then send USDC (SPL) on the **Solana** network — from Coinbase (pick "Solana"), Phantom, Solflare, or Backpack. Switch back with `blockrun_wallet action:"chain" chain:"base"`. The server keeps both wallets; switching just changes which one pays.
+| Capability | API key | Solana wallet | Base wallet |
+|---|:--:|:--:|:--:|
+| Chat, image, video, music, speech, RealFace | ✅ | ✅ | ✅ |
+| Search, Exa, Surf, markets, RPC, DEX, phone | ✅ | ✅ | ✅ |
+| `blockrun_defi` (DefiLlama) | ✅ | ❌ not served on the Solana gateway | ✅ |
+| `blockrun_modal` (sandboxes) | ✅ | ❌ not configured on the Solana gateway | ✅ |
+| Native Anthropic `claude-*` passthrough | ✅ | ❌ the SDK signs EIP-3009 only | ✅ |
+| Polymarket trading | ❌ needs a keypair | ✅ | ✅ |
+| `blockrun_wallet` balance / deposit / QR | ❌ no wallet | ✅ | ✅ |
+| `blockrun_realface action:"list"` | ❌ indexed by wallet address | ✅ | ✅ |
 
-**Base-only** — these fall back to Base regardless of active chain: `blockrun_music`, `blockrun_speech`, `blockrun_modal`, `blockrun_defi`, paid `blockrun_realface`, paid stock `blockrun_price`, and native Anthropic (`claude-*`) passthrough. In Solana mode they return a "switch to Base" message instead of charging. `blockrun_image` and `blockrun_video` pay on either chain.
+A blocked capability returns a message naming the fix, not a raw error.
 
 ---
 
@@ -477,6 +534,8 @@ One wallet. All sources. No dashboards.
 
 | Variable / File | Default | Effect |
 |---|---|---|
+| `BLOCKRUN_API_KEY` | unset | A BlockRun account key (`brk_live_…`) from [user.blockrun.ai/dashboard/keys](https://user.blockrun.ai/dashboard/keys). **Set → account billing: no wallet is created, read or used, and no chain applies.** Takes priority over every wallet setting below. A malformed value is a startup error, never a silent fall back to the wallet. |
+| `BLOCKRUN_API_BASE_URL` | `https://api.blockrun.ai` | Account API base, for staging. Accepts the OpenAI-style `…/v1` form too. |
 | `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
 | `BLOCKRUN_WALLET_KEY` | unset | Env override of the EVM key — takes precedence over `.session` / `wallet.json` as the Base + Polymarket signer. |
 | `~/.blockrun/.chain` | unset | Explicit chain preference: `base` or `solana`. Written only by `blockrun_wallet action:"chain"` — i.e. only when you choose. |
@@ -496,7 +555,9 @@ One wallet. All sources. No dashboards.
 | `POLYMARKET_BOUNDED_APPROVALS` | unset (unlimited) | Bound pUSD exchange allowances to this many dollars. |
 | `BLOCKRUN_BUILDER_CODE` | unset | Optional Polymarket builder attribution code carried on orders. |
 
-**Chain selection priority** (`src/utils/wallet.ts`): `.chain` preference → `SOLANA_WALLET_KEY` → `.chain-auto` pin → `.solana-session` exists → otherwise Base.
+**Chain selection priority** (`src/utils/wallet.ts`), highest first: `.chain` preference → `SOLANA_WALLET_KEY` → `.chain-auto` pin → non-empty `.solana-session` → Solana key in the OS keychain → **an existing Base wallet keeps Base** → otherwise **Solana** (a fresh install with no wallet at all).
+
+That second-to-last step is the upgrade guard: without it, flipping the default to Solana would move every existing Base-only user onto an empty wallet, and their next paid call would fail on a zero balance with nothing on screen explaining why. None of this applies in account mode — `BLOCKRUN_API_KEY` has no chain.
 
 The server runs a non-blocking npm registry check at startup and prints an `Update available` notice to stderr when a newer `@blockrun/mcp` exists — re-run the install command to upgrade.
 
@@ -526,10 +587,15 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 ## FAQ
 
 **What is BlockRun MCP?**
-An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call in USDC. No accounts, no API keys.
+An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call — from a self-custody wallet or a BlockRun account key.
 
-**Do I need API keys or accounts?**
-No. A wallet is auto-created locally on first run; you fund it with USDC. No signups, no dashboards, no key rotation.
+**Do I need an API key or an account?**
+No. A wallet is auto-created locally on first run; you fund it with USDC and there are no signups, dashboards or keys to rotate.
+
+But you *can* have one. If your team can't hand a wallet to an agent, sign in at **[user.blockrun.ai](https://user.blockrun.ai)**, mint a key at [Dashboard → Keys](https://user.blockrun.ai/dashboard/keys), top up at [Dashboard → Credits](https://user.blockrun.ai/dashboard/credits), and set `BLOCKRUN_API_KEY`. You then get post-paid billing at **exact** usage — no $0.001 per-call minimum, no per-call network fee — and a per-call ledger at [Dashboard → Activity](https://user.blockrun.ai/dashboard/activity). Everything works except the parts that genuinely need a keypair: Polymarket trading, wallet balances/top-ups, and the wallet-indexed `blockrun_realface action:"list"`.
+
+**Which is cheaper?**
+Account billing, slightly — it charges exact metered usage with no per-call minimum and no $0.001 transaction fee. Wallet mode buys you self-custody and Polymarket trading instead.
 
 **How much does it cost?**
 Pay-per-call — fractions of a cent to a few cents. The free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) is $0. $5 of USDC covers thousands of queries.

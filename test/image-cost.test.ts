@@ -15,6 +15,9 @@ const fakeImageClient = {
 };
 mock.module("../src/utils/wallet.js", {
   namedExports: {
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`),
+
     getChain: () => "base",
     getImageClient: () => fakeImageClient,
     getOrCreateWalletKey: () => "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",

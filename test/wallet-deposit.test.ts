@@ -13,6 +13,9 @@ mock.module("../src/utils/onramp.js", {
 });
 mock.module("../src/utils/wallet.js", {
   namedExports: {
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`),
+
     getWalletInfo: async () => ({ address: "0xTESTADDRESS" }),
     getChain: () => "base",
     getUsdcBalance: async () => 0,
