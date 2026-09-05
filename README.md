@@ -538,10 +538,10 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 ## FAQ
 
 **What is BlockRun MCP?**
-An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call in USDC. No accounts, no API keys.
+An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain). Model, media and data requests support account API keys with prepaid credits or x402 wallet payments on Solana or Base. Trading and other wallet operations still require a wallet.
 
 **Do I need API keys or accounts?**
-No. A wallet is auto-created locally on first run; you fund it with USDC. No signups, no dashboards, no key rotation.
+Choose either an account API key or an x402 wallet. For account mode, [register](https://user.blockrun.ai), add credits, and set `BLOCKRUN_API_KEY`; no wallet is created. Wallet mode creates a local wallet that you fund with USDC. See [Account API authentication](#account-api-authentication) for setup and release requirements.
 
 **How much does it cost?**
 Pay-per-call — fractions of a cent to a few cents. The free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) is $0. $5 of USDC covers thousands of queries.
