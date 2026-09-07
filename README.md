@@ -6,7 +6,7 @@
 
 <p>Agents can't sign up for accounts. Agents can't enter credit cards.<br>
 Agents can only sign transactions.<br><br>
-<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call.</strong><br><br>
+<strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call.</strong><br><br>
 <strong>Two ways to pay, same tools:</strong> a self-custody <strong>wallet</strong> (USDC on Solana or Base, no account needed) — or a <strong>BlockRun API key</strong> for teams that can't run wallets. <a href="https://user.blockrun.ai">Sign up at user.blockrun.ai →</a><br><br>
 <em>Read the odds <strong>and</strong> place the bet, from one self-custody wallet.</em></p>
 
@@ -52,7 +52,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
 
 You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana or Base. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai) and bills prepaid credit at exact usage — for teams that can't hand a wallet to an agent. Same 20 tools either way. MIT licensed.
 
@@ -68,7 +68,7 @@ Every other data integration was built for **human developers** — create an ac
 
 **Agents can't do any of that.** BlockRun MCP is built for the agent-first world:
 
-- **One wallet, every source** — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
+- **One wallet, every source** — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools behind a single self-custody wallet. No per-vendor signups.
 - **No API key required** — your wallet signature *is* authentication. (One is available at [user.blockrun.ai](https://user.blockrun.ai) for teams who need an invoice instead of a keypair.)
 - **No credit cards** — pay per request in USDC via [x402](https://x402.org), fractions of a cent each.
 - **Starts free** — the free tier (`blockrun_chat mode:"free"`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_models`) costs $0.
@@ -85,7 +85,7 @@ Every other data integration was built for **human developers** — create an ac
 | ------------------- | -------------------------------- | ------------------------- | ----------------------------------------- |
 | **Setup**           | Account + API key *per vendor*   | Account/key for 1 vendor  | **Wallet auto-created — or one key for everything** |
 | **Payment**         | Credit card, monthly minimums    | Credit card / vendor plan | **USDC per-call via x402, or prepaid credit** |
-| **Data sources**    | One per integration              | One vendor                | **<!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools — LLMs, media, markets, chain**|
+| **Data sources**    | One per integration              | One vendor                | **<!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools — LLMs, media, markets, chain**|
 | **Place real bets** | Build it yourself                | Rare                      | **Yes — Polymarket CLOB, confirm-gated**  |
 | **Pay-chain**       | —                                | —                         | **Solana + Base (or no chain at all)**    |
 | **Agent budgets**   | Manual                           | —                         | **Built-in per-agent delegation**         |
@@ -124,7 +124,7 @@ After BlockRun, it can. Each query costs fractions of a cent — billed from a l
 | Best for | Agents, solo devs, anything self-custody | Teams, companies, anyone who can't run a wallet |
 | Trade on Polymarket | ✅ | ❌ — needs a keypair to sign |
 
-Both modes reach the same <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools. You can switch at any time; setting `BLOCKRUN_API_KEY` takes priority over a wallet, and unsetting it hands the wallet back.
+Both modes reach the same <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools. You can switch at any time; setting `BLOCKRUN_API_KEY` takes priority over a wallet, and unsetting it hands the wallet back.
 
 ### 1. Install
 
@@ -193,7 +193,7 @@ Expose a trimmed tool set so the client loads fewer schemas into context. Pass `
 
 | Profile | Tools |
 |---------|-------|
-| `full` *(default)* | everything (<!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools) |
+| `full` *(default)* | everything (<!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools) |
 | `media` | `wallet` `models` `image` `video` `realface` `music` `speech` |
 | `trading` | `wallet` `price` `dex` `markets` `surf` `defi` `rpc` `polymarket_read` `polymarket` |
 | `research` | `wallet` `models` `chat` `search` `exa` `surf` |
@@ -627,7 +627,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 ## FAQ
 
 **What is BlockRun MCP?**
-An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call — from a self-custody wallet or a BlockRun account key.
+An open-source MCP server that gives Claude and other agents <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions (trading, media, on-chain), paid per call — from a self-custody wallet or a BlockRun account key.
 
 **Do I need an API key or an account?**
 No. A wallet is auto-created locally on first run; you fund it with USDC and there are no signups, dashboards or keys to rotate.
