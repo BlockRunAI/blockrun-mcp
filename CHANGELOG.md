@@ -2,6 +2,61 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.48.1
+
+**The error says whether money moved.** Issue #132 reported `blockrun_markets`
+and `blockrun_price` failing with `API error after payment: 502 / Request failed`
+while the wallet balance never changed. The balance was right and the words were
+wrong, and the words were wrong on three layers at once.
+
+The gateway had said exactly what happened — `Predexon 500: An unexpected error
+occurred (payment NOT charged)` — but `@blockrun/llm` kept only the top-level
+`error` string when it sanitized the body, so the cause and the settlement status
+never reached this server. That is fixed in `@blockrun/llm` 3.15.1 (PR #39), which
+carries the gateway's message through as `detail`; this release depends on it and
+reads the new field, because our own extractor only ever looked at `message` and
+`hint` and would have dropped it a second time. The formatter's "not charged"
+branch, which already existed, finally receives the string it was written for.
+
+**Sports is degraded upstream, and the tool now says so.** All four Predexon
+`sports/*` routes have returned an upstream 500 on every call since 2026-08-04.
+The gateway marks them degraded, withdrew them from discovery, and releases the
+payment nonce on upstream failure, so a call costs nothing and returns nothing.
+This server still advertised them as live. The description, the prediction-markets
+skill and the crypto-data and surf skills now say the routes are degraded and
+point at the canonical `markets` endpoint with a `league` filter instead; a
+`sports/*` 5xx renders the outage, the date, and "nothing was charged" rather
+than "temporary API issue, try again". The routes stay callable, because the
+gateway is the authority on whether Predexon has recovered.
+
+**Equity quotes are not served, and the tool no longer sells them.** Since
+2026-09-05 the gateway answers every `stocks/{market}/price` and `history` call
+(and the `usstock` alias) with a pre-payment 501: "We do not currently serve
+equity prices." This server's description, README and two skills still promised
+paid stock quotes, and on the default Solana chain the Base-only guard fired first
+and told the user to switch chains to pay for a route that cannot succeed. Paid
+stock calls now return the gateway's own answer before the wallet is consulted:
+withdrawn on 2026-09-05, nothing charged, the ticker catalog is still free, and
+who to contact for equity coverage. `formatError` also stops labelling any 501 a
+transient outage; it claims "nothing was charged" only when the 501 arrived
+before payment.
+
+Also shipping, landed on `main` since 0.48.0:
+
+- **`blockrun_image` reads the settled cost on the account rail** instead of an
+  estimate that was high by the transaction fee the rail does not charge, and
+  stops labelling an exact figure "estimated" (#140).
+- **OpenClaw is verified** end-to-end on 2026.8.2 with the published `npx`
+  package, with install notes on spend confirmation per chat surface; the
+  `deepseek/deepseek-v4-pro` rate follows the gateway's repricing (#131).
+- Brand numbers refreshed from the canonical snapshot (#141).
+
+Two adversarial passes (a fresh-context Claude subagent and Codex) reviewed the
+change; every finding was addressed, including the two that mattered: a
+post-payment 501 must not claim nothing was charged, and the sports matcher must
+use the same labelled-status rule as `formatError` so an incidental "501 items"
+in a 4xx body is not sold as the outage.
+
 ## 0.48.0
 
 **A key can live in a file, not just an environment variable.** Write it to

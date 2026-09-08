@@ -1,6 +1,6 @@
 {
   "name": "@blockrun/mcp",
-  "version": "0.48.0",
+  "version": "0.48.1",
   "mcpName": "io.github.BlockRunAI/blockrun-mcp",
   "description": "BlockRun MCP Server - Give your AI agent web search, deep research, prediction markets, and crypto data. Pay per call from a USDC wallet (Solana or Base) or a BlockRun API key.",
   "type": "module",
@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
-    "@blockrun/llm": "^3.14.3",
+    "@blockrun/llm": "^3.15.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@polymarket/builder-relayer-client": "^0.0.10",
     "@polymarket/builder-signing-sdk": "1.0.0",
