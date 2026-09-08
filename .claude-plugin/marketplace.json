@@ -38,7 +38,7 @@
     {
       "name": "crypto-data",
       "source": "./skills/crypto-data",
-      "description": "Use for any crypto data question — token prices, FX, commodities, stocks, OHLC history, DEX pairs, DeFi TVL and yields, on-chain SQL, wallet labels and net worth, social mindshare. Routes across five overlapping tools and says which one to use and which are free."
+      "description": "Use for any crypto data question — token prices, FX, commodities, stock ticker catalog, OHLC history, DEX pairs, DeFi TVL and yields, on-chain SQL, wallet labels and net worth, social mindshare. Routes across five overlapping tools and says which one to use and which are free."
     },
     {
       "name": "surf",

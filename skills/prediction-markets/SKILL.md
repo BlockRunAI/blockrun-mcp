@@ -102,7 +102,7 @@ Current parameter contracts that prevent paid 4xx responses:
 
 | Tier | Price | What |
 |---|---|---|
-| **All endpoints** | $0.0085 | Market data, events, history, candles, orderbooks, trades, leaderboard, sports, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance |
+| **All endpoints** | $0.0085 | Market data, events, history, candles, orderbooks, trades, leaderboard, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance (`sports/*` is degraded upstream — see below; a failed call is not charged) |
 
 Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base treasury.
 
@@ -150,10 +150,10 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 | UMA status + timeline for a market | `polymarket/uma/market/{condition_id}` | 1 |
 | Kalshi markets | `kalshi/markets` | 1 |
 | Kalshi trades / orderbooks | `kalshi/trades`, `kalshi/orderbooks` | 1 |
-| Sports categories | `sports/categories` | 1 |
-| Sports markets by league | `sports/markets` | 1 |
-| One game, all venue outcomes | `sports/markets/{game_id}` | 1 |
-| Equivalent sports outcomes | `sports/outcomes/{predexon_id}` | 1 |
+| ⚠ Sports categories — **degraded upstream since 2026-08-04, do not call** | `sports/categories` | 1 |
+| ⚠ Sports markets by league — degraded, use `markets` + `league=` | `sports/markets` | 1 |
+| ⚠ One game, all venue outcomes — degraded | `sports/markets/{game_id}` | 1 |
+| ⚠ Equivalent sports outcomes — degraded | `sports/outcomes/{predexon_id}` | 1 |
 | Limitless / Opinion / Predict.Fun markets | `limitless/markets`, `opinion/markets`, `predictfun/markets` | 1 |
 | Their historical orderbook snapshots | `limitless/orderbooks`, `opinion/orderbooks`, `predictfun/orderbooks` | 1 |
 | Binance candles / ticks | `binance/candles/{symbol}`, `binance/ticks/{symbol}` | 2 |
@@ -236,9 +236,14 @@ blockrun_markets({ path: "matching-markets/pairs" })
 ### 8. "Who's ahead in tonight's NBA games?"
 
 ```ts
-blockrun_markets({ path: "sports/markets", params: { league: "NBA", status: "open" } })
-blockrun_markets({ path: "sports/markets/GAME_ID" })   // every venue's price for that game
+blockrun_markets({ path: "markets", params: { league: "NBA", status: "open" } })   // canonical cross-venue containers
+blockrun_markets({ path: "outcomes/PREDEXON_ID" })                                 // every venue's listing for one outcome
 ```
+
+Do **not** route this to `sports/*`. All four `sports/*` paths have returned a Predexon 500 on every call since
+2026-08-04 (re-verified 2026-09-08). The gateway still routes them but withdrew them from discovery, and it
+releases the payment on upstream failure — so the call costs nothing and returns nothing. The tool now says so
+in its error instead of "API error after payment"; the routes come back here the day Predexon repairs them.
 
 ### 9. "Is this market about to resolve?"
 

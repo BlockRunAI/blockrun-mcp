@@ -71,7 +71,7 @@ Predexon used to be 7.5× cheaper; since 2026-07-15 both bill the same flat rate
 |---|---|---|
 | Polymarket / Kalshi markets | $0.0085 | $0.0085 (same) |
 | Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
-| Limitless, Opinion, Predict.Fun, sports, UMA | ✅ | ❌ Polymarket + Kalshi only |
+| Limitless, Opinion, Predict.Fun, sports (via `markets?league=`), UMA | ✅ | ❌ Polymarket + Kalshi only |
 
 The only Surf prediction-market endpoint with no Predexon equivalent is `prediction-market/category-metrics`. Everything else is a strictly worse buy. See [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 

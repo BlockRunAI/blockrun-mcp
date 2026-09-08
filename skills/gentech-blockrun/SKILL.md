@@ -66,7 +66,7 @@ blockrun_wallet(action="status")
 ### Pattern 1: Regular Price Checks (FREE)
 
 Crypto, FX and commodity quotes cost **nothing** — `blockrun_price` is free for those
-categories (only `stocks`/`usstock` is paid, at $0.0020). Use them liberally, and do
+categories (`stocks`/`usstock` quotes are not served since 2026-09-05 — the gateway 501s before payment; only the ticker catalog works). Use them liberally, and do
 not pay $0.0085 to `blockrun_surf` for a quote you can get for $0.
 
 ```python
@@ -81,7 +81,7 @@ blockrun_price(action="price", category="crypto", symbol="SOL-USD")
 blockrun_price(action="list", category="crypto", query="sol")
 ```
 
-**Cost:** $0 — crypto/FX/commodity price *and* list calls are both free. Only `category:"stocks"` is paid ($0.0020).
+**Cost:** $0 — crypto/FX/commodity price *and* list calls are both free. `category:"stocks"` price/history currently return 501 (equity quotes withdrawn 2026-09-05, nothing charged); its `list` catalog is free.
 
 ### Pattern 2: Token Research Pipeline (~$0.018)
 
@@ -204,7 +204,7 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_dex` | FREE | unlimited |
 | `blockrun_rpc` | $0.0030 | on-chain reads (batch: $0.002/element + $0.001) |
 | `blockrun_wallet` (status/report) | FREE | before every session |
-| `blockrun_price` (quote) | **FREE** | crypto/FX/commodity; stocks $0.0020 |
+| `blockrun_price` (quote) | **FREE** | crypto/FX/commodity; stocks quotes not served (501 since 2026-09-05) |
 | `blockrun_defi` | $0.0060 | protocol/chain analysis ($0.0020 for prices/*) |
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |

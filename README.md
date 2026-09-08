@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 12.9K tokens, 6% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 6% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
   </picture>
 </div>
 
@@ -207,8 +207,8 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 20 | 12,991 |
-| `trading` | 9 | 5,605 |
+| `full` *(default)* | 20 | 12,992 |
+| `trading` | 9 | 5,606 |
 | `media` | 7 | 5,527 |
 | `research` | 6 | 3,075 |
 | `chat` | 3 | 1,975 |
@@ -331,7 +331,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 / 2.0-fast / 2.0-mini video (not 2.5) | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + ByteDance Seed Audio (prompt-directed) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
-| `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity (free), 12 stock markets (paid) | free or $0.001/call |
+| `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity, plus the ticker catalog for 12 equity markets (equity quotes withdrawn 2026-09-05) | free |
 | `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
 | `blockrun_polymarket_read` | Read-only Polymarket positions/open orders plus executable live order previews, separated for MCP clients that enforce tool safety annotations | free |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |

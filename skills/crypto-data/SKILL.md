@@ -60,7 +60,7 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 | **FX rate / commodity (gold, oil)** | `blockrun_price` category:"fx" or `"commodity"` | **FREE** |
 | **Which symbols exist?** | `blockrun_price` action:"list" | **FREE** |
 | **DEX pair, liquidity, volume, contract** | `blockrun_dex` | **FREE** |
-| Stock quote / history (12 markets) | `blockrun_price` category:"stocks" | $0.0020 |
+| Stock ticker catalog (12 markets) | `blockrun_price` action:"list" category:"stocks" | **FREE** — quotes/history withdrawn 2026-09-05 (501) |
 | Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.0020 |
 | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains | `blockrun_rpc` | $0.0030 |
 | Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.0060 |
@@ -71,11 +71,11 @@ Every price below is what x402 actually **charges** (the base plus the gateway's
 
 **The rule:** a plain crypto price or a DEX pair is free. Only reach for `blockrun_surf` when you need something the free tools genuinely do not have — labels, SQL, social, news, unlocks.
 
-**Prediction markets are never a Surf question.** Surf carries `prediction-market/*` endpoints, but Predexon (`blockrun_markets`) serves the same Polymarket/Kalshi data at the **same $0.0085** — and adds wallet clustering, smart money, sports, UMA, and five more venues that Surf does not have at all. Price is no longer the argument (it was 7.5× cheaper before 2026-07-15); coverage is, and it is decisive. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
+**Prediction markets are never a Surf question.** Surf carries `prediction-market/*` endpoints, but Predexon (`blockrun_markets`) serves the same Polymarket/Kalshi data at the **same $0.0085** — and adds wallet clustering, smart money, sports (via `markets` + `league=` — the dedicated `sports/*` routes are degraded), UMA, and five more venues that Surf does not have at all. Price is no longer the argument (it was 7.5× cheaper before 2026-07-15); coverage is, and it is decisive. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 
 ## blockrun_price — quotes & history (Pyth-backed)
 
-Free for crypto, FX and commodities. $0.0020 only for stocks.
+Free for crypto, FX and commodities. Equity is catalog-only: since 2026-09-05 the gateway answers `stocks` price/history with a pre-payment 501 ("We do not currently serve equity prices") — nothing is charged, retrying does not help, and the user should contact hello@blockrun.ai for equity coverage. `action:"list"` still returns the ticker catalog for free.
 
 ```ts
 blockrun_price({ action: "price",   category: "crypto",    symbol: "BTC-USD" })            // FREE
@@ -84,10 +84,10 @@ blockrun_price({ action: "history", category: "crypto",    symbol: "ETH-USD",
 blockrun_price({ action: "price",   category: "fx",        symbol: "EUR-USD" })            // FREE
 blockrun_price({ action: "price",   category: "commodity", symbol: "XAU-USD" })            // FREE — gold
 blockrun_price({ action: "list",    category: "crypto" })                                  // FREE — discovery
-blockrun_price({ action: "price",   category: "stocks",    symbol: "AAPL", market: "us" }) // $0.0020
+blockrun_price({ action: "list",    category: "stocks",    market: "us", query: "AAPL" })   // FREE — catalog only; price/history → 501
 ```
 
-Stock markets: `us`, `hk`, `jp`, `kr`, `gb`, `de`, `fr`, `nl`, `ie`, `lu`, `cn`, `ca` — `market` is required when `category:"stocks"`.
+Stock markets: `us`, `hk`, `jp`, `kr`, `gb`, `de`, `fr`, `nl`, `ie`, `lu`, `cn`, `ca` — `market` is required when `category:"stocks"`. Do not call `action:"price"` or `"history"` on `stocks`: the gateway does not serve equity quotes right now.
 
 ## blockrun_dex — DEX pairs & liquidity (DexScreener)
 
