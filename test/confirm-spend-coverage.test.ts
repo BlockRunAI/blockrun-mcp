@@ -111,7 +111,13 @@ const CASES: Array<{ tool: string; mod: string; register: string; args: Record<s
   { tool: "blockrun_phone", mod: "phone", register: "registerPhoneTool", args: { path: "phone/lookup", body: { phone: "+14155550100" } } },
   { tool: "blockrun_modal", mod: "modal", register: "registerModalTool", args: { path: "sandbox/create", body: {} } },
   { tool: "blockrun_rpc", mod: "rpc", register: "registerRpcTool", args: { network: "ethereum", method: "eth_blockNumber" } },
-  { tool: "blockrun_price", mod: "price", register: "registerPriceTool", args: { action: "price", category: "stocks", symbol: "AAPL", market: "US" } },
+  // blockrun_price has no reachable paid path while equity is withdrawn: since
+  // 2026-09-05 the gateway 501s stocks price/history before payment, and the
+  // tool now says so before reserveBudget/confirmSpend (see
+  // test/price-equity-preflight.test.ts). The static guard above still holds it
+  // to the reserve+confirm shape, so re-adding this row is all it takes when the
+  // equity route returns:
+  //   { tool: "blockrun_price", mod: "price", register: "registerPriceTool", args: { action: "price", category: "stocks", symbol: "AAPL", market: "US" } },
   { tool: "blockrun_surf", mod: "surf", register: "registerSurfTool", args: { path: "market/price", params: { symbol: "ETH" } } },
   { tool: "blockrun_search", mod: "search", register: "registerSearchTool", args: { body: { query: "fed decision" } } },
   { tool: "blockrun_music", mod: "music", register: "registerMusicTool", args: { prompt: "lofi", instrumental: true, model: "minimax/music-2.5+" } },
