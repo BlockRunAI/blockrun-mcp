@@ -1,7 +1,7 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatError, isPaymentRejectionError } from "../src/utils/errors.js";
+import { extractErrorMessage, formatError, isPaymentRejectionError } from "../src/utils/errors.js";
 
 test("model-unavailable (token360) → steers to a sibling model, not a generic blip", () => {
   const msg = "Video generation failed: API error 500: token360 video submit failed: Model 'seedance-2.0-fast' not found or not active for requested provider";
@@ -113,4 +113,66 @@ test("isPaymentRejectionError matches settlement failures, not outage status tex
   // A non-402 probe response is an outage/validation error, NOT a funding issue.
   assert.equal(isPaymentRejectionError('Unexpected response 500 (expected a 402 payment challenge): {"error":"bad gateway"}'), false);
   assert.equal(isPaymentRejectionError("Unexpected response 425 (expected a 402 payment challenge): liveness not finished"), false);
+});
+
+// --- blockrun-mcp#132: the gateway said "payment NOT charged"; the tool said "after payment" ---
+
+class FakeAPIError extends Error {
+  constructor(message: string, public statusCode: number, public response: unknown) {
+    super(message);
+  }
+}
+
+test("extractErrorMessage surfaces the SDK's `detail` field (blockrun-llm-ts#39)", () => {
+  // Post-#39 sanitizer output: `message` is the gateway's top-level `error`,
+  // `detail` is the gateway's own `message` — the cause + settlement status.
+  const err = new FakeAPIError("API error after payment: 502", 502, {
+    message: "Upstream provider error",
+    detail: "Predexon 500: An unexpected error occurred (payment NOT charged)",
+  });
+  const msg = extractErrorMessage(err);
+  assert.match(msg, /Upstream provider error/);
+  assert.match(msg, /payment NOT charged/);
+  // …and formatError no longer tells the user to fund a wallet that was never charged.
+  const out = formatError(msg);
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("extractErrorMessage does not repeat a detail identical to the message", () => {
+  const err = new FakeAPIError("API error: 400", 400, { message: "Bad request", detail: "Bad request" });
+  assert.equal(extractErrorMessage(err).match(/Bad request/g)?.length, 1);
+});
+
+test("extractErrorMessage is unchanged for the pre-#39 shape (message + code only)", () => {
+  const err = new FakeAPIError("API error after payment: 502", 502, { message: "Request failed", code: "x" });
+  assert.equal(extractErrorMessage(err), "API error after payment: 502\nRequest failed");
+});
+
+test("a 501 is 'not served', not a temporary outage to retry", () => {
+  // Live 2026-09-08: GET /v1/stocks/us/price/AAPL → 501 before any 402.
+  const out = formatError("API error: 501\nUS Stock price is not available");
+  assert.match(out, /does not serve this endpoint/);
+  assert.match(out, /nothing was charged/);
+  assert.doesNotMatch(out, /temporary API issue/);
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("a 501-shaped number inside a message is not read as a status", () => {
+  const out = formatError("API error 500: batch of 501 items rejected");
+  assert.match(out, /temporary API issue/);
+  assert.doesNotMatch(out, /does not serve this endpoint/);
+});
+
+test("a post-payment 501 does not claim nothing was charged", () => {
+  const out = formatError("API error after payment: 501\nRequest failed");
+  assert.match(out, /does not serve this endpoint/);
+  assert.doesNotMatch(out, /nothing was charged/);
+  assert.match(out, /whether this call settled/);
+  assert.doesNotMatch(out, /temporary API issue/);
+});
+
+test("the SDK's post-payment prefix counts as a labelled status", () => {
+  // "API error after payment: 502" — the word before the number is "payment".
+  const out = formatError("API error after payment: 502\nRequest failed");
+  assert.match(out, /temporary API issue/);
 });
