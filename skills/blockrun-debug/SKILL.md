@@ -1,6 +1,6 @@
 ---
 name: blockrun-debug
-description: "Use when the BlockRun MCP server (@blockrun/mcp) is installed but misbehaving — 'Failed to connect', spawn npx ENOENT, blockrun missing from claude mcp list, HTTP 402 / Insufficient balance, fetch failed, video or music timeouts, spend-confirmation dialogs not appearing, or a Polymarket buy/redeem failing after funding. Symptom → cause → fix, plus what never to do."
+description: "Use when the BlockRun MCP server (@blockrun/mcp) is installed but misbehaving — 'Failed to connect', spawn npx ENOENT, blockrun missing from claude mcp list, HTTP 402 / Insufficient balance, fetch failed, video or music timeouts, a 501 'not served' error or 'API error after payment' while the balance never moved, spend-confirmation dialogs not appearing, or a Polymarket buy/redeem failing after funding. Symptom → cause → fix, plus what never to do."
 triggers:
   - "blockrun failed to connect"
   - "blockrun not working"
@@ -10,6 +10,10 @@ triggers:
   - "blockrun 402"
   - "fetch failed blockrun"
   - "video generation timed out"
+  - "api error after payment"
+  - "equity quotes are not served"
+  - "sports markets 500"
+  - "501 not implemented"
   - "polymarket buy failed"
   - "insufficient allowance"
   - "redeem reverts"
@@ -59,6 +63,9 @@ re-added at user scope leaves a duplicate. Then, in the session: `blockrun_walle
 | Startup error "not a valid BlockRun API key" | `BLOCKRUN_API_KEY` is malformed. It deliberately fails loudly rather than silently spending USDC from a wallet instead. | Fix the value or unset it. |
 | `fetch failed` / balance-check timeout | Base RPC blip; the tool rotates through 3 public RPCs | Wait 30 s, retry once. Persistent → a local proxy/firewall is blocking outbound RPC. |
 | `Video`/`Music generation timed out` | Upstream queue. **Not charged** — payment settles on completion only. | Retry, or pick a faster model. Do not retry-loop; jobs take 60–180 s. |
+| `blockrun_price` with `category:"stocks"` / `"usstock"` → `Equity quotes are not served (gateway 501 …)` | The gateway withdrew equity price/history on 2026-09-05 (licensing), and the tool answers before the wallet is consulted. Not an outage. **Not charged.** | Do not retry. `action:"list" category:"stocks" market:"us"` still returns the ticker catalog for free. Equity coverage: hello@blockrun.ai. |
+| `blockrun_markets` on `sports/*` → `Predexon's sports/* routes have returned an upstream 500 … since 2026-08-04` (builds before 0.48.1: `API error after payment: 502 / Request failed` with no balance change) | Upstream Predexon outage since 2026-08-04. The gateway releases the payment on upstream failure, so the old wording asserted a charge that never happened. **Not charged.** | Use `path:"markets"` with `params:{ league:"NBA" }` or `polymarket/events`. Do not retry `sports/*`. Upgrade to ≥ 0.48.1 so the error says this itself. |
+| Any tool → `The gateway does not serve this endpoint (501 Not Implemented)` | The route is withdrawn, not down. Before payment the message ends "nothing was charged"; after payment it tells you to check the ledger instead, because the formatter cannot know whether the nonce was released. | Do not retry. `blockrun_wallet action:"report"` shows whether the call settled. |
 | Model id 404s | Delisted upstream | `blockrun_models` for the live list. |
 | Startup prints `🚨 WALLET PRIVATE KEY DETECTED IN CONFIG FILE` | The key was pasted into `~/.claude.json` (old hosted-auth flow) | Treat the key as compromised: move funds to a new wallet, remove it from the config. |
 | No spend-confirmation dialog with `BLOCKRUN_CONFIRM_SPEND=on` | Client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI) — the server proceeds without asking, by design | Use `BLOCKRUN_BUDGET_LIMIT` / `blockrun_wallet action:"delegate"` as the guard, or use Claude Code / Cursor / VS Code where the dialog renders. |
