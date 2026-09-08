@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateMarketRequest } from "../src/utils/markets-validation.js";
+import { describeDegradedSportsFailure, isDegradedSportsPath, validateMarketRequest } from "../src/utils/markets-validation.js";
 
 test("markets/listings is retired upstream and blocked before payment", () => {
   // Verified live 2026-07-29: settles payment, THEN returns 410 Gone. The
@@ -135,4 +135,44 @@ test("a non-Polymarket candlestick route keeps its own interval format", () => {
   // Binance klines take "1h" natively; applying the digits-only rule there
   // would be a pure over-block.
   assert.equal(validateMarketRequest("binance/candles/BTCUSDT", { interval: "1h" }, undefined), null);
+});
+
+// --- sports/* is degraded upstream (Predexon 500 since 2026-08-04), not charged ---
+
+test("sports paths are recognised, decorated or not", () => {
+  assert.equal(isDegradedSportsPath("sports/categories"), true);
+  assert.equal(isDegradedSportsPath("/sports/markets"), true);
+  assert.equal(isDegradedSportsPath("SPORTS/outcomes/abc"), true);
+  assert.equal(isDegradedSportsPath("sportsbook/markets"), false);
+  assert.equal(isDegradedSportsPath("polymarket/markets"), false);
+});
+
+test("a sports 5xx explains the outage and that nothing was charged", () => {
+  const out = describeDegradedSportsFailure("sports/categories", "API error after payment: 502\nRequest failed");
+  assert.ok(out);
+  assert.match(out, /since 2026-08-04/);
+  assert.match(out, /nothing was charged/);
+  assert.match(out, /"markets"/);
+  assert.doesNotMatch(out, /temporary API issue/);
+});
+
+test("a sports 4xx is the caller's problem and falls through to the generic formatter", () => {
+  assert.equal(describeDegradedSportsFailure("sports/markets", "API error after payment: 400\nMissing league"), null);
+});
+
+test("a non-sports 5xx falls through to the generic formatter", () => {
+  assert.equal(describeDegradedSportsFailure("polymarket/markets", "API error after payment: 502\nRequest failed"), null);
+});
+
+test("sports paths are still routed — no pre-payment block, the gateway decides", () => {
+  assert.equal(validateMarketRequest("sports/categories", undefined, undefined), null);
+});
+
+test("an incidental 5xx-shaped number in a sports 4xx body is not the outage", () => {
+  assert.equal(describeDegradedSportsFailure("sports/markets", "API error after payment: 400\nbatch of 501 items rejected"), null);
+});
+
+test("a percent-encoded sports path gets the same wording as the plain one", () => {
+  assert.equal(isDegradedSportsPath("sports%2Fcategories"), true);
+  assert.equal(isDegradedSportsPath("sports/categories?league=NBA"), true);
 });

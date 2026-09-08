@@ -1,3 +1,4 @@
+import { hasLabelledServerStatus } from "./errors.js";
 import { normalizeClassifyPath } from "./path-safety.js";
 
 /**
@@ -151,4 +152,46 @@ export function validateMarketRequest(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Degraded upstream routes — known to fail, NOT charged
+// ---------------------------------------------------------------------------
+//
+// Every sports/* path has returned a consistent Predexon 500 ("An unexpected
+// error occurred") since 2026-08-04 — re-verified live 2026-09-08 (#132). The
+// gateway marks them `status: "degraded"` in its predexon.ts: still routed for
+// anyone who knows the path, withheld from openapi.json and the x402 manifest,
+// and on an upstream 5xx it releases the payment nonce, so nothing settles.
+//
+// Not a pre-payment block like markets/listings above: that one is a 410 sunset
+// and settles before failing, this one is an upstream bug that may recover, and
+// the gateway is the authority on whether it has. What we own is the wording.
+// The SDK reduced the gateway's "(payment NOT charged)" body to
+// `API error after payment: 502`, which asserts a charge that did not happen.
+export const DEGRADED_SPORTS_SINCE = "2026-08-04";
+
+export function isDegradedSportsPath(path: string): boolean {
+  // Same normalizer as every other rule here (query strip → decode → tab strip),
+  // so "sports%2Fcategories" gets the same wording as the plain path.
+  const clean = normalizeMarketPath(path);
+  return clean === "sports" || clean.startsWith("sports/");
+}
+
+/**
+ * Returns the full user-facing error text for a sports/* upstream failure, or
+ * null when the failure is not the known outage (a 4xx, or a non-sports path)
+ * so the caller falls back to the generic formatter.
+ */
+export function describeDegradedSportsFailure(path: string, message: string): string | null {
+  if (!isDegradedSportsPath(path)) return null;
+  // Same labelled-status rule as formatError, so "501 items" in an upstream
+  // 4xx body cannot be mistaken for the outage and sold as "not charged".
+  if (!hasLabelledServerStatus(message)) return null;
+  return `Error: ${message}\n\n` +
+    `Predexon's sports/* routes have returned an upstream 500 on every call since ${DEGRADED_SPORTS_SINCE}. ` +
+    `The gateway still routes them but no longer advertises them, and it releases the payment when upstream fails — ` +
+    `nothing was charged for this call.\n` +
+    `Retrying will not help until Predexon repairs the route. For sports odds use path "markets" with ` +
+    `params { league: "NBA" } (canonical cross-venue data) or "polymarket/events" instead.`;
 }
