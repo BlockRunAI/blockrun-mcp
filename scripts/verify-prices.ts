@@ -308,7 +308,15 @@ for (const probe of PROBES) {
     solMissing++;
     solTag = "  [sol: not served]";
     solNotes.push(`${probe.label}: Solana ${solLive}`);
-  } else if (typeof live === "number" && liveProduct && solProduct && liveProduct !== solProduct) {
+  } else if (
+    typeof live === "number" && liveProduct && solProduct && liveProduct !== solProduct &&
+    // A different label alone is not a substitution — the Solana gateway writes
+    // longer marketing descriptions for the same route (rpc/ethereum: 40 words
+    // vs Base's 5, same $0.002). Substitution is a different label AND a price
+    // materially ABOVE Base for the same request; a cheaper Solana row falls
+    // through to the deliberate-pricing branch below.
+    solLive - live > Math.max(EPSILON, 0.25 * live)
+  ) {
     // Not a price for the same thing. Found 2026-09-08: sol.blockrun.ai (a
     // separate deployment that can lag Base) did not know azure/sora-2 and
     // quoted "Seedance 2.0 Pro video generation (5s)" at $1.135480 in its
@@ -318,7 +326,8 @@ for (const probe of PROBES) {
     // signing (assertQuoteNearEstimate), nothing can be charged for it. Loud,
     // but not a release blocker for this repo.
     solSubstituted++;
-    solTag = `  [sol: quotes a DIFFERENT product — "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}; blockrun refuses it unsigned]`;
+    const guarded = /^(videos|images)\//.test(probe.path);
+    solTag = `  [sol: quotes a DIFFERENT product — "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}; ${guarded ? "the tool refuses it unsigned" : "NOT guarded — this tool reserves the Base figure"}]`;
     solSubstitutions.push(`${probe.label}: Base sells "${typeof liveQ === "string" ? "" : liveQ.description}" at $${live.toFixed(6)}, Solana sells "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}`);
   } else if (typeof live === "number") {
     const chainDelta = solLive - live;
@@ -378,8 +387,8 @@ console.log(
   `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served, ${solSubstituted} substituted`,
 );
 if (solSubstituted) {
-  console.log("  GATEWAY BUG — Solana quotes a different product than Base for the same request. The tools refuse");
-  console.log("  such a quote before signing (assertQuoteNearEstimate), so no money moves; report it to the gateway owner:");
+  console.log("  GATEWAY BUG — Solana quotes a different, dearer product than Base for the same request. blockrun_video");
+  console.log("  and blockrun_image refuse such a quote before signing (assertQuoteNearEstimate); report it to the gateway owner:");
   for (const n of solSubstitutions) console.log(`    ${n}`);
 }
 if (solCheaper) {
