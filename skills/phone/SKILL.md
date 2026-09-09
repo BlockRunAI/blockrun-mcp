@@ -20,7 +20,7 @@ triggers:
 
 # Phone & Voice
 
-Two namespaces in one tool: **`/v1/phone/*`** for number intelligence + provisioning, **`/v1/voice/*`** for outbound AI calls. Pay per call in USDC.
+Two namespaces in one tool: **`/v1/phone/*`** for number intelligence + provisioning, **`/v1/voice/*`** for outbound AI calls. Pay per call in USDC. Any other path is refused before payment — the tool never reaches routes outside these two.
 
 Phone numbers use **E.164 format** — `+` followed by country code and subscriber digits (US: `+1` + 10 digits; UK: `+44` + 10 digits; etc.). The examples below use `<+E.164-number>` as a placeholder — the LLM should substitute the actual number from the user's request, not copy the literal placeholder.
 
