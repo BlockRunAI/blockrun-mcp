@@ -27,7 +27,7 @@ export function registerRpcTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_rpc",
     {
-      description: `Raw JSON-RPC against 40+ blockchains — one endpoint, no node, no API key. $0.002 per call (batch charges per element).
+      description: `Raw JSON-RPC against 40+ blockchains — one endpoint, no node, no API key. $0.002 base per call plus the gateway's flat tx fee ($0.001 today; we reserve $0.002, so budget/confirm show $0.004 per single call). A JSON-RPC batch charges $0.002 per element plus ONE fee — batch when you can.
 
 Use when you need data the higher-level tools don't cover: contract reads (eth_call), balances, blocks, txs, logs, gas, or any chain-native RPC method.
 
@@ -40,7 +40,7 @@ Examples:
   blockrun_rpc({ network: "bitcoin", method: "getblockchaininfo" })
   blockrun_rpc({ network: "ethereum", body: [{jsonrpc:"2.0",id:1,method:"eth_blockNumber"},{...}] })  // batch
 
-Prefer blockrun_price (free quotes), blockrun_dex (free DEX data), or blockrun_surf (labeled/aggregated data) when they cover the question — this tool is for raw chain access.`,
+Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they cover the question — this tool is for raw chain access.`,
       annotations: TOOL_ANNOTATIONS.publicOrExternalWrite,
       inputSchema: {
         network: z.string().describe("Chain key, e.g. 'ethereum', 'base', 'solana', 'bitcoin', 'arbitrum', 'polygon'. Unknown slugs pass through to the Tatum gateway."),

@@ -1,23 +1,37 @@
 // src/tools/surf.ts
 //
-// Surf (asksurf.ai) — unified crypto data API. Path-based passthrough so the
-// 83-endpoint catalog stays out of the tool description (it lives in the surf
-// skill instead). Adding new Surf endpoints does not require an MCP release.
+// Surf (asksurf.ai) — RETIRED upstream on 2026-09-06.
 //
-// Mirrors the markets.ts pattern. Method is inferred: pass `body` for POST
-// (onchain/query, onchain/sql), otherwise GET with `params`.
+// Every /v1/surf/* path on blockrun.ai now answers HTTP 410
+// {"error":{"code":"endpoint_retired"},"retired_on":"2026-09-06","alternatives":[…]}
+// and sol.blockrun.ai answers 404; /api/openapi contains no "surf" at all
+// (verified live 2026-09-08 with unauthenticated GETs — a 410 is free). There
+// is no 402 on any Surf path, so a payment cannot be made through it.
 //
-// Settlement: each call settles directly to Surf's Base treasury. BlockRun
-// forwards the request server-side using the BlockRun-held SURF_API_KEY.
+// What this file does now: keep the tool registered under the same name (the
+// 20-tool count and two profiles are pinned by README/brand-numbers and tests)
+// and answer every call with the retirement notice BEFORE reserveBudget /
+// confirmSpend, so no reservation is taken and no spend dialog is shown for a
+// charge that cannot happen. Same precedent as price.ts's equityNotServedMessage.
+//
+// The notice has to be built here: @blockrun/llm's sanitizeErrorResponse keeps
+// `body.error` only when it is a string, and the gateway nests the reason under
+// `error.message`, so what reaches the user otherwise is "API error: 410 — API
+// request failed" with the date and alternatives dropped.
+//
+// The money path below the short-circuit is left intact on purpose: the static
+// guard in test/confirm-spend-coverage.test.ts requires every tool that
+// reserves budget to also confirm, and if the gateway ever revives the namespace
+// re-enabling is a one-line delete rather than a re-implementation.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
+import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost, rawGet } from "../utils/raw-call.js";
+import { rawPost, rawGet } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -27,60 +41,52 @@ type SurfClient = {
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
 };
 
-// Flat per-call price CHARGED for every Surf endpoint: $0.0075 base + $0.002
-// flat transaction fee. Keep in step with SURF_TIER_*_PRICE in the gateway's
-// src/lib/surf.ts, and note that constant is the BASE — not what a caller pays.
+// The RESERVE for a Surf call if the namespace ever serves again: $0.0075 base
+// + the $0.002 flat tx fee we reserve (the gateway's live fee is $0.001 — see
+// utils/tx-fee.ts OBSERVED_GATEWAY_TX_FEE_USD; the reserve stays conservative on
+// purpose). Unreachable today — the retirement short-circuit returns first — but
+// the constant is pinned by test/surf.test.ts and must not be lowered.
 export const SURF_PRICE_USD = 0.0095;
 
-// Exported for unit tests.
-//
-// Surf is a FLAT $0.0095/call — every endpoint, every former tier (gateway change
-// 2026-07-15: one network-uniform price across Surf and Predexon). The old T1/T2/T3
-// tier sets are gone: they no longer affect price, and keeping them here only
-// invited the reader to believe otherwise. Verified live across every tier —
-// market/price, wallet/detail and onchain/sql all quote 9500 micro.
-//
-// This estimator feeds the BUDGET GATE, so it must never under-quote — and the
-// number to quote is what x402 CHARGES, not the 402's JSON `price` field. That
-// field reports the base ($0.0075); the charge is in `maxAmountRequired` inside
-// the base64 `payment-required` header, and every /v1/surf/* route decodes to
-// 9500 micro = $0.0095 (verified live 2026-07-15).
-//
-// This has now been wrong twice in the same direction, both times by trusting a
-// number that looked authoritative: first the stale $0.001/$0.005/$0.02 tiers
-// after the gateway went flat, then the $0.0075 base after it was mistaken for
-// the price. Read the header.
+// Exported for unit tests. Flat since 2026-07-15; feeds the BUDGET GATE, so it
+// must never under-quote. Read the `payment-required` header, not the 402 body's
+// `price` (that field is the base). Kept as-is under the retirement: the gate is
+// the last line of defence if the route comes back priced differently.
 export function estimateSurfCost(_path: string): number {
   return SURF_PRICE_USD;
+}
+
+/** The date the gateway reports in `retired_on` for every /v1/surf/* path. */
+export const SURF_RETIRED_ON = "2026-09-06";
+
+/**
+ * What the gateway itself answers for any Surf path since 2026-09-06 (HTTP 410
+ * `endpoint_retired`, verified live 2026-09-08), said before the wallet is
+ * consulted. The alternatives are the gateway's own list, translated to the
+ * tools that serve them. Exported for the test; nothing here touches the network.
+ */
+export function surfRetiredMessage(path: string): string {
+  return `Error: blockrun_surf is retired — the gateway answers every /v1/surf/* path (here: '${path}') with 410 endpoint_retired since ${SURF_RETIRED_ON}.\n\n` +
+    `This is not an outage and retrying will not help. Nothing was charged: no budget was reserved and the wallet was never asked to sign.\n` +
+    `Where to go instead (the gateway's own alternatives):\n` +
+    `- crypto, FX and commodity prices → blockrun_price (free)\n` +
+    `- protocol TVL, chain TVL, yields → blockrun_defi\n` +
+    `- prediction markets (Polymarket, Kalshi, Limitless, Opinion, Predict.Fun) → blockrun_markets\n` +
+    `- DEX pairs, liquidity, volume → blockrun_dex (free); raw chain reads → blockrun_rpc\n` +
+    `On-chain SQL, wallet labels / net worth, CEX order books and social mindshare have no BlockRun replacement yet — ` +
+    `the gateway says a new vendor is pending and will be listed at https://blockrun.ai/api/openapi when it ships.`;
 }
 
 export function registerSurfTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_surf",
     {
-      description: `Unified crypto data via Surf (asksurf.ai) — 83 endpoints, one API.
-
-Coverage: CEX market data (16 exchanges), on-chain SQL across 13 chains, 100M+ labeled wallets, prediction markets (Polymarket + Kalshi), social mindshare / CT intelligence, news, and unified search.
-
-Pricing (settled in USDC to Surf's Base treasury):
-- Flat $0.0095/call — every endpoint, including raw on-chain SQL. No tiers. ($0.0075 base + $0.002 tx fee.)
-
-Common paths (full 83-endpoint catalog in the surf skill):
-- market/price?symbol=BTC
-- exchange/price?pair=BTC-USDT
-- prediction-market/polymarket/ranking
-- search/web?q=ethereum+pectra+upgrade
-- wallet/detail?address=0x...
-- social/mindshare?q=ethereum&interval=1d
-- onchain/sql        + body:{ sql: "SELECT ..." }
-
-Method is auto-routed: pass 'body' for POST endpoints; otherwise GET with 'params'.
-Each Surf endpoint pre-validates required params before settling — you get a 400 (not a charge) if a required field is missing. Browse the full catalog: https://blockrun.ai/marketplace/surf`,
+      description: `RETIRED ${SURF_RETIRED_ON} — the gateway answers every Surf (asksurf.ai) path with 410 endpoint_retired. Calling this returns that notice; nothing is charged. Use instead: blockrun_price (crypto/FX/commodity quotes, free), blockrun_defi (TVL, yields), blockrun_markets (Polymarket, Kalshi and other venues), blockrun_dex (DEX pairs, free), blockrun_rpc (raw chain reads). On-chain SQL, wallet labels and social mindshare have no BlockRun replacement yet.`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
-        path: z.string().describe("Endpoint path under /v1/surf/, e.g. 'market/price', 'prediction-market/polymarket/ranking', 'wallet/detail', 'onchain/sql'"),
-        params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET endpoints, e.g. { symbol: 'BTC' } or { address: '0x...', chain: 'ethereum' }"),
-        body: z.any().optional().describe("JSON body for POST endpoints. Provide for: onchain/query, onchain/sql. When set, the call is sent as POST; otherwise GET with params."),
+        path: z.string().describe("Former /v1/surf/ endpoint path. Every path returns the retirement notice."),
+        params: z.record(z.string(), z.string()).optional().describe("Ignored — retired."),
+        body: z.any().optional().describe("Ignored — retired."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
@@ -91,6 +97,12 @@ Each Surf endpoint pre-validates required params before settling — you get a 4
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
+        // Retired upstream (410 on every path, no 402 is ever issued). Say so
+        // BEFORE estimate/reserve/confirm: nothing to reserve, nothing to approve.
+        return { content: [{ type: "text", text: surfRetiredMessage(cleanPath) }], isError: true };
+
+        // ---- Money path, unreachable while the namespace is retired ---------
+        // eslint-disable-next-line no-unreachable
         const estimatedCost = estimateSurfCost(cleanPath);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {

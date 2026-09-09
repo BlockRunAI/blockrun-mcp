@@ -147,13 +147,73 @@ test("sports paths are recognised, decorated or not", () => {
   assert.equal(isDegradedSportsPath("polymarket/markets"), false);
 });
 
-test("a sports 5xx explains the outage and that nothing was charged", () => {
-  const out = describeDegradedSportsFailure("sports/categories", "API error after payment: 502\nRequest failed");
+// The gateway's release branch (pm route.ts, `!upstreamResponse.ok && status>=500`)
+// is the ONLY path that releases the payment nonce, and it says so in the body:
+// "(payment NOT charged)". @blockrun/llm 3.15.1 carries that through as `detail`,
+// so when the evidence exists it is IN the message. Only then may we assert it.
+const RELEASE_BRANCH_502 = "API error after payment: 502\nUpstream provider error\nPredexon 500: An unexpected error occurred (payment NOT charged)";
+
+test("a sports 5xx that carries the gateway's release evidence says nothing was charged", () => {
+  const out = describeDegradedSportsFailure("sports/categories", RELEASE_BRANCH_502);
   assert.ok(out);
   assert.match(out, /since 2026-08-04/);
   assert.match(out, /nothing was charged/);
-  assert.match(out, /"markets"/);
+  assert.doesNotMatch(out, /whether this call settled/);
   assert.doesNotMatch(out, /temporary API issue/);
+});
+
+test("the sports remedy points at routes that 402 today, and never at `league`", () => {
+  // Verified live 2026-09-08 (unauthenticated GET, no payment header):
+  //   /v1/pm/markets?league=NBA   → 404 Unknown Predexon endpoint (removed 2026-08-04)
+  //   /v1/pm/outcomes/x           → 404
+  //   /v1/pm/markets/search?q=NBA → 402  (the only canonical-layer survivor)
+  //   /v1/pm/polymarket/events    → 402  (free-text filter is `search`, not `league`)
+  //   /v1/pm/kalshi/markets       → 402
+  // No live /v1/pm route accepts a `league` param. 0.48.1 shipped a remedy that
+  // 404'd on first use; this pins the replacement.
+  const out = describeDegradedSportsFailure("sports/markets", RELEASE_BRANCH_502) ?? "";
+  assert.match(out, /markets\/search/);
+  assert.match(out, /\{ q: "NBA" \}/);
+  assert.match(out, /polymarket\/events/);
+  assert.match(out, /\{ search: "NBA" \}/);
+  assert.doesNotMatch(out, /league/);
+  assert.doesNotMatch(out, /path "markets" /, "bare `markets` was removed upstream 2026-08-04 and 404s");
+  assert.doesNotMatch(out, /outcomes\//, "outcomes/:id was removed upstream 2026-08-04 and 404s");
+});
+
+test("a sports 5xx WITHOUT the gateway's evidence hedges instead of asserting no charge", () => {
+  // Two real shapes the status-range gate alone cannot tell from the release
+  // branch: the gateway's own catch-all (500 "Internal server error", which
+  // deliberately does NOT release because settle ran in the same try) and a
+  // Vercel 504 after settle (text/plain, so the SDK reduces it to "Request
+  // failed"). Both are the ambiguous case the gateway itself refuses to call
+  // uncharged; so must we. Same hedge formatError uses for a post-payment 501.
+  for (const message of [
+    "API error after payment: 500\nInternal server error",
+    "API error after payment: 504\nRequest failed",
+    "API error after payment: 502\nRequest failed", // pre-3.15.1 SDK shape: evidence stripped, so unknown
+  ]) {
+    const out = describeDegradedSportsFailure("sports/categories", message);
+    assert.ok(out, `${JSON.stringify(message)} is still the sports outage and should get the sports wording`);
+    assert.match(out, /since 2026-08-04/);
+    assert.match(out, /blockrun_wallet action:"report" to see whether this call settled/);
+    assert.doesNotMatch(out, /nothing was charged/, `${JSON.stringify(message)} carries no proof of release`);
+    assert.match(out, /markets\/search/, "the steer is the same either way");
+    assert.doesNotMatch(out, /temporary API issue/);
+  }
+});
+
+test("each of the gateway's uncharged phrasings is accepted as evidence, case-insensitively", () => {
+  for (const evidence of [
+    "payment NOT charged",
+    "not charged",
+    "No charge was made",
+    "no payment was made",
+    "Upstream provider error", // the 502 body the release branch emits even when detail is dropped
+  ]) {
+    const out = describeDegradedSportsFailure("sports/markets/abc", `API error after payment: 502\n${evidence}`) ?? "";
+    assert.match(out, /nothing was charged/, `${JSON.stringify(evidence)} is the gateway's own release wording`);
+  }
 });
 
 test("a sports 4xx is the caller's problem and falls through to the generic formatter", () => {

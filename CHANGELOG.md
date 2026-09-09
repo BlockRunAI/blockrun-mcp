@@ -24,10 +24,70 @@ The gateway marks them degraded, withdrew them from discovery, and releases the
 payment nonce on upstream failure, so a call costs nothing and returns nothing.
 This server still advertised them as live. The description, the prediction-markets
 skill and the crypto-data and surf skills now say the routes are degraded and
-point at the canonical `markets` endpoint with a `league` filter instead; a
-`sports/*` 5xx renders the outage, the date, and "nothing was charged" rather
-than "temporary API issue, try again". The routes stay callable, because the
-gateway is the authority on whether Predexon has recovered.
+point at `markets/search` with `{ q: "NBA" }` or `polymarket/events` with
+`{ search: "NBA" }` instead; a `sports/*` 5xx renders the outage, the date, and
+whether money moved rather than "temporary API issue, try again". The routes
+stay callable, because the gateway is the authority on whether Predexon has
+recovered.
+
+An earlier draft of this release steered users to the canonical `markets` route
+with a `league` filter. That route, `outcomes/:predexon_id` and
+`matching-markets` were removed upstream on 2026-08-04 — they answer 404
+"Unknown Predexon endpoint" before payment — and no live `/v1/pm` route accepts
+`league` at all, so the headline remedy would have failed on first use across
+eight surfaces. Every one of them now names the two routes that quote a 402
+today (probed unauthenticated, both gateways), and the dead routes are gone from
+the tool description and the prediction-markets skill.
+
+**"Nothing was charged" now needs the gateway's word for it.** The sports
+formatter asserted no charge from a 5xx status range alone. Only the gateway's
+upstream-failure branch releases the payment nonce, and only that branch writes
+"(payment NOT charged)" into the body; its catch-all 500 deliberately does not
+release, because settlement ran in the same try, and a 504 after settlement
+carries no body at all. So the sentence is now gated on that evidence — "not
+charged", "no charge was made", "no payment was made", or the 502's "Upstream
+provider error" — and any other labelled 5xx on a sports path keeps the outage
+explanation and the steer but says to check `blockrun_wallet action:"report"`
+instead, the same hedge a post-payment 501 already gets. Today every wallet-rail
+sports failure comes from the release branch, so the wording changes for nobody;
+it would have been wrong on exactly the day Predexon recovers and a settle-side
+error follows.
+
+**Surf is retired, and the tool says so before the wallet hears about it.** The
+gateway has answered every `/v1/surf/*` path with HTTP 410 `endpoint_retired`
+since 2026-09-06 (`retired_on` in the body; `sol.blockrun.ai` 404s; `/api/openapi`
+lists no Surf route). No 402 is ever issued, so no payment could have been made,
+but the tool still reserved $0.0095 and — with `BLOCKRUN_CONFIRM_SPEND=on` —
+asked the user to approve a charge for a route that cannot succeed, then let the
+SDK reduce the gateway's dated, reasoned notice to `API error: 410 — API request
+failed`. `blockrun_surf` now returns the retirement, the date, that nothing was
+charged, and the gateway's own alternatives mapped to tools (`blockrun_price`,
+`blockrun_defi`, `blockrun_markets`, `blockrun_dex`, `blockrun_rpc`) before any
+budget is reserved. It stays registered so the tool count and the `trading` /
+`research` profiles are stable, with a description a quarter the size of the
+catalog pitch it replaces. README, the surf skill (now a map from each former
+Surf capability to where it lives — and an honest list of what has no BlockRun
+source yet: on-chain SQL, cross-chain wallet labels, CEX books, social), the
+crypto-data, gentech and debug skills stop selling 83 endpoints at $0.0095.
+
+**Prices say base plus fee, once, everywhere.** `blockrun_markets`, `blockrun_exa`
+and `blockrun_defi` hand-typed a "charged" figure in their descriptions that was
+the reserve ($0.002 fee), not the charge; the live `payment-required` header
+decodes to base + $0.001 on Base and base alone on Solana, and README disagreed
+with itself about which it was quoting. `blockrun_rpc` went the other way and
+quoted the bare $0.002 base while its own reserve and confirm dialog show $0.004.
+Every description and README row now states the base and says the gateway adds
+its flat network fee ($0.001 today; $0.002 reserved; the 402 header carries the
+exact amount). The reserve constants are untouched — they are the conservative
+gate and were right.
+
+**The registry manifest told Solana users to put a bs58 key in the EVM slot.**
+`server.template.json`, stamped into the MCP registry's `server.json` at publish,
+described `BLOCKRUN_WALLET_KEY` as "hex for Base, bs58 for Solana". The code reads
+Solana keys only from `SOLANA_WALLET_KEY`; a bs58 key in `BLOCKRUN_WALLET_KEY`
+selects Base and dies in viem's hex parser on the first paid call. The manifest
+now describes `BLOCKRUN_WALLET_KEY` as the 0x-hex EVM key and Polymarket signer,
+and lists `SOLANA_WALLET_KEY` and `BLOCKRUN_API_KEY` alongside it.
 
 **Equity quotes are not served, and the tool no longer sells them.** Since
 2026-09-05 the gateway answers every `stocks/{market}/price` and `history` call

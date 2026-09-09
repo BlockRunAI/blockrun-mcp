@@ -199,6 +199,8 @@ Expose a trimmed tool set so the client loads fewer schemas into context. Pass `
 | `research` | `wallet` `models` `chat` `search` `exa` `surf` |
 | `chat` | `wallet` `models` `chat` |
 
+`surf` is retired upstream (the gateway has answered every Surf path with 410 since 2026-09-06). It stays in `trading` and `research` so the tool count is stable; calling it returns a free notice pointing at `blockrun_price`, `blockrun_defi`, `blockrun_markets` and `blockrun_dex`.
+
 ```bash
 claude mcp add blockrun-trading -s user -- npx -y @blockrun/mcp@latest --profile trading
 
@@ -318,7 +320,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 
 > **Claude:** According to Polymarket, the market puts a **73% probability** on the Fed holding rates steady, 24% on a 25bp cut, 3% on a hike. 24h volume: $2.1M. The "Hold" contract last traded at $0.73.
 >
-> *(via `blockrun_markets` · cost: $0.0095)*
+> *(via `blockrun_markets` · cost: $0.0085 on Base — $0.0075 + the $0.001 network fee)*
 
 ---
 
@@ -341,19 +343,21 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + ByteDance Seed Audio (prompt-directed) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |
 | `blockrun_price` | Pyth-backed realtime + OHLC — crypto / FX / commodity, plus the ticker catalog for 12 equity markets (equity quotes withdrawn 2026-09-05) | free |
-| `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0095/query |
+| `blockrun_markets` | Polymarket (markets, candles, trades, orderbooks, leaderboards, smart-wallet PnL/clusters, UMA oracle), Kalshi, Limitless, Opinion, Predict.Fun, dFlow, Binance Futures, cross-platform search | $0.0075 + fee/query |
 | `blockrun_polymarket_read` | Read-only Polymarket positions/open orders plus executable live order previews, separated for MCP clients that enforce tool safety annotations | free |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
-| `blockrun_surf` | Surf (asksurf.ai) — 83 endpoints: CEX data, on-chain SQL (13 chains, 80+ tables), 100M+ labeled wallets, Polymarket + Kalshi, social mindshare, news, Surf-1.5 chat with citations | $0.0095/call |
-| `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01/query |
+| `blockrun_surf` | **Retired 2026-09-06** — the gateway answers every Surf (asksurf.ai) path with 410. The tool returns that notice and where to go instead: `blockrun_price`, `blockrun_defi`, `blockrun_markets`, `blockrun_dex`. On-chain SQL, wallet labels and social mindshare have no replacement yet | free (nothing to charge) |
+| `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01 + fee/query |
 | `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
-| `blockrun_rpc` | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, …) via Tatum | $0.002/call |
-| `blockrun_defi` | DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices | $0.001–0.005/call |
+| `blockrun_rpc` | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, …) via Tatum | $0.002 + fee/call |
+| `blockrun_defi` | DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices | $0.001–0.005 + fee/call |
 | `blockrun_modal` | Isolated code execution in a BlockRun-hosted Modal sandbox — disposable container, optional GPU (T4 → H100) | $0.01 create; $0.001/op |
 | `blockrun_phone` | Outbound AI voice calls (Bland) + wallet-owned US/CA numbers (Twilio), carrier + fraud lookups | $0.54/call; $5/number |
 | `blockrun_models` | Live catalogue of every LLM/image/video/music model + pricing | free |
 | `blockrun_wallet` | Balance, spending, agent budgets, setup QR, chain switch | free |
+
+Flat data prices are the **base**. In wallet mode the gateway adds its flat network fee on top — $0.001 per call on Base today, and the Solana gateway quotes the base alone; the account rail charges no fee. The exact figure is in the `payment-required` header of any unpaid request, which is free to ask for. The server reserves $0.002 for the fee against the budget cap, so `blockrun_wallet action:"report"` and the spend-confirmation dialog run $0.001 high per call by design.
 
 ---
 
@@ -361,13 +365,13 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 
 1. **Prediction-market consensus** → *"Polymarket's odds for the next Fed decision?"* — `blockrun_markets`
 2. **Signal → trade** *(the full loop, self-custody)* → *"If 'hold' is under 30%, put $2 on Yes."* — `blockrun_markets` reads, `blockrun_polymarket action:"buy"` places. Gasless, confirm-gated.
-3. **On-chain forensics** → *"This wallet — what's it labeled, what does it hold, when did it whale up?"* — `blockrun_surf`
+3. **Smart-money forensics** → *"This Polymarket whale — who are they, which wallets are theirs, what's their P&L?"* — `blockrun_markets` `polymarket/wallet/identity/:wallet` + `.../cluster`
 4. **Cited research** → *"5 most-cited papers on speculative decoding, last 90 days."* — `blockrun_exa`
 5. **Image generation with on-image text** → *"Poster announcing GPT-5.5, retro-futuristic, headline 'NOW LIVE'."* — `blockrun_image`
 6. **Give your agent a voice** → *"Speak this with the sarah voice."* — `blockrun_speech`
 7. **Voice phone-out** → *"Call +1-415-… and confirm Friday at 3pm."* — `blockrun_phone`
 8. **Multi-agent research, capped** → *"Spawn 3 agents on competing L1 narratives. Cap each at $0.50."* — `blockrun_wallet delegate × 3`
-9. **Cross-chain SQL** → *"Top 10 tokens by DEX volume on Base, last 24h."* — `blockrun_surf` `onchain/sql`
+9. **Raw chain reads, 40 chains** → *"Latest Base block, and this contract's USDC balance."* — `blockrun_rpc`
 
 ---
 
@@ -496,7 +500,7 @@ Almost everything now settles on either chain. The exceptions:
 | Capability | API key | Solana wallet | Base wallet |
 |---|:--:|:--:|:--:|
 | Chat, image, video, music, speech, RealFace | ✅ | ✅ | ✅ |
-| Search, Exa, Surf, markets, RPC, DEX, phone | ✅ | ✅ | ✅ |
+| Search, Exa, markets, RPC, DEX, phone | ✅ | ✅ | ✅ |
 | `blockrun_defi` (DefiLlama) | ✅ | ❌ not served on the Solana gateway | ✅ |
 | `blockrun_modal` (sandboxes) | ✅ | ❌ not configured on the Solana gateway | ✅ |
 | Native Anthropic `claude-*` passthrough | ✅ | ❌ the SDK signs EIP-3009 only | ✅ |
@@ -528,7 +532,7 @@ cap trips early rather than late. The invoice is always
 
 - **CRITICAL: On any payment / balance / 402 error, call `blockrun_wallet` *first*** to check status, then `action:"setup"` for funding. Don't retry the failing tool blindly — the wallet is empty.
 - **CRITICAL: `blockrun_polymarket` moves REAL user funds** (pUSD on Polygon), separate from the x402 API budget. Never `buy`/`sell`/`redeem` with `confirm:true` unless the user explicitly approved that exact trade; without `confirm` you get a safe dry-run. Discover markets/token IDs with `blockrun_markets` first.
-- **CRITICAL: `blockrun_surf`'s 84-endpoint catalog is in [`skills/surf/SKILL.md`](skills/surf/SKILL.md); `blockrun_markets`' full endpoint list is in its tool description** (worked examples in [`skills/prediction-markets/SKILL.md`](skills/prediction-markets/SKILL.md); live-demo workflow in [`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)). Browse those before guessing paths.
+- **CRITICAL: `blockrun_surf` is retired (gateway 410 on every path since 2026-09-06) — do not call it for data.** It returns a free notice naming the replacement tool; [`skills/surf/SKILL.md`](skills/surf/SKILL.md) maps each former Surf capability to where it lives now. **`blockrun_markets`' full endpoint list is in its tool description** (worked examples in [`skills/prediction-markets/SKILL.md`](skills/prediction-markets/SKILL.md); live-demo workflow in [`skills/signal-to-trade-demo/SKILL.md`](skills/signal-to-trade-demo/SKILL.md)). Browse those before guessing paths.
 - **CRITICAL: `blockrun_music` and `blockrun_video` are payment-on-completion async.** Failures / client timeouts do NOT charge. Don't retry-loop — they may take 60–180s.
 - **CRITICAL: Before spawning child agents, allocate per-agent budget:** `blockrun_wallet action:"delegate" agent_id:"X" agent_limit:1.00`, then pass `agent_id:"X"` to every downstream call. The child is auto-blocked at zero.
 - **Free tier first for drafts:** `blockrun_chat mode:"free"` (NVIDIA), `blockrun_dex`, `blockrun_price` (crypto/FX/commodity), and `blockrun_models` are $0.
@@ -557,9 +561,9 @@ Prompts and a worked example are in [`skills/image-prompting/SKILL.md`](skills/i
 
 | | Direct APIs | BlockRun |
 |---|---|---|
-| Exa | Sign up, $20/mo minimum | $0.01/call, no subscription |
-| Polymarket | Undocumented, rate-limited | $0.0095/call, clean JSON — plus you can **trade** |
-| Surf (asksurf.ai) | Account + monthly plan | $0.0095/call, no account, 83 endpoints |
+| Exa | Sign up, $20/mo minimum | $0.011/call on Base ($0.01 + fee), no subscription |
+| Polymarket | Undocumented, rate-limited | $0.0085/call on Base ($0.0075 + fee), clean JSON — plus you can **trade** |
+| DefiLlama | Free tier, rate-limited, no SLA | $0.006/call on Base ($0.005 + fee), same JSON, one wallet |
 | Multiple sources | 3 accounts, 3 API keys, 3 billing pages | **1 wallet** |
 
 One wallet. All sources. No dashboards.
@@ -620,7 +624,8 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
 - **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
 - **`blockrun_price` says `Equity quotes are not served (gateway 501 …)`** → Equity price/history were withdrawn on 2026-09-05; not an outage, and **nothing was charged** (the wallet is never asked to sign). The ticker catalog (`action:"list" category:"stocks"`) is still free. Equity coverage: hello@blockrun.ai.
-- **`blockrun_markets` on `sports/*` fails — before 0.48.1 as `API error after payment: 502` with no balance change** → Predexon's `sports/*` routes have been down upstream since 2026-08-04; the gateway releases the payment, so **nothing was charged**. Use `path:"markets"` with `params:{ league: "NBA" }` instead, and upgrade to ≥ 0.48.1 so the error says so itself.
+- **`blockrun_markets` on `sports/*` fails — before 0.48.1 as `API error after payment: 502` with no balance change** → Predexon's `sports/*` routes have been down upstream since 2026-08-04; the gateway releases the payment on that upstream 500, so the call is **not charged** (the error says so when the gateway's "payment NOT charged" confirmation is in the response; otherwise it tells you to check `blockrun_wallet action:"report"`). For sports odds use `path:"markets/search"` with `params:{ q: "NBA" }`, or `polymarket/events` with `params:{ search: "NBA" }` — the bare `markets` route and its `league` filter were removed upstream on 2026-08-04 and 404 before payment. Upgrade to ≥ 0.48.1 so the error says all of this itself.
+- **`blockrun_surf` says `retired … 410 endpoint_retired since 2026-09-06`** → Surf (asksurf.ai) is gone from the gateway; not an outage, **nothing was charged** (no budget is reserved, the wallet is never asked to sign). Prices → `blockrun_price` (free), TVL/yields → `blockrun_defi`, prediction markets → `blockrun_markets`, DEX pairs → `blockrun_dex` (free). On-chain SQL, wallet labels and social mindshare have no replacement yet.
 - **No spend-confirmation dialog although `BLOCKRUN_CONFIRM_SPEND=on`** → Your client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI); the server proceeds without asking by design. Use `BLOCKRUN_BUDGET_LIMIT` as the guard, or a client from the [support table](#%EF%B8%8F-human-in-the-loop-payments).
 - **Polymarket: neg-risk ("winner") market buy fails, or `redeem` reverts, though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approvals a pre-upgrade deposit wallet may lack — including the collateral-adapter approvals `redeem` needs). See the [setup guide](docs/polymarket-trading-setup.md).
 

@@ -66,8 +66,8 @@ blockrun_wallet(action="status")
 ### Pattern 1: Regular Price Checks (FREE)
 
 Crypto, FX and commodity quotes cost **nothing** — `blockrun_price` is free for those
-categories (`stocks`/`usstock` quotes are not served since 2026-09-05 — the gateway 501s before payment; only the ticker catalog works). Use them liberally, and do
-not pay $0.0085 to `blockrun_surf` for a quote you can get for $0.
+categories (`stocks`/`usstock` quotes are not served since 2026-09-05 — the gateway 501s before payment; only the ticker catalog works). Use them liberally.
+(`blockrun_surf`, which used to charge $0.0085 for the same quote, is retired — the gateway 410s every Surf path since 2026-09-06 and the tool returns a free notice.)
 
 ```python
 # Single price
@@ -132,7 +132,7 @@ blockrun_wallet(action="delegate", agent_id="research", agent_limit=2.0)
 blockrun_wallet(action="delegate", agent_id="content", agent_limit=1.0)
 
 # Pass agent_id on every call
-blockrun_surf({ path: "market/price", params: { symbol: "BTC" }, agent_id: "research" })
+blockrun_defi({ path: "protocols", agent_id: "research" })
 blockrun_search({ body: { query: "latest news", sources: ["web"] }, agent_id: "research" })
 
 # Audit at end of day
@@ -209,7 +209,7 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |
 | `blockrun_exa` (search) | $0.0110 | deep research (`contents`: $0.002/URL + $0.001) |
-| `blockrun_surf` | $0.0085 | crypto data, wallets/candles/search, on-chain SQL (flat) |
+| `blockrun_surf` | FREE (retired) | returns a retirement notice — gateway 410 on every Surf path since 2026-09-06; use price / defi / markets / dex instead |
 | `blockrun_speech` | $0.0535/1k chars | TTS |
 | `blockrun_image` | $0.01675–0.106 | image generation |
 | `blockrun_music` | $0.1585 | music tracks |
@@ -224,7 +224,7 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 # ~$0.30/day typical
 Daily budget:
   Free tools:     unlimited (price quotes, dex, list, wallet status)
-  Crypto data:   ~$0.10 (surf + markets, flat $0.0085 each; defi $0.0060)
+  Crypto data:   ~$0.10 (markets, flat $0.0085; defi $0.0060; surf is retired and free)
   AI calls:      ~$0.10 (chat free mode, occasional glm)
   Media:         ~$0.10 (occasional image/speech)
   Total:         ~$0.30/day
@@ -292,7 +292,7 @@ blockrun_wallet(action="chain", chain="base")
 blockrun_wallet(action="chain")
 ```
 
-**Note:** Base is required for music, speech, and realface. Image and video pay on either chain. Solana works for price, wallet, dex, rpc, surf, etc.
+**Note:** Base is required for music, speech, and realface. Image and video pay on either chain. Solana works for price, wallet, dex, rpc, markets, etc.
 
 ---
 

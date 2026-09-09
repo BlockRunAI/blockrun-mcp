@@ -44,10 +44,11 @@ export function registerExaTool(server: McpServer, budget: BudgetState): void {
       description: `Neural web search via Exa — understands meaning, not just keywords. Great for research.
 
 Common paths (all POST, body shapes documented in the exa-research skill):
-- search       — body: { query, numResults?, category?, includeDomains?, excludeDomains? }   ($0.012/call charged)
-- answer       — body: { query }                                                              ($0.012/call charged)
-- contents     — body: { urls: [...] }                                                        ($0.002/URL + $0.002 fee, up to 100)
-- find-similar — body: { url, numResults? }                                                   ($0.012/call charged)
+- search       — body: { query, numResults?, category?, includeDomains?, excludeDomains? }   ($0.010 base + tx fee)
+- answer       — body: { query }                                                              ($0.010 base + tx fee)
+- contents     — body: { urls: [...] }                                                        ($0.002/URL + ONE tx fee, up to 100)
+- find-similar — body: { url, numResults? }                                                   ($0.010 base + tx fee)
+Tx fee = the gateway's flat network fee, $0.001 today (we reserve $0.002); the 402 header carries the exact charge.
 
 Categories for search: "news", "research paper", "company", "tweet", "github", "pdf".
 

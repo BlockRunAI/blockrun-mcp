@@ -96,13 +96,16 @@ Current parameter contracts that prevent paid 4xx responses:
   `min_profit_factor`. `window` only scopes the time range and is **not**
   sufficient alone (verified: window-only returns a paid 400). Use
   `{ window: "30d", min_trades: "100" }`; narrower cohorts are fine.
-- `markets/listings` is retired upstream (410 Gone) — the MCP blocks it before payment.
+- `markets/listings` is retired upstream (410 Gone) — the MCP blocks it before payment. The rest of the
+  canonical layer went with it on 2026-08-04: bare `markets`, `outcomes/{predexon_id}`, `matching-markets`
+  and `matching-markets/pairs` all return **404 Unknown Predexon endpoint before payment** (verified live
+  2026-09-08). Only `markets/search` survived. No live `/v1/pm` route accepts a `league` param.
 
 ## Two Pricing Tiers
 
 | Tier | Price | What |
 |---|---|---|
-| **All endpoints** | $0.0085 | Market data, events, history, candles, orderbooks, trades, leaderboard, UMA, wallet analytics, smart money, identity + clustering, cross-venue matching, Binance (`sports/*` is degraded upstream — see below; a failed call is not charged) |
+| **All endpoints** | $0.0085 on Base ($0.0075 + the $0.001 network fee; Solana quotes $0.0075) | Market data, events, history, candles, orderbooks, trades, leaderboard, UMA, wallet analytics, smart money, identity + clustering, cross-venue search, Binance (`sports/*` is degraded upstream — see below; the gateway releases the payment on the upstream 500) |
 
 Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base treasury.
 
@@ -110,11 +113,7 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 
 | User wants… | path | Tier |
 |---|---|---|
-| **Same question across venues** | `markets` | 1 |
-| **Search every venue at once** | `markets/search` | 2 |
-| Resolve a canonical outcome ID | `outcomes/{predexon_id}` | 1 |
-| **Equivalent markets (arbitrage)** | `matching-markets` | 2 |
-| Active matched pairs | `matching-markets/pairs` | 2 |
+| **Same question across venues / search every venue at once** | `markets/search` (`q`) | 2 |
 | Active Polymarket events | `polymarket/events` | 1 |
 | Polymarket markets | `polymarket/markets` | 1 |
 | Large result sets (stable paging) | `polymarket/markets/keyset` | 1 |
@@ -151,7 +150,7 @@ Pass-through pricing, 0% BlockRun margin — settles straight to Predexon's Base
 | Kalshi markets | `kalshi/markets` | 1 |
 | Kalshi trades / orderbooks | `kalshi/trades`, `kalshi/orderbooks` | 1 |
 | ⚠ Sports categories — **degraded upstream since 2026-08-04, do not call** | `sports/categories` | 1 |
-| ⚠ Sports markets by league — degraded, use `markets` + `league=` | `sports/markets` | 1 |
+| ⚠ Sports markets by league — degraded, use `markets/search` + `q=` or `polymarket/events` + `search=` | `sports/markets` | 1 |
 | ⚠ One game, all venue outcomes — degraded | `sports/markets/{game_id}` | 1 |
 | ⚠ Equivalent sports outcomes — degraded | `sports/outcomes/{predexon_id}` | 1 |
 | Limitless / Opinion / Predict.Fun markets | `limitless/markets`, `opinion/markets`, `predictfun/markets` | 1 |
@@ -168,11 +167,11 @@ blockrun_markets({ path: "polymarket/events", params: { limit: "10" } })
 
 ### 2. "What's the market saying about the 2028 election?"
 
-Search every venue in one call, then resolve the canonical outcome.
+Search every venue in one call — each hit carries its venue and IDs — then pull the chosen Polymarket market by `condition_id`.
 
 ```ts
-blockrun_markets({ path: "markets/search", params: { q: "2028 presidential election" } })
-blockrun_markets({ path: "outcomes/PXM-12345" })   // → venue listings + prices side by side
+blockrun_markets({ path: "markets/search", params: { q: "2028 presidential election", status: "open" } })
+blockrun_markets({ path: "polymarket/markets/keyset", params: { condition_id: "0xCONDITION_ID" } })   // full market record
 ```
 
 ### 3. "Show me this market's price history" (impossible from a free API)
@@ -228,22 +227,28 @@ Then trade it with `blockrun_polymarket` (see `skills/polymarket-trading/SKILL.m
 
 ### 7. "Is the same bet cheaper on another venue?" ← arbitrage
 
+`matching-markets` and `matching-markets/pairs` were removed upstream (404 before payment). One search returns
+the same question from every venue; compare the prices in the result.
+
 ```ts
-blockrun_markets({ path: "matching-markets", params: { status: "active" } })
-blockrun_markets({ path: "matching-markets/pairs" })
+blockrun_markets({ path: "markets/search", params: { q: "Fed cuts rates in December", status: "open" } })
+// → Polymarket, Kalshi, Limitless, Opinion, Predict.Fun hits side by side; the spread is the arbitrage
 ```
 
 ### 8. "Who's ahead in tonight's NBA games?"
 
 ```ts
-blockrun_markets({ path: "markets", params: { league: "NBA", status: "open" } })   // canonical cross-venue containers
-blockrun_markets({ path: "outcomes/PREDEXON_ID" })                                 // every venue's listing for one outcome
+blockrun_markets({ path: "markets/search",    params: { q: "NBA", status: "open" } })      // every venue's NBA markets
+blockrun_markets({ path: "polymarket/events", params: { search: "NBA", status: "open" } })  // Polymarket game events
+blockrun_markets({ path: "kalshi/markets",    params: { search: "NBA" } })                  // Kalshi's
 ```
 
 Do **not** route this to `sports/*`. All four `sports/*` paths have returned a Predexon 500 on every call since
 2026-08-04 (re-verified 2026-09-08). The gateway still routes them but withdrew them from discovery, and it
-releases the payment on upstream failure — so the call costs nothing and returns nothing. The tool now says so
-in its error instead of "API error after payment"; the routes come back here the day Predexon repairs them.
+releases the payment on that upstream 500 — the tool says "nothing was charged" when the gateway's own
+"payment NOT charged" confirmation is in the response, and otherwise points at `blockrun_wallet action:"report"`.
+Do not use `markets` with `league=` either: that route was removed on 2026-08-04 and 404s before payment, and no
+live `/v1/pm` route accepts `league`. The sports routes come back here the day Predexon repairs them.
 
 ### 9. "Is this market about to resolve?"
 

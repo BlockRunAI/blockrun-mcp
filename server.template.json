@@ -17,11 +17,25 @@
       },
       "environmentVariables": [
         {
-          "description": "Optional: Your wallet private key for USDC payments (hex for Base, bs58 for Solana). If not set, a wallet is auto-generated.",
+          "description": "Optional: EVM private key (0x-prefixed hex) for USDC payments on Base; also the Polymarket signer. If not set, a wallet is auto-generated.",
           "isRequired": false,
           "format": "string",
           "isSecret": true,
           "name": "BLOCKRUN_WALLET_KEY"
+        },
+        {
+          "description": "Optional: Solana private key (bs58) for USDC payments on Solana. Setting it selects the Solana chain. If not set, a wallet is auto-generated.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "SOLANA_WALLET_KEY"
+        },
+        {
+          "description": "Optional: BlockRun account API key; bills your prepaid balance instead of a wallet (no per-call network fee). Takes priority over a wallet when set.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "BLOCKRUN_API_KEY"
         }
       ]
     }

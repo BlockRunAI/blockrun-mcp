@@ -1,6 +1,6 @@
 ---
 name: surf
-description: Use when the user wants crypto data — token prices, on-chain SQL, prediction-market positions, CEX order books, wallet labels/net-worth, social mindshare, news, or unified search. 83 endpoints across exchange, on-chain, wallet, social, prediction, news and search — one API, flat $0.0085/call in USDC via x402. Settles directly to Surf's Base treasury; no Surf account needed.
+description: "Surf (asksurf.ai) is RETIRED on BlockRun — the gateway has answered every /v1/surf/* path with HTTP 410 endpoint_retired since 2026-09-06, and blockrun_surf returns that notice free of charge. Use this skill when the user asks for Surf, asksurf, or the crypto data Surf used to serve — token prices, on-chain SQL, CEX order books, wallet labels/net worth, social mindshare, news, unified search — so the request is routed to the tool that serves it now (blockrun_price, blockrun_dex, blockrun_defi, blockrun_markets, blockrun_rpc) or told honestly that nothing on BlockRun serves it yet."
 triggers:
   - "surf"
   - "asksurf"
@@ -31,254 +31,86 @@ triggers:
   - "kalshi data"
 ---
 
-# Surf — Crypto Data via BlockRun
+# Surf — retired on BlockRun (2026-09-06)
 
-Surf (asksurf.ai) aggregates **83 crypto data endpoints** across CEX market data, on-chain SQL (13 chains, 80+ ClickHouse tables), 100M+ labeled wallets, prediction markets (Polymarket + Kalshi side-by-side), social/CT intelligence, news and unified search.
+Surf (asksurf.ai) is no longer served through BlockRun. Since **2026-09-06** the
+gateway answers every `/v1/surf/*` path with:
 
-BlockRun is Surf's x402 payment rail — every call settles **directly to Surf's Base treasury**. You hold the wallet, BlockRun holds the Surf key, Surf holds the data. No Surf account, no API key, no monthly minimum.
-
-## How to Call from MCP
-
-One tool, three params. The MCP tool auto-routes method (POST when `body` is set, GET otherwise) and auto-validates required params before settling:
-
-```ts
-blockrun_surf({ path: "market/price", params: { symbol: "BTC" } })
-
-blockrun_surf({ path: "onchain/sql", body: {
-  sql: "SELECT token_address, count() FROM ethereum.dex_trades WHERE block_time > now() - INTERVAL 1 DAY GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-}})
-
-blockrun_surf({ path: "wallet/labels/batch", params: { addresses: "0xabc,0xdef" } })
+```
+HTTP 410
+{"error":{"code":"endpoint_retired","message":"The Surf data endpoints are retired. We are looking for a new vendor in this space and expect to publish a replacement under /api/v1/."},
+ "retired_on":"2026-09-06",
+ "alternatives":[{"for":"crypto, equity, FX and commodity prices","endpoint":"/api/v1/crypto/price"},
+                 {"for":"protocol TVL and yields","endpoint":"/api/v1/defillama/*"},
+                 {"for":"prediction markets","endpoint":"/api/v1/pm/*"},
+                 {"for":"DEX quotes and swaps","endpoint":"/api/v1/zerox/*"}]}
 ```
 
-## Pricing — one flat rate
+Verified live 2026-09-08 with an unauthenticated GET (a 410 is free to fetch).
+`sol.blockrun.ai` answers 404 on the same paths, and `/api/openapi` no longer
+lists any Surf route. **No 402 is ever issued, so no payment can be made.**
 
-**$0.0085 per call. Every endpoint, no tiers, including raw on-chain SQL.**
+`blockrun_surf` stays registered so existing configs and the `trading` /
+`research` profiles keep working, but every call returns the retirement notice
+**before** any budget is reserved or a spend-confirmation dialog is shown.
+Nothing is charged. Do not retry it, and do not tell the user it is a temporary
+outage — it is not.
 
-Verified against the gateway's own `payment-required` header, which is free to request — send any call with no payment header and it quotes the exact charge. All of `market/price`, `wallet/labels/batch`, `social/mindshare`, `news/feed`, `exchange/klines`, `search/web` **and `onchain/sql`** return the same $0.0085 (`SURF_TIER_1/2/3_PRICE` are all identical upstream).
+## Where each former Surf capability lives now
 
-Ignore any "premium tier" pricing you may have seen — SQL used to cost more and no longer does.
-
-Wrong / missing required params return HTTP 400 **without charging** — pre-validation runs before settlement.
-
-## Do NOT use Surf for prediction markets
-
-Surf carries 17 `prediction-market/*` endpoints (Polymarket + Kalshi). **Use `blockrun_markets` (Predexon) instead — same data, same price, and far deeper.**
-
-Predexon used to be 7.5× cheaper; since 2026-07-15 both bill the same flat rate, so the choice is now purely about coverage — and Predexon still wins on coverage by a wide margin.
-
-| | Predexon (`blockrun_markets`) | Surf |
-|---|---|---|
-| Polymarket / Kalshi markets | $0.0085 | $0.0085 (same) |
-| Wallet clustering, smart money, leaderboards | ✅ | ❌ none |
-| Limitless, Opinion, Predict.Fun, sports (via `markets?league=`), UMA | ✅ | ❌ Polymarket + Kalshi only |
-
-The only Surf prediction-market endpoint with no Predexon equivalent is `prediction-market/category-metrics`. Everything else is a strictly worse buy. See [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
-
-**Reach for Surf when Predexon cannot answer it:** on-chain SQL, 100M+ wallet labels across 13 chains, 16 CEXs, social/CT intelligence, news, tokenomics/unlocks, liquidations, ETF flows, VC portfolios. Predexon has none of those.
-
-## Quick Decision Table — "User asks about X"
-
-| User wants… | Method | Path | Required |
+| The user wants… | Surf used to be | Use now | Cost |
 |---|---|---|---|
-| BTC/ETH price | GET | `market/price` | `symbol` |
-| ETF flow history | GET | `market/etf` | `symbol` |
-| Fear & Greed index | GET | `market/fear-greed` | – |
-| Top 100 tokens by market cap | GET | `market/ranking` | – |
-| Options skew / IV / volume | GET | `market/options` | `symbol` |
-| CEX ticker for a pair | GET | `exchange/price` | `pair` |
-| Perp snapshot (funding + OI) | GET | `exchange/perp` | `pair` |
-| Order book depth | GET | `exchange/depth` | `pair` |
-| OHLCV candles | GET | `exchange/klines` | `pair` |
-| Funding rate history | GET | `exchange/funding-history` | `pair` |
-| Long/short ratio | GET | `exchange/long-short-ratio` | `pair` |
-| Bridge protocols by volume | GET | `onchain/bridge/ranking` | – |
-| Yield pool ranking | GET | `onchain/yield/ranking` | – |
-| Current gas price (per chain) | GET | `onchain/gas-price` | `chain` |
-| Transaction details | GET | `onchain/tx` | `hash`, `chain` |
-| **Raw on-chain SQL** | POST | `onchain/sql` | body: `sql` |
-| **Structured on-chain query** | POST | `onchain/query` | body: typed predicates |
-| Inspect ClickHouse schema | GET | `onchain/schema` | – |
-| Polymarket markets ranking | GET | `prediction-market/polymarket/ranking` | – |
-| Polymarket price history | GET | `prediction-market/polymarket/prices` | `condition_id` |
-| Polymarket positions for wallet | GET | `prediction-market/polymarket/positions` | `address` |
-| Kalshi markets ranking | GET | `prediction-market/kalshi/ranking` | – |
-| Kalshi market detail | GET | `prediction-market/kalshi/markets` | `market_ticker` |
-| **Search Polymarket / Kalshi** | GET | `search/polymarket` / `search/kalshi` | – |
-| Wallet profile (cross-chain) | GET | `wallet/detail` | `address` |
-| Wallet net-worth time series | GET | `wallet/net-worth` | `address` |
-| Wallet DeFi positions | GET | `wallet/protocols` | `address` |
-| **Batch wallet labels (CEX/Whale/MEV…)** | GET | `wallet/labels/batch` | `addresses` |
-| Token tokenomics + unlocks | GET | `token/tokenomics` | – |
-| Token holders top N | GET | `token/holders` | `address`, `chain` |
-| Token transfers | GET | `token/transfers` | `address`, `chain` |
-| Token DEX trades | GET | `token/dex-trades` | `address` |
-| Social mindshare time series | GET | `social/mindshare` | `q`, `interval` |
-| Smart-follower history | GET | `social/smart-followers/history` | – |
-| Twitter user profile | GET | `social/user` | `handle` |
-| Twitter user posts | GET | `social/user/posts` | `handle` |
-| Tweet replies | GET | `social/tweet/replies` | `tweet_id` |
-| **Web search (crypto-scoped)** | GET | `search/web` | `q` |
-| News article search | GET | `search/news` | `q` |
-| KOL / CT people search | GET | `search/social/people` | `q` |
-| Tweet full-text search | GET | `search/social/posts` | `q` |
-| Project / token search | GET | `search/project` | `q` |
-| Wallet search (by ENS, label) | GET | `search/wallet` | `q` |
-| VC fund portfolio | GET | `fund/portfolio` | – |
-| VC fund ranking | GET | `fund/ranking` | `metric` |
-| DeFi protocol ranking | GET | `project/defi/ranking` | `metric` |
-| Project full profile | GET | `project/detail` | – |
-| Clean a webpage to markdown | GET | `web/fetch` | `url` |
-| News feed | GET | `news/feed` | – |
-| Single news article | GET | `news/detail` | `id` |
+| BTC/ETH/any coin price, OHLC history | `market/price`, `exchange/klines` | `blockrun_price` action:"price" / "history" category:"crypto" | **FREE** |
+| FX, gold, oil | `market/price` | `blockrun_price` category:"fx" / "commodity" | **FREE** |
+| Fear & Greed, market ranking by cap | `market/fear-greed`, `market/ranking` | `blockrun_price` action:"list" for the symbol universe; no sentiment index on BlockRun | FREE / none |
+| DEX pair, liquidity, volume, token by contract | `token/dex-trades`, `search/project` | `blockrun_dex` | **FREE** |
+| Token price by contract address | `market/price` | `blockrun_defi` path:"prices/{coins}" | $0.001 + fee |
+| Protocol / chain TVL, yield rankings | `project/defi/ranking`, `onchain/yield/ranking` | `blockrun_defi` path:"protocols" / "chains" / "yields" | $0.005 + fee |
+| Polymarket / Kalshi markets, prices, positions | `prediction-market/*`, `search/polymarket`, `search/kalshi` | `blockrun_markets` — see [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md) | $0.0075 + fee |
+| Who is this Polymarket wallet, and which wallets are theirs | `wallet/detail`, `wallet/labels/batch` (for Polymarket traders only) | `blockrun_markets` `polymarket/wallet/identity/{wallet}` + `polymarket/wallet/{address}/cluster` | $0.0075 + fee |
+| Gas price, a transaction, a balance, a contract read | `onchain/gas-price`, `onchain/tx` | `blockrun_rpc` (`eth_gasPrice`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_call`) — see [`skills/rpc/SKILL.md`](../rpc/SKILL.md) | $0.002 + fee |
+| Web / news search | `search/web`, `search/news`, `news/feed` | `blockrun_exa` (neural) or `blockrun_search` (Grok Live Search, web + X + news) | $0.01 + fee / $0.025 × results |
 
-## Worked Examples
+"fee" is the gateway's flat network fee — $0.001 per call on Base today; the
+Solana gateway quotes the base alone; the account rail charges no fee.
 
-### 1. "What's BTC trading at?"
+## What has NO replacement on BlockRun yet
+
+Say so plainly rather than substituting something that answers a different question:
+
+- **Raw on-chain SQL** over ClickHouse (`onchain/sql`, `onchain/query`, `onchain/schema`)
+- **Wallet labels and net worth across 13 chains** for arbitrary addresses (`wallet/labels/batch`, `wallet/net-worth`, `wallet/protocols`, `wallet/history`). Only Polymarket traders are covered, via `blockrun_markets` identity/cluster above.
+- **CEX order books, perp snapshots, funding history, long/short ratio, options skew** (`exchange/*`, `market/options`, `market/futures`)
+- **ETF flows, liquidation charts, on-chain indicators** (`market/etf`, `market/liquidation/*`, `market/onchain-indicator`)
+- **Social / CT intelligence** — mindshare, smart followers, KOL search, tweet search (`social/*`, `search/social/*`)
+- **Tokenomics and unlock schedules, token holders and transfers** (`token/*`)
+- **VC fund portfolios and rankings** (`fund/*`)
+- **Bridge rankings, airdrop search, project profiles** (`onchain/bridge/ranking`, `search/airdrop`, `project/detail`)
+- **Webpage-to-markdown** (`web/fetch`)
+
+The gateway says a new vendor is pending and that the replacement will be
+published under `/api/v1/` and listed at `https://blockrun.ai/api/openapi`. Check
+there before promising any of the above.
+
+## Worked example — what a former Surf request looks like now
+
+**"Is this whale wallet labeled, and what does it hold?"** (was 4 Surf calls, $0.034)
 
 ```ts
-blockrun_surf({ path: "market/price", params: { symbol: "BTC" } })
-```
-**Cost: $0.0085.** Returns price history; latest point = current price.
+// If it is a Polymarket trader — identity, linked wallets, P&L:
+blockrun_markets({ path: "polymarket/wallet/identity/0xWHALE" })
+blockrun_markets({ path: "polymarket/wallet/0xWHALE/cluster" })
+blockrun_markets({ path: "polymarket/wallet/pnl/0xWHALE" })
 
-### 2. "Top 10 tokens by DEX volume on Ethereum in the last 24h"
-
-```ts
-blockrun_surf({
-  path: "onchain/sql",
-  body: {
-    sql: `
-      SELECT token_address, sum(amount_usd) AS volume_usd
-      FROM ethereum.dex_trades
-      WHERE block_time > now() - INTERVAL 1 DAY
-      GROUP BY token_address
-      ORDER BY volume_usd DESC
-      LIMIT 10
-    `
-  }
-})
-```
-**Cost: $0.0085.** Raw ClickHouse — same query language Surf's own UI uses, at the same flat rate as any other Surf read.
-
-### 3. "Is this whale wallet labeled? What does it hold?"
-
-```ts
-// Step 1 — labels (CEX / Whale / Bridge / MEV / Bot / Fund)
-blockrun_surf({ path: "wallet/labels/batch", params: { addresses: "0xabc...,0xdef..." } })
-
-// Step 2 — cross-chain holdings + DeFi positions
-blockrun_surf({ path: "wallet/detail", params: { address: "0xabc..." } })
-blockrun_surf({ path: "wallet/protocols", params: { address: "0xabc..." } })
-
-// Step 3 — net-worth time series
-blockrun_surf({ path: "wallet/net-worth", params: { address: "0xabc..." } })
-```
-**Cost: 4 × $0.0085 = $0.034.** Replaces a Nansen subscription for one-off lookups.
-
-### 4. "What's the market saying about the 2028 election?"
-
-```ts
-// Compare Polymarket + Kalshi side by side
-blockrun_surf({ path: "search/polymarket", params: { q: "2028 US president" } })
-blockrun_surf({ path: "search/kalshi",     params: { q: "2028 US president" } })
-
-// Then pull the order book on the leading market
-blockrun_surf({ path: "prediction-market/polymarket/prices",
-                params: { condition_id: "0x..." } })
+// For any address — current native + token balances via raw RPC (free tools first):
+blockrun_rpc({ network: "ethereum", method: "eth_getBalance", params: ["0xWHALE", "latest"] })
 ```
 
-### 5. "Where's mindshare moving for L1s?"
-
-```ts
-blockrun_surf({ path: "social/mindshare", params: { q: "solana", interval: "1d" } })
-blockrun_surf({ path: "social/mindshare", params: { q: "monad",  interval: "1d" } })
-blockrun_surf({ path: "social/ranking" })
-```
-
-### 6. "ETF flows + funding rate + long/short — give me the macro picture"
-
-```ts
-blockrun_surf({ path: "market/etf",                params: { symbol: "BTC" } })
-blockrun_surf({ path: "market/fear-greed" })
-blockrun_surf({ path: "exchange/funding-history",  params: { pair: "BTC-USDT" } })
-blockrun_surf({ path: "exchange/long-short-ratio", params: { pair: "BTC-USDT" } })
-```
-**Cost: 4 × $0.0085 = $0.034.**
-
-## Method Routing — When to Use `body`
-
-Pass `body` (POST) only for these three endpoints:
-
-- `onchain/query` — structured, typed predicates against ClickHouse
-- `onchain/sql` — raw SQL string in `{ sql: "..." }`
-
-Everything else is GET with `params`.
-
-## Python SDK (for non-MCP use)
-
-```python
-from blockrun_llm import setup_agent_wallet
-
-client = setup_agent_wallet()
-
-# GET — same as blockrun_surf({ path, params })
-price = client._get_with_payment_raw("/v1/surf/market/price", {"symbol": "BTC"})
-
-# POST — same as blockrun_surf({ path, body })
-result = client._request_with_payment_raw("/v1/surf/onchain/sql", {
-    "sql": "SELECT count() FROM ethereum.transactions WHERE block_time > now() - INTERVAL 1 HOUR"
-})
-```
-
-## Full Endpoint Catalog (83 endpoints, 12 categories)
-
-### Exchange (CEX) — 7
-`exchange/markets` · `exchange/price` · `exchange/perp` · `exchange/depth` · `exchange/klines` · `exchange/funding-history` · `exchange/long-short-ratio`
-
-### Fund (VC intelligence) — 3
-`fund/detail` · `fund/portfolio` · `fund/ranking`
-
-### Market — 11
-`market/ranking` · `market/fear-greed` · `market/futures` · `market/price` · `market/etf` · `market/options` · `market/liquidation/exchange-list` · `market/liquidation/order` · `market/liquidation/chart` · `market/onchain-indicator` · `market/price-indicator`
-
-### News — 2
-`news/feed` · `news/detail`
-
-### On-chain — 7
-`onchain/bridge/ranking` · `onchain/yield/ranking` · `onchain/gas-price` · `onchain/tx` · `onchain/schema` · `onchain/query` (POST) · `onchain/sql` (POST)
-
-### Prediction Markets — 17
-**Polymarket**: `prediction-market/polymarket/ranking` · `.../trades` · `.../markets` · `.../events` · `.../prices` · `.../volumes` · `.../open-interest` · `.../positions` · `.../activity` · `prediction-market/category-metrics`
-**Kalshi**: `prediction-market/kalshi/ranking` · `.../markets` · `.../events` · `.../prices` · `.../trades` · `.../volumes` · `.../open-interest`
-
-### Project + DeFi — 3
-`project/detail` · `project/defi/metrics` · `project/defi/ranking`
-
-### Search — 11
-`search/airdrop` · `search/events` · `search/kalshi` · `search/polymarket` · `search/web` · `search/project` · `search/news` · `search/wallet` · `search/fund` · `search/social/people` · `search/social/posts`
-
-### Social — 11
-`social/detail` · `social/ranking` · `social/smart-followers/history` · `social/mindshare` · `social/tweets` · `social/tweet/replies` · `social/user` · `social/user/followers` · `social/user/following` · `social/user/posts` · `social/user/replies`
-
-### Token — 4
-`token/tokenomics` · `token/dex-trades` · `token/holders` · `token/transfers`
-
-### Wallet — 6
-`wallet/detail` · `wallet/history` · `wallet/net-worth` · `wallet/transfers` · `wallet/protocols` · `wallet/labels/batch`
-
-### Web — 1
-`web/fetch`
-
-## Gotchas
-
-- **Required params:** 56 of 83 endpoints require at least one param. The 402 response and the in-tool route surface which fields are missing. Missing params → 400 + no charge.
-- **Solana wallet works too**: `blockrun_surf` routes through whichever chain the BlockRun wallet is on (Base or Solana). Surf settlement always lands in Surf's Base treasury.
-- **`onchain/sql` is powerful but unrestricted**: there's no row limit on the server side. Add `LIMIT` to your query or you'll pay for a megabyte of JSON.
-- **`X-Payment-Receipt` header** lands on the response with the settlement tx hash — keep it for accounting.
+Cross-chain labels (CEX / MEV / bridge) and a net-worth time series are not
+available on BlockRun right now — tell the user that, do not call `blockrun_surf`.
 
 ## Reference
 
-- Surf marketplace page: https://blockrun.ai/marketplace/surf
-- Surf upstream docs: https://docs.asksurf.ai
-- Surf publisher: https://asksurf.ai
-- BlockRun proxy source: `src/lib/surf.ts` in the BlockRun web repo
+- Gateway retirement notice: `curl -s https://blockrun.ai/v1/surf/market/price` (HTTP 410, free)
+- Live route catalog: https://blockrun.ai/api/openapi
+- Related skills: [`crypto-data`](../crypto-data/SKILL.md) · [`prediction-markets`](../prediction-markets/SKILL.md) · [`rpc`](../rpc/SKILL.md)

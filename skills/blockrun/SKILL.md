@@ -34,7 +34,7 @@ changed, because each one was a typed copy. Read prices from a live source inste
 | What a call will actually cost | the `402` response — it carries the real amount |
 | Full endpoint catalog with prices | <https://blockrun.ai/llms.txt> (Base) · <https://sol.blockrun.ai/llms.txt> (Solana) |
 
-The tool descriptions in the MCP server carry current prices too; they are generated, not typed.
+The tool descriptions in the MCP server carry the published base prices too; they are typed by hand and verified against live 402 quotes by `npm run verify:prices`, and the 402 header is what actually gets charged.
 
 ## The two chains are not the same gateway
 

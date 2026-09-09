@@ -1,6 +1,6 @@
 ---
 name: crypto-data
-description: Use for any crypto data question — token/coin prices, FX, commodities, stocks, OHLC history, DEX pairs and liquidity, DeFi TVL, yield/APY pools, on-chain SQL, wallet labels and net worth, social mindshare, news, or raw JSON-RPC against a chain. Routes across five tools that overlap heavily, so it also says which one to use and which are FREE — blockrun_price (crypto/FX/commodities free, Pyth), blockrun_dex (free, DexScreener), blockrun_defi (DefiLlama TVL + yields), blockrun_surf (83 endpoints — on-chain SQL, 100M+ wallet labels, social), blockrun_rpc (40 chains). No API keys, pay-per-call in USDC via x402.
+description: "Use for any crypto data question — token/coin prices, FX, commodities, stocks, OHLC history, DEX pairs and liquidity, DeFi TVL, yield/APY pools, or raw JSON-RPC against a chain; also when the user asks for on-chain SQL, wallet labels/net worth, social mindshare or crypto news, so they are told plainly what BlockRun serves and what it does not. Routes across four live tools that overlap and says which one to use and which are FREE — blockrun_price (crypto/FX/commodities free, Pyth), blockrun_dex (free, DexScreener), blockrun_defi (DefiLlama TVL + yields), blockrun_rpc (40 chains). blockrun_surf is retired (gateway 410 since 2026-09-06) and must not be called for data. No API keys, pay-per-call in USDC via x402."
 triggers:
   - "crypto price"
   - "token price"
@@ -49,7 +49,9 @@ triggers:
 
 # Crypto Data
 
-Five tools cover crypto data and they overlap. **Pick by cost first** — two of them are free, and paying for a quote you could get for nothing is the most common mistake here.
+Four live tools cover crypto data and they overlap. **Pick by cost first** — two of them are free, and paying for a quote you could get for nothing is the most common mistake here.
+
+A fifth, `blockrun_surf`, is **retired**: the gateway has answered every Surf path with HTTP 410 since 2026-09-06, and the tool returns that notice without reserving budget or asking the wallet to sign. Do not call it for data; the [`surf` skill](../surf/SKILL.md) maps each former Surf capability to where it lives now — and lists the ones (on-chain SQL, cross-chain wallet labels, social mindshare, CEX order books) that have no BlockRun source yet.
 
 ## Route by cost — check this before calling anything
 
@@ -64,14 +66,14 @@ Five tools cover crypto data and they overlap. **Pick by cost first** — two of
 | Token price by contract address | `blockrun_defi` path:"prices/{coins}" | $0.0020 |
 | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains | `blockrun_rpc` | $0.0030 |
 | Protocol TVL, chain TVL, yields/APY | `blockrun_defi` | $0.0060 |
-| **Everything below** (on-chain SQL, wallet labels, social, news, unlocks, liquidations, ETF flows) | `blockrun_surf` | $0.0085 |
-| Raw SQL over 80+ ClickHouse tables | `blockrun_surf` path:"onchain/sql" | $0.0085 |
+| Who a Polymarket wallet is, and which wallets are linked to it | `blockrun_markets` `polymarket/wallet/identity/{w}`, `.../cluster` | $0.0085 |
+| On-chain SQL, cross-chain wallet labels / net worth, social mindshare, CEX order books, ETF flows, unlocks | **nothing on BlockRun yet** — Surf retired 2026-09-06; say so | — |
 
-Every price below is what x402 actually **charges** (the base plus the gateway's $0.001 flat fee), verified against live `payment-required` headers — not the base you may see in a 402 body.
+Every price below is what x402 actually **charges on Base** (the base plus the gateway's $0.001 flat fee), verified against live `payment-required` headers — not the base you may see in a 402 body. The Solana gateway quotes the base alone; the account rail charges no fee.
 
-**The rule:** a plain crypto price or a DEX pair is free. Only reach for `blockrun_surf` when you need something the free tools genuinely do not have — labels, SQL, social, news, unlocks.
+**The rule:** a plain crypto price or a DEX pair is free. When the question needs something the four live tools do not have — labels, SQL, social, news, unlocks — tell the user BlockRun does not serve it right now rather than calling `blockrun_surf`, which only returns the retirement notice.
 
-**Prediction markets are never a Surf question.** Surf carries `prediction-market/*` endpoints, but Predexon (`blockrun_markets`) serves the same Polymarket/Kalshi data at the **same $0.0085** — and adds wallet clustering, smart money, sports (via `markets` + `league=` — the dedicated `sports/*` routes are degraded), UMA, and five more venues that Surf does not have at all. Price is no longer the argument (it was 7.5× cheaper before 2026-07-15); coverage is, and it is decisive. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
+**Prediction markets go to `blockrun_markets`** (Predexon): Polymarket, Kalshi, Limitless, Opinion and Predict.Fun, plus wallet clustering, smart money and UMA. For sports odds use `markets/search` with `{ q: "NBA" }` or `polymarket/events` with `{ search: "NBA" }` — the dedicated `sports/*` routes are degraded upstream, and the bare `markets` route with a `league` filter was removed on 2026-08-04 and 404s. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 
 ## blockrun_price — quotes & history (Pyth-backed)
 
@@ -122,19 +124,12 @@ blockrun_defi({ path: "yields" })                   // big payload — filter af
 blockrun_defi({ path: "prices/coingecko:ethereum" })
 ```
 
-## blockrun_surf — the things nothing else has
+## blockrun_surf — retired 2026-09-06
 
-83 endpoints. Reach here when the free tools cannot answer it: **on-chain SQL, 100M+ labeled wallets across 13 chains, social/CT intelligence, news, tokenomics, liquidations, ETF flows, VC portfolios.** Full catalog and recipes: [`skills/surf/SKILL.md`](../surf/SKILL.md).
+The gateway answers every `/v1/surf/*` path with `410 endpoint_retired` (verified live 2026-09-08; `sol.blockrun.ai` 404s; `/api/openapi` lists no Surf route). No 402 is issued, so nothing can be charged, and the tool says so before any budget is reserved. What Surf used to carry — on-chain SQL, 100M+ wallet labels, social/CT intelligence, news, tokenomics, liquidations, ETF flows, VC portfolios — has **no BlockRun source yet**; the gateway says a replacement vendor is pending under `/api/v1/`. The [`surf` skill](../surf/SKILL.md) maps each former capability to the live tool that covers it, where one exists.
 
 ```ts
-blockrun_surf({ path: "wallet/labels/batch", params: { addresses: "0xabc,0xdef" } })  // CEX/Whale/MEV/Bot
-blockrun_surf({ path: "wallet/net-worth",    params: { address: "0xabc" } })
-blockrun_surf({ path: "token/tokenomics",    params: { symbol: "ARB" } })             // unlocks + vesting
-blockrun_surf({ path: "market/etf",          params: { symbol: "BTC" } })             // ETF flows
-blockrun_surf({ path: "social/mindshare",    params: { project: "base" } })
-blockrun_surf({ path: "onchain/sql", body: {
-  sql: "SELECT token_address, count() FROM ethereum.dex_trades WHERE block_time > now() - INTERVAL 1 DAY GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
-}})                                                                                   // $0.0085
+blockrun_surf({ path: "anything" })   // → "Error: blockrun_surf is retired … 410 … nothing was charged" — do not call it
 ```
 
 ## blockrun_rpc — raw chain access
@@ -153,25 +148,31 @@ blockrun_rpc({ network: "base", method: "eth_blockNumber", params: [] })
 blockrun_price({ action: "price", category: "crypto", symbol: "BTC-USD" })   // FREE
 ```
 
-Not `blockrun_surf({ path: "market/price" })` — that is $0.0085 for an answer you can get free.
+Not `blockrun_surf` — it is retired and only returns a notice; and before 2026-09-06 it charged $0.0085 for an answer you could get free.
 
 ### 2. "Is this token legit?" ← compound, mostly free
 
 ```ts
-blockrun_dex({ token: "0xCONTRACT" })                                        // FREE — liquidity, volume, pairs
-blockrun_surf({ path: "token/holders", params: { address: "0xCONTRACT" } })  // concentration
-blockrun_surf({ path: "token/tokenomics", params: { symbol: "TKN" } })       // unlock cliff coming?
+blockrun_dex({ token: "0xCONTRACT" })                                        // FREE — liquidity, volume, pairs, age
+blockrun_defi({ path: "prices/base:0xCONTRACT" })                            // $0.0020 — is it priced by DefiLlama at all?
+blockrun_rpc({ network: "base", method: "eth_call", params: [{ to: "0xCONTRACT", data: "0x18160ddd" }, "latest"] })  // totalSupply()
 ```
 
-Start free. Only pay once the free signal says it is worth a closer look.
+Start free. Only pay once the free signal says it is worth a closer look. Holder concentration and unlock schedules were Surf features and have no BlockRun source right now — say so rather than guessing.
 
 ### 3. "Who owns this wallet and what do they hold?"
 
 ```ts
-blockrun_surf({ path: "wallet/labels/batch", params: { addresses: "0xWHALE" } })  // CEX? Whale? MEV bot?
-blockrun_surf({ path: "wallet/net-worth",    params: { address: "0xWHALE" } })
-blockrun_surf({ path: "wallet/protocols",    params: { address: "0xWHALE" } })    // Aave/Lido/Uni positions
+// A Polymarket trader: identity, linked wallets, P&L — via Predexon
+blockrun_markets({ path: "polymarket/wallet/identity/0xWHALE" })
+blockrun_markets({ path: "polymarket/wallet/0xWHALE/cluster" })
+blockrun_markets({ path: "polymarket/wallet/pnl/0xWHALE" })
+
+// Any address: balances via raw RPC
+blockrun_rpc({ network: "ethereum", method: "eth_getBalance", params: ["0xWHALE", "latest"] })
 ```
+
+Cross-chain labels (CEX / MEV / bridge), net-worth history and DeFi position breakdowns were Surf features; nothing on BlockRun serves them today.
 
 ### 4. "Where's the best yield right now?"
 
@@ -183,11 +184,14 @@ blockrun_defi({ path: "chains" })          // where the money actually is
 ### 5. "Give me the macro picture"
 
 ```ts
-blockrun_surf({ path: "market/etf",               params: { symbol: "BTC" } })
-blockrun_surf({ path: "exchange/funding-history", params: { symbol: "BTCUSDT" } })
-blockrun_surf({ path: "market/liquidation/chart" })
-blockrun_surf({ path: "market/fear-greed" })
+blockrun_price({ action: "price", category: "crypto",    symbol: "BTC-USD" })   // FREE
+blockrun_price({ action: "price", category: "commodity", symbol: "XAU-USD" })   // FREE — gold
+blockrun_price({ action: "price", category: "fx",        symbol: "EUR-USD" })   // FREE
+blockrun_defi({ path: "chains" })                                               // $0.0060 — where DeFi capital sits
+blockrun_markets({ path: "markets/search", params: { q: "bitcoin", status: "open" } })  // $0.0085 — what the crowd is pricing
 ```
+
+ETF flows, funding rates, liquidation charts and the Fear & Greed index were Surf features with no BlockRun source today.
 
 ### 6. "Is gold up today?" — also free
 
@@ -199,5 +203,5 @@ blockrun_price({ action: "price", category: "commodity", symbol: "XAU-USD" })   
 
 - **Prediction markets** (odds, smart money, wallet clustering) → [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md)
 - **Polymarket trading** (real money) → [`skills/polymarket-trading/SKILL.md`](../polymarket-trading/SKILL.md)
-- **All 83 Surf endpoints** → [`skills/surf/SKILL.md`](../surf/SKILL.md)
+- **Surf is retired** — what replaced each former endpoint → [`skills/surf/SKILL.md`](../surf/SKILL.md)
 - **Raw RPC** → [`skills/rpc/SKILL.md`](../rpc/SKILL.md)
