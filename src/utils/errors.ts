@@ -23,8 +23,9 @@ export function extractErrorMessage(err: unknown): string {
       // `message` — the field that names the cause AND says whether money moved,
       // e.g. "Predexon 500: … (payment NOT charged)" — under `detail`, because
       // the sanitizer already uses `message` for the top-level `error` string.
-      // Without this line that text is dropped a second time here, and the
-      // "not charged" branch in formatError() below never fires (blockrun-mcp#132).
+      // Without this line that text is dropped a second time here, and
+      // formatError() below has no evidence to say nothing was charged — all it
+      // can echo is the SDK's "after payment" prefix (blockrun-mcp#132).
       if (typeof b.detail === "string" && b.detail !== b.message) parts.push(b.detail);
       if (typeof b.hint === "string") parts.push(`Hint: ${b.hint}`);
       if (Array.isArray(b.missing_params) && b.missing_params.length) {
@@ -154,6 +155,17 @@ export function formatError(message: string, opts?: { altModels?: string }): str
     errorText += `\n\nThis is a temporary API issue. The API may be experiencing problems.` +
       `\nTry again in a few minutes` +
       (opts?.altModels ? `, or use a different model${altHint}.` : `.`);
+    // The gateway's own words, restated as guidance. The SDK labels every
+    // post-402 failure "API error after payment", and until now the only thing
+    // `explicitlyUncharged` did was suppress the funding footer — which this
+    // branch, tested first, already made unreachable for a 5xx. So a
+    // "(payment NOT charged)" 5xx read as "after payment … try again", with
+    // nothing in the tool's voice saying whether money moved (blockrun-mcp#132).
+    // Only the gateway's marker earns this line; the formatter never invents a
+    // settlement claim of its own.
+    if (explicitlyUncharged) {
+      errorText += `\nThe gateway reported that this call was not settled — nothing was charged.`;
+    }
   } else if (isPaymentError) {
     const chain = getChain();
     const network = chain === "solana" ? "Solana" : "Base";

@@ -133,9 +133,31 @@ test("extractErrorMessage surfaces the SDK's `detail` field (blockrun-llm-ts#39)
   const msg = extractErrorMessage(err);
   assert.match(msg, /Upstream provider error/);
   assert.match(msg, /payment NOT charged/);
-  // …and formatError no longer tells the user to fund a wallet that was never charged.
+  // …and formatError says so in its OWN words. Only the guidance after the echoed
+  // message can prove that: the input already contains "payment NOT charged", so
+  // a whole-output /not charged/ match — or a doesNotMatch(/needs funding/) on a
+  // 5xx, whose branch is tested before the funding one — can never fail. This
+  // is the generic path every tool without a bespoke formatter goes through.
   const out = formatError(msg);
-  assert.doesNotMatch(out, /needs funding/);
+  const guidance = out.slice(out.indexOf("\n\n"));
+  assert.match(guidance, /The gateway reported that this call was not settled — nothing was charged\./);
+  // The outage advice stays — an uncharged upstream 5xx is reasonable to retry.
+  assert.match(guidance, /temporary API issue/);
+  assert.doesNotMatch(guidance, /needs funding/);
+});
+
+test("a post-payment 5xx WITHOUT the gateway's uncharged marker never claims nothing was charged", () => {
+  // The formatter must never invent a settlement claim: only the gateway's own
+  // marker in the message earns the "nothing was charged" line.
+  for (const msg of [
+    "API error after payment: 502\nRequest failed",
+    "API error after payment: 500 Internal Server Error",
+    "error 500 occurred",
+  ]) {
+    const out = formatError(msg);
+    assert.match(out, /temporary API issue/, msg);
+    assert.doesNotMatch(out, /nothing was charged|not settled/, msg);
+  }
 });
 
 test("extractErrorMessage does not repeat a detail identical to the message", () => {

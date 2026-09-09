@@ -67,21 +67,47 @@ const OUTPUT_QUOTE_FACTOR = 0.1;
 const MESSAGE_TOKEN_OVERHEAD = 20;
 const MIN_BASE_USD = 0.001;
 
+/**
+ * Map the id the gateway ECHOES onto the id the catalogue KEYS on.
+ *
+ * /v1/messages echoes the upstream Anthropic id (blockrun's ANTHROPIC_MODEL_MAP),
+ * not the id that was requested: "anthropic/claude-fable-5.1" comes back as
+ * "claude-fable-5-1", "anthropic/claude-haiku-4.5" as
+ * "claude-haiku-4-5-20251001". Three differences, undone in order: the vendor
+ * prefix is missing, a -YYYYMMDD snapshot date may be appended, and the minor
+ * version is dashed where the catalogue spells it dotted. Nothing else is
+ * touched, so an id this does not recognise misses the table and books null.
+ */
+function catalogueKeyForEcho(model: string): string {
+  let id = model.trim();
+  if (!id.startsWith("anthropic/")) id = `anthropic/${id}`;
+  id = id.replace(/-\d{8}$/, "");
+  id = id.replace(/^(anthropic\/claude-[a-z]+-\d+)-(\d+)$/, "$1.$2");
+  return id;
+}
+
 export function anthropicCallCost(
   model: string,
   promptChars: number,
   maxTokens: number,
 ): number | null {
-  // The catalog keys on the prefixed id; the response echoes a bare one
-  // ("claude-opus-5"), sometimes with a date suffix.
-  const id = model.startsWith("anthropic/") ? model : `anthropic/${model}`;
+  const id = catalogueKeyForEcho(model);
   // hasOwn, not `??` — see the note in estimateChatCost: an inherited
   // Object.prototype member would pass the null check and poison the arithmetic.
   // (`id` is always prefixed with "anthropic/" here, so it cannot BE a prototype
   // key; guarded anyway so the pattern is uniform wherever these tables are read.)
-  const rate = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)
-    ? CHAT_PRICE_PER_MTOKEN[id]
-    : Object.entries(CHAT_PRICE_PER_MTOKEN).find(([k]) => id.startsWith(k))?.[1];
+  //
+  // Exact match ONLY. This used to fall back to a startsWith prefix match, meant
+  // for date-suffixed echoes — but the gateway echoes DASHED upstream ids, so
+  // the prefix never matched a dated echo at all (claude-haiku-4-5-20251001
+  // does not start with anthropic/claude-haiku-4.5) and every one of them
+  // silently booked the pre-call estimate. Its one live use was matching a
+  // VERSION suffix: claude-fable-5-1 booked claude-fable-5's row. Right by
+  // coincidence (both $10/$50) — and a sibling priced differently from its
+  // major would have booked the wrong number with no signal, because the
+  // "null -> estimate" fallback cannot engage once a rate WAS found. On this
+  // path the table is the ledger, so a borrowed rate is a wrong budget.spent.
+  const rate = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id) ? CHAT_PRICE_PER_MTOKEN[id] : undefined;
   if (!rate) return null;
 
   const inputTokens = Math.ceil(promptChars / GATEWAY_CHARS_PER_TOKEN_OBSERVED) + MESSAGE_TOKEN_OVERHEAD;

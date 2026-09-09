@@ -86,6 +86,35 @@ test("a settled-then-failed chat is BOOKED, not silently forgotten", async () =>
     Math.abs(budget.spent - 0.0412) < 1e-9,
     `settled $0.0412 must be booked; budget.spent = ${budget.spent}`,
   );
+  // ...and the CALLER has to be told. The ledger was right since 0.40.1, but the
+  // text on this path was a bare "Error: stream failed…" — indistinguishable from
+  // a free failure, so the obvious next step (retry) settled a second payment.
+  // The routing loop has said this since 0.40.1; the two direct paths never did.
+  assert.match(res.content[0].text, /charge stands \(\$0\.041200\)/, res.content[0].text);
+  assert.match(res.content[0].text, /second charge/i, res.content[0].text);
+  // The note says "payment". Fed to formatError's keyword classifier that reads
+  // as an empty wallet — "needs funding" is the exact wrong advice for a call
+  // that just paid, and it is what the routing loop's note used to earn.
+  assert.doesNotMatch(res.content[0].text, /needs funding/, res.content[0].text);
+});
+
+test("a multi-turn chat that settled and then failed says so too", async () => {
+  script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0308, fail: true }]]);
+  attempts = [];
+  const { budget, call } = makeHarness();
+
+  const res = await call({
+    message: "and then?",
+    model: "openai/gpt-5.6-terra",
+    messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }],
+    max_tokens: 1024,
+    temperature: 1,
+  });
+
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /charge stands \(\$0\.030800\)/, res.content[0].text);
+  assert.doesNotMatch(res.content[0].text, /needs funding/, res.content[0].text);
+  assert.ok(Math.abs(budget.spent - 0.0308) < 1e-9, `booked ${budget.spent}`);
 });
 
 test("a chat that fails BEFORE settling books nothing", async () => {
@@ -99,6 +128,8 @@ test("a chat that fails BEFORE settling books nothing", async () => {
 
   assert.equal(res.isError, true);
   assert.equal(budget.spent, 0, `nothing settled, so nothing should be booked (got ${budget.spent})`);
+  // No money moved, so the text must not say it did — the note is evidence-gated.
+  assert.doesNotMatch(res.content[0].text, /charge stands/, res.content[0].text);
 });
 
 test("the routing loop stops after a payment settles — one reservation, one charge", async () => {
@@ -121,7 +152,11 @@ test("the routing loop stops after a payment settles — one reservation, one ch
     "once a payment has settled the loop must stop — retrying charges the caller twice for one tool call",
   );
   assert.equal(res.isError, true);
-  assert.ok(/charge stands|already been charged|settled/i.test(res.content[0].text), res.content[0].text);
+  assert.match(res.content[0].text, /charge stands \(\$0\.021700\)/, res.content[0].text);
+  assert.match(res.content[0].text, /No fallback model was tried/, res.content[0].text);
+  // Same classifier trap as the direct paths: this note used to end in "your
+  // wallet needs funding" because formatError saw the word "payment" in it.
+  assert.doesNotMatch(res.content[0].text, /needs funding/, res.content[0].text);
   assert.ok(Math.abs(budget.spent - 0.0217) < 1e-9, `booked ${budget.spent}`);
 });
 
