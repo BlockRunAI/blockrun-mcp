@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 6% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
   </picture>
 </div>
 
@@ -216,9 +216,9 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 20 | 12,992 |
+| `full` *(default)* | 20 | 13,023 |
 | `trading` | 9 | 5,606 |
-| `media` | 7 | 5,527 |
+| `media` | 7 | 5,558 |
 | `research` | 6 | 3,075 |
 | `chat` | 3 | 1,975 |
 

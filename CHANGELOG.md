@@ -41,6 +41,20 @@ who to contact for equity coverage. `formatError` also stops labelling any 501 a
 transient outage; it claims "nothing was charged" only when the 501 arrived
 before payment.
 
+**Pay what you were told, or nothing.** `npm run verify:prices` caught a third
+layer while this release was being cut: the Solana gateway is a separate
+deployment that can lag Base, and it does not know `azure/sora-2` — it quotes
+"Seedance 2.0 Pro video generation (5s)" at $1.135 in Sora's place, 2.7x the
+published rate, for a different model. The only check on the gateway's price was
+the budget cap, which would have let that through on any wallet holding $2.
+`blockrun_video` (both rails) and `blockrun_image` (Solana) now compare the 402
+against the estimate the model was shown and refuse, unsigned, anything more than
+1.5x above it; the message names the quoted amount, what the gateway labelled it,
+and how to proceed. The Solana helper hands callers the decoded 402 so they can
+judge what was quoted, not just how much. The price verifier classifies a Solana
+quote for a different product as a gateway bug to report rather than an
+estimator gap to paper over.
+
 Also shipping, landed on `main` since 0.48.0:
 
 - **`blockrun_image` reads the settled cost on the account rail** instead of an

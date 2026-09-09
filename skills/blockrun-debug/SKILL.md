@@ -14,6 +14,8 @@ triggers:
   - "equity quotes are not served"
   - "sports markets 500"
   - "501 not implemented"
+  - "refusing to sign it"
+  - "quoted a different price"
   - "polymarket buy failed"
   - "insufficient allowance"
   - "redeem reverts"
@@ -65,6 +67,7 @@ re-added at user scope leaves a duplicate. Then, in the session: `blockrun_walle
 | `Video`/`Music generation timed out` | Upstream queue. **Not charged** — payment settles on completion only. | Retry, or pick a faster model. Do not retry-loop; jobs take 60–180 s. |
 | `blockrun_price` with `category:"stocks"` / `"usstock"` → `Equity quotes are not served (gateway 501 …)` | The gateway withdrew equity price/history on 2026-09-05 (licensing), and the tool answers before the wallet is consulted. Not an outage. **Not charged.** | Do not retry. `action:"list" category:"stocks" market:"us"` still returns the ticker catalog for free. Equity coverage: hello@blockrun.ai. |
 | `blockrun_markets` on `sports/*` → `Predexon's sports/* routes have returned an upstream 500 … since 2026-08-04` (builds before 0.48.1: `API error after payment: 502 / Request failed` with no balance change) | Upstream Predexon outage since 2026-08-04. The gateway releases the payment on upstream failure, so the old wording asserted a charge that never happened. **Not charged.** | Use `path:"markets"` with `params:{ league:"NBA" }` or `polymarket/events`. Do not retry `sports/*`. Upgrade to ≥ 0.48.1 so the error says this itself. |
+| `blockrun_video` / `blockrun_image` → `The gateway quoted $X for <model>, but this tool expected about $Y (N.Nx the published rate) … Refusing to sign it — no charge was made` | The 402 price is far above the published rate: the gateway repriced the model, or a lagging deployment substituted another one. Live 2026-09-08: `sol.blockrun.ai` does not know `azure/sora-2` and quotes Seedance 2.0 Pro at $1.135 in its place. **Not charged** — the tool refuses before signing. | For Sora: `blockrun_wallet action:"chain" chain:"base"`. Otherwise pick another model or chain, and report the quote (the message names what the gateway labelled it) so the estimator or the gateway gets fixed. |
 | Any tool → `The gateway does not serve this endpoint (501 Not Implemented)` | The route is withdrawn, not down. Before payment the message ends "nothing was charged"; after payment it tells you to check the ledger instead, because the formatter cannot know whether the nonce was released. | Do not retry. `blockrun_wallet action:"report"` shows whether the call settled. |
 | Model id 404s | Delisted upstream | `blockrun_models` for the live list. |
 | Startup prints `🚨 WALLET PRIVATE KEY DETECTED IN CONFIG FILE` | The key was pasted into `~/.claude.json` (old hosted-auth flow) | Treat the key as compromised: move funds to a new wallet, remove it from the config. |
