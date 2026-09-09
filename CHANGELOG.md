@@ -110,6 +110,19 @@ answers the same on both backends: it documents "gone, including was never
 there", and only macOS honoured that, so a Linux miss reported the key as still
 in the keychain when it was not.
 
+Two comments were retired for saying things the code no longer does.
+`l1-auth-1271.ts` still opened by describing the ERC-7739 wrapped L1 signature
+as the workaround in force and closed by telling a future maintainer to delete
+the module once the upstream issue is fixed. The wrap was the wrong diagnosis
+-- the CLOB answers "Invalid L1 Request headers", both call sites derive as a
+plain EOA -- and the module now holds `deriveApiCreds`, so following that
+instruction would remove credential derivation and stop all trading. And the
+argument that `applyClobProxyOnce`'s process-wide `axios.defaults` mutation is
+safe (every axios importer is a Polymarket one, everything else uses fetch)
+lived only in a comment, which cannot fail; `test/axios-scope.test.ts` now
+fails the day a non-Polymarket module imports axios and would start routing
+through an operator's `POLYMARKET_CLOB_PROXY` unasked.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`
