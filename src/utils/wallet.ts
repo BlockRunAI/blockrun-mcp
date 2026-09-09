@@ -248,6 +248,13 @@ export async function ensureBothWallets(): Promise<{
   // already wins in getChain() and must not be overwritten.
   const chainBefore = readChainPreference() === null ? getChain() : null;
 
+  // Whether THIS call provisions, not whether the cached object still carries
+  // the isNew flag from an earlier one. Both caches freeze isNew for the life of
+  // the process, so a second ensureBothWallets() would otherwise look like a
+  // second mint — and the pin below is written off exactly that fact.
+  const evmWasCached = _evmWalletInfo !== null;
+  const solWasCached = _solanaWalletInfo !== null;
+
   const evm = ensureEvmWallet();
   // NOT the SDK's getOrCreateSolanaWallet(): that loader knows only the env var
   // and the file. Under BLOCKRUN_KEYCHAIN=strict the file is retired once the
@@ -258,12 +265,31 @@ export async function ensureBothWallets(): Promise<{
   // refuses to mint when the keychain could not be read (audit 2026-09-08).
   const sol = await ensureSolanaWallet();
 
-  if (chainBefore !== null && getChain() !== chainBefore) {
+  // Pin on the PROVISIONING FACT, not on a re-derived getChain().
+  //
+  // The old form asked getChain() again and wrote the pin only if the answer
+  // had moved. Under BLOCKRUN_KEYCHAIN=strict that question cannot be answered
+  // correctly at this point: minting the Solana wallet stores the key in the
+  // keychain and DELETES .solana-session, so getChain()'s file check misses and
+  // its keychain probe returns the value memoised before the mint. It answered
+  // "base" both times, no pin was written, and on the next start the probe
+  // re-ran, found the new key and moved a funded Base user onto an empty Solana
+  // wallet — the exact 0.32.3 failure CHAIN_AUTO_FILE exists to prevent.
+  //
+  // Minting the OTHER chain's wallet is the whole reason continuity is at risk,
+  // and that fact is local, cache-free and true on both platforms.
+  const solMinted = !solWasCached && sol.isNew;
+  const evmMinted = !evmWasCached && evm.isNew;
+  if (chainBefore !== null && ((solMinted && chainBefore === "base") || (evmMinted && chainBefore === "solana"))) {
     // writeAutoChain, NOT setChain: this is the machine preserving continuity,
     // not the user expressing a preference. The distinction is the whole fix —
     // see CHAIN_AUTO_FILE.
     writeAutoChain(chainBefore);
   }
+  // The probes were memoised before the mint, so at least one of them is now a
+  // lie for the rest of the process. The pin above already outranks them in
+  // getChain(); dropping them keeps a same-process reader honest anyway.
+  if (solMinted || evmMinted) resetKeychainProbeCache();
 
   return {
     base: { address: evm.address, isNew: evm.isNew },
@@ -497,6 +523,7 @@ export function resolveSolanaKey(): string | undefined {
 }
 
 let _solanaWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
+let _solanaWalletPromise: Promise<{ address: string; privateKey: string; isNew: boolean }> | null = null;
 
 /**
  * The Solana twin of ensureEvmWallet(): return the existing wallet from
@@ -505,8 +532,31 @@ let _solanaWalletInfo: { address: string; privateKey: string; isNew: boolean } |
  * already gone in strict mode, so minting here would orphan a funded key that
  * is very likely still sitting in a keychain we merely could not open.
  */
-export async function ensureSolanaWallet(): Promise<{ address: string; privateKey: string; isNew: boolean }> {
+export async function ensureSolanaWallet(): Promise<SolanaWalletInfo> {
   if (_solanaWalletInfo) return _solanaWalletInfo;
+  // Single-flight. The cache is only assigned AFTER `await createSolanaWallet()`,
+  // so two overlapping callers both saw null and both minted — and 0.49.0 made
+  // that reachable from two entry points at once: the read-only
+  // blockrun://wallet resource and blockrun_wallet action:"setup". Last writer
+  // wins in the file and the keychain, so one caller walks away with a funding
+  // QR for an address whose key was discarded.
+  //
+  // A rejection is deliberately NOT cached: memoising the keychain-error throw
+  // below would leave a user who unlocks their keychain and retries broken until
+  // restart — the same poisoning 0.49.0 removed when it stopped memoising a MISS
+  // (see resolveSolanaKeyDetailed, and the tests that pin it).
+  if (!_solanaWalletPromise) {
+    _solanaWalletPromise = provisionSolanaWallet().catch((err) => {
+      _solanaWalletPromise = null;
+      throw err;
+    });
+  }
+  return _solanaWalletPromise;
+}
+
+type SolanaWalletInfo = { address: string; privateKey: string; isNew: boolean };
+
+async function provisionSolanaWallet(): Promise<SolanaWalletInfo> {
   const { key, keychainError } = resolveSolanaKeyDetailed();
   if (key) {
     _solanaWalletInfo = { address: await solanaPublicKey(key), privateKey: key, isNew: false };
@@ -535,6 +585,7 @@ export async function ensureSolanaWallet(): Promise<{ address: string; privateKe
 export function resetSolanaKeyCache(): void {
   _solanaKey = undefined;
   _solanaWalletInfo = null;
+  _solanaWalletPromise = null;
 }
 
 /**
