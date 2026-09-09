@@ -9,20 +9,27 @@ Harness: [`scripts/measure-tool-schema.mjs`](../scripts/measure-tool-schema.mjs)
 (`npm run measure:schema`). Guard: [`test/schema-tokens.test.ts`](../test/schema-tokens.test.ts),
 which fails the build when the README card disagrees with a live measurement.
 
-Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0.
+Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0. Numbers re-measured
+2026-09-09 at 0.49.0.
 
 ## Our number
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 20 | 12,900 |
-| `trading` | 9 | 5,554 |
-| `media` | 7 | 5,436 |
-| `research` | 6 | 3,024 |
-| `chat` | 3 | 1,924 |
+| `full` *(default)* | 19 | 12,657 |
+| `trading` | 8 | 5,160 |
+| `media` | 7 | 5,603 |
+| `research` | 5 | 2,635 |
+| `chat` | 3 | 1,976 |
 
-Descriptions are ~54% of it, input schemas ~41%. `--profile trading` costs 57% less than the
+Descriptions are ~55% of it, input schemas ~40%. `--profile trading` costs 59% less than the
 default for the same workflow.
+
+These figures move with every description edit, so they are not the source of truth — the README
+card is, and `test/schema-tokens.test.ts` fails the build when it disagrees with a live
+measurement. This page is dated prose; re-run `npm run measure:schema` before quoting it. (It was
+20 tools and 12,900 tokens until 2026-09-06, when the gateway retired Surf and `blockrun_surf`
+went with it.)
 
 Measure it yourself, against us or anyone else:
 
@@ -50,7 +57,7 @@ It is a JSON Schema *dialect declaration*, and as far as can be verified it does
 block the model carries on every turn, and the server author never wrote it and cannot see it in
 their source.
 
-Cost: **~15 tokens per tool.** For us, 20 tools → 300 tokens. On a 49-tool server of the kind
+Cost: **~15 tokens per tool.** For us, 19 tools → ~285 tokens. On a 49-tool server of the kind
 Uber cited, ~735 tokens. Nobody's tool budget is blown by this, but it is 100% waste, it is
 invisible from the source code, and it is in essentially every SDK-built server in the ecosystem.
 
@@ -63,7 +70,7 @@ Stronger than inference, weaker than "every client ignores it". Verified:
 - **The SDK's bundled validator never receives it.** ajv (`validation/ajv-provider.js`) is invoked
   on `tool.outputSchema` and on elicitation `requestedSchema` — never on `inputSchema`. In the
   reference implementation the header is not even handed to a validator.
-- **It is inert for ajv anyway.** Compiling all 20 tool schemas under the SDK's exact ajv config,
+- **It is inert for ajv anyway.** Compiling all 20 tool schemas (the count at the time) under the SDK's exact ajv config,
   with and without the header, against 5 input samples each: identical verdicts on **100/100**
   pairs, 0 differences.
 

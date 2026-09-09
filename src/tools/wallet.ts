@@ -111,10 +111,37 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
         if (!agent_limit || agent_limit <= 0) {
           return { content: [{ type: "text", text: formatError("agent_limit (USD > 0) required for delegate action") }], isError: true };
         }
-        budget.agents.set(agent_id, { limit: agent_limit, spent: 0, calls: 0 });
+        // Carry the LEDGER across a re-delegation. This used to write
+        // `spent: 0` unconditionally, so an agent that had exhausted its cap
+        // could refill itself by calling delegate again with the same id —
+        // and delegate is a tool the model can call. A limit is a policy the
+        // operator may raise or lower at will; spend already happened and is
+        // not the operator's to erase. (The global BLOCKRUN_BUDGET_LIMIT was
+        // never bypassable this way — it is checked separately — so this was a
+        // per-agent sub-cap that quietly meant nothing.)
+        const prior = budget.agents.get(agent_id);
+        const spent = prior?.spent ?? 0;
+        const calls = prior?.calls ?? 0;
+        budget.agents.set(agent_id, { limit: agent_limit, spent, calls });
+        // USDC has six decimals, and float subtraction does not: 1 - 0.9 is
+        // 0.09999999999999998, which would surface verbatim in the report and
+        // in structuredContent. Round the DERIVED figure; `spent` stays exact.
+        const remaining = Math.round(Math.max(0, agent_limit - spent) * 1e6) / 1e6;
+        const lines = [`Agent "${agent_id}" allocated $${agent_limit.toFixed(2)} budget.`];
+        if (prior) {
+          lines.push(
+            `Carried over from the previous allocation: $${spent.toFixed(4)} spent across ${calls} call${calls === 1 ? "" : "s"} — ` +
+            `$${remaining.toFixed(4)} remains under the new limit.` +
+            (remaining === 0 ? ` This agent is already at its cap; raise agent_limit above $${spent.toFixed(4)} to give it room.` : ""),
+          );
+        }
+        if (budget.limit !== null && agent_limit > budget.limit) {
+          lines.push(`Note: the session cap is $${budget.limit.toFixed(2)}, so this agent cannot actually spend more than that.`);
+        }
+        lines.push(`Pass agent_id: "${agent_id}" in any blockrun_* tool call to track and enforce this limit.`);
         return {
-          content: [{ type: "text", text: `Agent "${agent_id}" allocated $${agent_limit.toFixed(2)} budget.\nPass agent_id: "${agent_id}" in any blockrun_* tool call to track and enforce this limit.` }],
-          structuredContent: { agent_id, limit: agent_limit, spent: 0, calls: 0 },
+          content: [{ type: "text", text: lines.join("\n") }],
+          structuredContent: { agent_id, limit: agent_limit, spent, calls, remaining },
         };
       }
 
