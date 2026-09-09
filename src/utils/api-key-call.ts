@@ -75,6 +75,72 @@ function costFrom(response: Response): number | null {
 /** Statuses the gateway uses for a job that will never complete. */
 const TERMINAL_FAILURES = new Set(["failed", "cancelled", "canceled"]);
 
+/**
+ * Poll statuses that mean "the proxy tier hiccupped", not "the job is gone".
+ * The SDK's own ApiKeyAuth.fetch retries 502/503/504/522/524 on GETs; 429 is
+ * added because a poll is free and Retry-After says exactly how long to wait.
+ * On this rail the job is already paid for, so abandoning it on one of these
+ * costs the whole clip and invites a second, equally billed submit.
+ */
+const TRANSIENT_POLL_STATUSES = new Set([429, 502, 503, 504, 522, 524]);
+
+/**
+ * A failure on the account rail's async path for which the account has been, or
+ * may have been, charged.
+ *
+ * This rail bills a media job the moment the gateway accepts it (202); the polls
+ * are free. So unlike the wallet rails, where "we gave up" means "nothing
+ * settled", every exit after a successful submit here leaves money spent — and
+ * the two things a caller needs are exactly what a bare Error cannot carry: how
+ * much (to book it), and which job (so nobody submits it twice). The message text
+ * of the deadline case is unchanged from before this class existed, because
+ * isTimeoutError keys on it.
+ */
+export class BilledJobError extends Error {
+  /**
+   * The settled cost from the submit response's x-blockrun-cost-usd, or null
+   * when the header was absent. Null is not free: callers hand it to
+   * recordActualSpend, which falls back to their estimate, never to $0.
+   */
+  readonly paidUsd: number | null;
+  readonly jobId?: string;
+  /**
+   * "billed": the gateway answered 202, so the charge is certain.
+   * "unknown": no response was observed — the submit never returned, or a
+   * terminal failure arrived without a payment_status — so the request may or
+   * may not have been billed. Callers book the estimate in both cases: a cap
+   * that over-counts a lost request is the safe direction, and under-counting a
+   * real charge is the failure the ledger exists to prevent.
+   */
+  readonly billing: "billed" | "unknown";
+
+  constructor(message: string, opts: { paidUsd: number | null; jobId?: string; billing: "billed" | "unknown" }) {
+    super(message);
+    this.name = "BilledJobError";
+    this.paidUsd = opts.paidUsd;
+    this.jobId = opts.jobId;
+    this.billing = opts.billing;
+  }
+}
+
+/**
+ * True when a fetch rejection proves the request never left this machine — DNS
+ * failed, or the connection was refused — so nothing could have been billed.
+ * Anything else (an abort, a reset, a socket error mid-flight) is ambiguous:
+ * the request may have reached the gateway and been accepted.
+ */
+const NEVER_CONNECTED = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"]);
+function connectionNeverOpened(err: unknown): boolean {
+  const cause = (err as { cause?: { code?: unknown } } | undefined)?.cause;
+  return typeof cause?.code === "string" && NEVER_CONNECTED.has(cause.code);
+}
+
+function retryAfterMs(response: Response): number {
+  const raw = response.headers.get("retry-after");
+  const seconds = raw === null ? NaN : Number(raw.trim());
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
 function receiptFrom(response: Response): string | undefined {
   return (
     response.headers.get("x-payment-receipt") ??
@@ -87,21 +153,21 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return (await response.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-async function throwForStatus(response: Response, what: string): Promise<never> {
-  const body = await readJson(response);
+/** The message for a non-ok response whose body has already been read. */
+function statusErrorMessage(response: Response, what: string, body: Record<string, unknown>): string {
   // A 402 on this rail is not a quote to pay — it means the ACCOUNT is out of
   // credit. Signing anything here would be wrong (there is no wallet), so say
   // what actually has to happen.
   if (response.status === 402) {
-    throw new Error(
+    return (
       `${what} was refused: the BlockRun account is out of credit. ` +
-        `Top up at https://user.blockrun.ai/dashboard/credits.`,
+      `Top up at https://user.blockrun.ai/dashboard/credits.`
     );
   }
   if (response.status === 401) {
-    throw new Error(
+    return (
       `${what} was refused: the BlockRun API key was rejected. ` +
-        `Check the key at https://user.blockrun.ai/dashboard/keys.`,
+      `Check the key at https://user.blockrun.ai/dashboard/keys.`
     );
   }
   // Surface Retry-After rather than burying it in the body. It is the one piece
@@ -110,11 +176,13 @@ async function throwForStatus(response: Response, what: string): Promise<never> 
   // PR #136, which surfaced it and this path did not.)
   if (response.status === 429) {
     const retry = response.headers.get("retry-after");
-    throw new Error(
-      `${what} was rate limited${retry ? ` — retry after ${retry}s` : ""}.`,
-    );
+    return `${what} was rate limited${retry ? ` — retry after ${retry}s` : ""}.`;
   }
-  throw new Error(`API error ${response.status}: ${JSON.stringify(body)}`);
+  return `API error ${response.status}: ${JSON.stringify(body)}`;
+}
+
+async function throwForStatus(response: Response, what: string): Promise<never> {
+  throw new Error(statusErrorMessage(response, what, await readJson(response)));
 }
 
 /** POST an endpoint that answers inline. `endpoint` is rooted, e.g. "/v1/audio/speech". */
@@ -188,15 +256,32 @@ export async function apiKeyAsyncPost(
   // only deadline is the caller's own budget.
   const deadline = startedAt + pollBudgetMs;
 
-  const submit = await fetchWithTimeout(
-    `${getApiBase()}${endpoint}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
-      body: JSON.stringify(body),
-    },
-    opts.submitTimeoutMs ?? 95_000,
-  );
+  let submit: Response;
+  try {
+    submit = await fetchWithTimeout(
+      `${getApiBase()}${endpoint}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
+        body: JSON.stringify(body),
+      },
+      opts.submitTimeoutMs ?? 95_000,
+    );
+  } catch (err) {
+    // A submit that never connected cannot have been billed; let it surface as
+    // the network error it is. Anything else is ambiguous — the request may
+    // have reached the gateway, which bills the moment it accepts — and the
+    // honest statement is "may have", not "was" (no charge was observed) and
+    // not "was not" (which would license a second submit).
+    if (connectionNeverOpened(err)) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new BilledJobError(
+      `POST ${endpoint} did not return a response (${reason}). The request may have reached the gateway, ` +
+        `and this rail bills a job the moment it is accepted, so the job MAY have been accepted and billed to the account — ` +
+        `check https://user.blockrun.ai/dashboard/activity before submitting again.`,
+      { paidUsd: null, billing: "unknown" },
+    );
+  }
   if (!submit.ok && submit.status !== 202) await throwForStatus(submit, `POST ${endpoint}`);
 
   const submitted = await readJson(submit);
@@ -214,16 +299,32 @@ export async function apiKeyAsyncPost(
   const absolutePollUrl = resolveGatewayUrl(pollUrl);
   let lastStatus = typeof submitted.status === "string" ? submitted.status : "queued";
 
+  // From here on the account has paid. Every give-up below says so, names the
+  // job, and carries the cost, because the natural next move after a bare
+  // failure is to submit again — and that bills a second job.
+  const billedNote =
+    `It has already been billed to the account${jobId ? `; job id ${jobId}` : ""} — ` +
+    `check https://user.blockrun.ai/dashboard/activity before submitting again.`;
+  const billed = (message: string) => new BilledJobError(message, { paidUsd: submitCost, jobId, billing: "billed" });
+
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
     const timeout = pollTimeoutFor(deadline, Date.now(), pollTimeoutMs);
     if (timeout === 0) break;
 
-    const poll = await fetchWithTimeout(
-      absolutePollUrl,
-      { method: "GET", headers: { ...apiAuthHeaders() } },
-      timeout,
-    );
+    let poll: Response;
+    try {
+      poll = await fetchWithTimeout(
+        absolutePollUrl,
+        { method: "GET", headers: { ...apiAuthHeaders() } },
+        timeout,
+      );
+    } catch {
+      // Polls are free and idempotent, and the money is already gone: a
+      // transient disconnect (or one clamped poll's abort) must not abandon a
+      // job the account has paid for. The deadline above bounds the retry.
+      continue;
+    }
     const data = await readJson(poll);
     if (typeof data.status === "string") lastStatus = data.status;
 
@@ -236,12 +337,17 @@ export async function apiKeyAsyncPost(
       // it tells someone not to check a charge that may be real.
       const paymentStatus = typeof data.payment_status === "string" ? data.payment_status : undefined;
       const note = typeof data.note === "string" ? data.note : undefined;
+      const failed = `Upstream generation failed: ${String(data.error ?? "unknown")}.`;
+      if (paymentStatus === "not_charged") {
+        throw new Error(`${failed} ${note ?? "No payment was taken."}`);
+      }
+      // Anything short of an observed refund is bookable: an explicit charged
+      // status is certain, an absent one is unknown — and unknown books too,
+      // because the gateway's contract is to say "not_charged" when it refunds.
       const billing =
         note ??
-        (paymentStatus === "not_charged"
-          ? "No payment was taken."
-          : `Billing status: ${paymentStatus ?? "unknown"} — check https://user.blockrun.ai/dashboard/activity${jobId ? ` for job ${jobId}` : ""}.`);
-      throw new Error(`Upstream generation failed: ${String(data.error ?? "unknown")}. ${billing}`);
+        `Billing status: ${paymentStatus ?? "unknown"} — check https://user.blockrun.ai/dashboard/activity${jobId ? ` for job ${jobId}` : ""}.`;
+      throw new BilledJobError(`${failed} ${billing}`, { paidUsd: submitCost, jobId, billing: paymentStatus ? "billed" : "unknown" });
     }
     if (poll.ok && lastStatus === "completed") {
       // Async media bills at SUBMIT and the polls are free, so the price rides
@@ -249,16 +355,19 @@ export async function apiKeyAsyncPost(
       // poll's header if one ever appears, but fall back to the submit's.
       return { data, paidUsd: costFrom(poll) ?? submitCost, txHash: receiptFrom(poll), jobId };
     }
-    // 504 is a transient upstream poll timeout on this gateway, same as the
-    // wallet rails — keep polling rather than abandoning a paid job.
-    if (!poll.ok && poll.status !== 202 && poll.status !== 504) {
-      await throwForStatus(poll, `poll ${absolutePollUrl}`);
+    if (TRANSIENT_POLL_STATUSES.has(poll.status)) {
+      // Honour Retry-After when the proxy sends one, but never sleep past the
+      // deadline; the loop's own interval covers the rest.
+      const wait = Math.min(retryAfterMs(poll), Math.max(0, deadline - Date.now()));
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    if (!poll.ok && poll.status !== 202) {
+      throw billed(`${statusErrorMessage(poll, `poll ${absolutePollUrl}`, data)} ${billedNote}`);
     }
   }
 
-  throw new Error(
-    `Job did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}). ` +
-      `It has already been billed to the account${jobId ? `; job id ${jobId}` : ""} — ` +
-      `check https://user.blockrun.ai/dashboard/activity before submitting again.`,
+  throw billed(
+    `Job did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}). ${billedNote}`,
   );
 }
