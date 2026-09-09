@@ -6,9 +6,11 @@ AI via x402. One self-custody identity: it pays for models in USDC on Base *and*
 settles USDC-denominated bets on the world's largest prediction market.
 
 > **Real money.** A confirmed order spends real **pUSD** (Polymarket's USDC-backed
-> collateral) on Polygon. Every order, approval, redeem, and withdrawal is
-> **confirm-gated** (dry-run unless you pass `confirm:true`) and **capped**
-> (`POLYMARKET_MAX_BET_USD`, default **$25/order**). Start with ~$5 and a $1 test.
+> collateral) on Polygon. Every order, approval, fund, redeem, and withdrawal is
+> **confirm-gated** (dry-run unless you pass `confirm:true`). Orders are
+> additionally **capped** (`POLYMARKET_MAX_BET_USD`, default **$25/order**;
+> optional `POLYMARKET_MAX_SESSION_USD`); funding can be capped per call with
+> the optional `POLYMARKET_MAX_FUND_USD` (unset = no cap). Start with ~$5 and a $1 test.
 
 This flow is verified end to end on the live CLOB: an agent's own wallet created
 its deposit vault, funded it gaslessly via x402, and placed a **real $1 market
@@ -199,7 +201,8 @@ blockrun_polymarket action:"redeem" condition_id:"0x..." confirm:true
 blockrun_polymarket action:"withdraw"                          # dry-run (full balance)
 blockrun_polymarket action:"withdraw" confirm:true             # execute
 #    partial:    amount_usd:5
-#    elsewhere:  to_address:"0x..."   (default: your own agent wallet on Base)
+#    elsewhere:  to_address:"0x..."   (default: your own agent wallet on Base;
+#                a custom address is flagged CUSTOM in the preview — read it twice)
 ```
 
 **The loop that closes the story:** `sell` (before resolution) or `redeem`
@@ -216,6 +219,12 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
   never signs *above* your limit, a sell never *below*.
 - **Market buy** takes `amount_usd` (dollars to spend); **market sell** takes
   `size` (shares to sell). **Limit** takes `price` + `size`.
+- **Market orders are signed at the previewed worst fill.** The dry-run walks
+  the live book and prints `worst fill ≤ X` (buy) / `worst fill ≥ X` (sell)
+  next to the best quote; that same `X` is the limit on the signed order, so a
+  book that thins between preview and confirm can only fill *less*, never
+  worse than what you saw. Est. sell proceeds are the walked total, not
+  size × best bid.
 - **Order types:** `GTC` (rests, default for limits), `GTD` (good-till-`expires_at`),
   `FOK` (fill-or-kill, default for market), `FAK` (fill-and-kill the rest).
 - `min_order_size` and tick come from the live market — the dry-run shows both.
@@ -227,7 +236,17 @@ x402 AI fees. Money in via x402, money out via withdraw — one wallet, full cir
 - **`confirm:true` is required** for every order / approval / fund / redeem /
   withdraw. Without it: a dry-run preview, nothing signed.
 - **Per-order cap** `POLYMARKET_MAX_BET_USD` (default $25) + optional cumulative
-  **`POLYMARKET_MAX_SESSION_USD`** (in-memory, per-`agent_id`).
+  **`POLYMARKET_MAX_SESSION_USD`** (in-memory, per-`agent_id`). These gate
+  orders only.
+- **Optional per-call fund cap** `POLYMARKET_MAX_FUND_USD` — bounds a single
+  `fund` call (your own Base USDC → your own vault). Unset = no cap, which is
+  the default: funding is self-to-self and reversible via `withdraw`. `redeem`
+  and `withdraw` are confirm-gated but not capped.
+- **`withdraw` labels the destination honestly.** The preview says
+  `(your agent wallet)` only when the money is going back to the wallet that
+  pays your x402 fees; a caller-supplied `to_address` is shown as
+  `⚠️ CUSTOM destination — NOT your agent wallet`, and a malformed or
+  checksum-mismatched address is refused before anything is signed.
 - **Bets never draw from your x402 API budget** — different asset (pUSD vs Base
   USDC), different wallet ledger. They can't corrupt each other.
 - **Your private key never leaves the machine** and is never printed or logged.

@@ -12,7 +12,7 @@ import type { Hex } from "viem";
 import { BlockrunClient, createPaymentPayload } from "@blockrun/llm";
 import { getOrCreateWalletKey, getChainBalance } from "../wallet.js";
 import { getPolymarketAccount } from "./client.js";
-import { BASE_CHAIN_ID, BRIDGE_API_HOST, getSigType } from "./constants.js";
+import { BASE_CHAIN_ID, BRIDGE_API_HOST, getMaxFundUsd, getSigType } from "./constants.js";
 import { getFundsAddress } from "./positions.js";
 import { getPublicClient } from "./setup.js";
 import type { ToolResult } from "./orders.js";
@@ -45,6 +45,19 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
     return {
       text: `Minimum funding is $${FUND_MIN_USD} — the Polymarket bridge does not process smaller Base-USDC deposits ` +
         `(a smaller amount would confirm on Base but never wrap to pUSD in your vault). Use amount_usd ≥ ${FUND_MIN_USD}.`,
+      isError: true,
+    };
+  }
+  // Optional per-call ceiling. fund signs an EIP-3009 authorization for the
+  // FULL amount outside the x402 budget ledger and outside the order caps
+  // (POLYMARKET_MAX_BET_USD gates executeTrade only). Default: no cap — this is
+  // the user's own Base USDC into a vault only the same key controls. Checked
+  // before any RPC/bridge call so the dry-run reports the refusal too.
+  const maxFund = getMaxFundUsd();
+  if (maxFund !== null && input.amount_usd > maxFund) {
+    return {
+      text: `Refusing to fund $${input.amount_usd.toFixed(2)}: POLYMARKET_MAX_FUND_USD caps a single funding call at ` +
+        `$${maxFund.toFixed(2)}. Nothing moved. Fund in smaller calls, or raise/unset the cap if the operator intends it.`,
       isError: true,
     };
   }

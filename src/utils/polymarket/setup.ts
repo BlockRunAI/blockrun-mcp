@@ -257,12 +257,26 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   const account = getPolymarketAccount();
 
   // 1. Derive (pure CREATE2 math) + persist, keyed to the current signer.
+  //    `deployed`/`approvalsDone` describe ONE vault. saveState is a shallow
+  //    merge, so after a signer rotation (loadDepositWalletForSigner refuses
+  //    the old vault → a new CREATE2 address is derived) the old vault's
+  //    deployed:true used to survive, short-circuit the deploy step below, and
+  //    have setup print "✅ deployed" + "bridge USDC here" for a vault with no
+  //    code — which the bridge sweeps and never delivers (fund.ts). Snapshot
+  //    BEFORE the merge and reset the per-wallet flags when the address moves.
+  const prev = loadState();
   const depositWallet = (loadDepositWalletForSigner(account.address) as Hex | undefined) ?? (await deriveDepositWallet());
-  saveState({ depositWallet, signer: account.address });
+  const sameWallet = prev.depositWallet?.toLowerCase() === depositWallet.toLowerCase();
+  saveState(
+    sameWallet
+      ? { depositWallet, signer: account.address }
+      : { depositWallet, signer: account.address, deployed: false, approvalsDone: false },
+  );
 
   // 2. Deploy if missing — gasless, moves no funds, ownership is baked into
-  //    the CREATE2 address, so no confirm gate is needed here.
-  let deployed = loadState().deployed === true || (await isDepositWalletDeployed(depositWallet));
+  //    the CREATE2 address, so no confirm gate is needed here. The persisted
+  //    flag is only trusted for the wallet it was written for.
+  let deployed = (sameWallet && prev.deployed === true) || (await isDepositWalletDeployed(depositWallet));
   let deployTxHash: string | undefined;
   if (!deployed) {
     const res = await deployDepositWallet();

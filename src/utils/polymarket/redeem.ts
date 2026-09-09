@@ -90,15 +90,21 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
     return { text: err instanceof Error ? err.message : String(err), isError: true };
   }
 
+  // Market metadata (question, outcome tokens, negRisk) via the CLOB. These
+  // are the ONLY CLOB calls in this function, so they are the only errors
+  // mapClobError's taxonomy (geoblock 403, creds, "closed" → resolved) can
+  // legitimately describe; everything below is RPC/relayer and reported raw.
+  type ClobMarket = { question?: string; neg_risk?: boolean; closed?: boolean; tokens?: ClobMarketToken[] };
+  let clob: Awaited<ReturnType<typeof getClobClient>>;
+  let market: ClobMarket;
   try {
-    // Market metadata (question, outcome tokens, negRisk) via the CLOB.
-    const clob = await getClobClient();
-    const market = (await clob.getMarket(conditionId)) as {
-      question?: string;
-      neg_risk?: boolean;
-      closed?: boolean;
-      tokens?: ClobMarketToken[];
-    };
+    clob = await getClobClient();
+    market = (await clob.getMarket(conditionId)) as ClobMarket;
+  } catch (err) {
+    return { text: await mapClobError(err), isError: true };
+  }
+
+  try {
     const tokens = (market?.tokens ?? []).filter((t) => t.token_id);
     if (!tokens.length) return { text: `No tokens found for condition ${conditionId}.`, isError: true };
 
@@ -291,7 +297,11 @@ export async function redeemPosition(input: { condition_id?: string; confirm?: b
       },
     };
   } catch (err) {
-    const base = await mapClobError(err);
+    // RPC / relayer / receipt errors — never CLOB — so no mapClobError here:
+    // an RPC "403" is not a geoblock and a "connection closed" is not a
+    // resolved market. The raw message is kept verbatim so the relayer's
+    // deliberate "failed on-chain" / "Do NOT retry" wording reaches the user.
+    const base = err instanceof Error ? err.message : String(err);
     // The adapter pulls tokens via safeBatchTransferFrom — a vault set up
     // before the collateral-adapter approvals were added reverts here.
     const approvalHint = ` If the transaction reverted, the wallet may be missing the collateral-adapter ` +
