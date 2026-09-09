@@ -176,7 +176,7 @@ export const DEGRADED_SPORTS_SINCE = "2026-08-04";
 // all quote a 402; bare `markets`, `outcomes/:id` and `matching-markets` were
 // removed upstream 2026-08-04 and 404 BEFORE payment ("Unknown Predexon
 // endpoint"), and no live /v1/pm route accepts a `league` param — which is what
-// 0.48.1 shipped as the steer, so it failed on first use.
+// 0.48.1 (never released — folded into 0.49.0) shipped as the steer, so it failed on first use.
 const SPORTS_REMEDY =
   `For sports odds use "markets/search" with params { q: "NBA" } (every venue in one call), ` +
   `"polymarket/events" with params { search: "NBA" }, or "kalshi/markets".`;

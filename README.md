@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 57% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 12.9K tokens, 6% of a 200K context window, charged every turn whether or not you call a tool. 5.4K with --profile trading, 58% less.">
   </picture>
 </div>
 
@@ -218,13 +218,13 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 20 | 13,023 |
-| `trading` | 9 | 5,606 |
-| `media` | 7 | 5,558 |
-| `research` | 6 | 3,075 |
-| `chat` | 3 | 1,975 |
+| `full` *(default)* | 20 | 12,883 |
+| `trading` | 9 | 5,386 |
+| `media` | 7 | 5,603 |
+| `research` | 6 | 2,861 |
+| `chat` | 3 | 1,976 |
 
-Running `--profile trading` instead of the default costs **57% less context** for the same trading
+Running `--profile trading` instead of the default costs **58% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
 
 Measure it yourself — against us, or against any other stdio MCP server:
@@ -516,7 +516,7 @@ A blocked capability returns a message naming the fix, not a raw error.
 |---|---|
 | API key — most tools | **The amount actually settled**, read from the account API's per-call response |
 | API key — `blockrun_chat` | An estimate. Chat settles *after* the response by design, so no figure exists when the answer is sent |
-| API key — `blockrun_image` | **The amount actually settled** (since 0.48.1); only when the account API returns no figure does it fall back to the catalog estimate, marked `~` |
+| API key — `blockrun_image` | **The amount actually settled** (since 0.49.0); only when the account API returns no figure does it fall back to the catalog estimate, marked `~` |
 | Wallet | The amount signed and settled on-chain, from the 402 quote |
 
 Anything estimated is printed with a `~` and says so. Estimates run **high** on
@@ -624,7 +624,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
 - **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
 - **`blockrun_price` says `Equity quotes are not served (gateway 501 …)`** → Equity price/history were withdrawn on 2026-09-05; not an outage, and **nothing was charged** (the wallet is never asked to sign). The ticker catalog (`action:"list" category:"stocks"`) is still free. Equity coverage: hello@blockrun.ai.
-- **`blockrun_markets` on `sports/*` fails — before 0.48.1 as `API error after payment: 502` with no balance change** → Predexon's `sports/*` routes have been down upstream since 2026-08-04; the gateway releases the payment on that upstream 500, so the call is **not charged** (the error says so when the gateway's "payment NOT charged" confirmation is in the response; otherwise it tells you to check `blockrun_wallet action:"report"`). For sports odds use `path:"markets/search"` with `params:{ q: "NBA" }`, or `polymarket/events` with `params:{ search: "NBA" }` — the bare `markets` route and its `league` filter were removed upstream on 2026-08-04 and 404 before payment. Upgrade to ≥ 0.48.1 so the error says all of this itself.
+- **`blockrun_markets` on `sports/*` fails — before 0.49.0 as `API error after payment: 502` with no balance change** → Predexon's `sports/*` routes have been down upstream since 2026-08-04; the gateway releases the payment on that upstream 500, so the call is **not charged** (the error says so when the gateway's "payment NOT charged" confirmation is in the response; otherwise it tells you to check `blockrun_wallet action:"report"`). For sports odds use `path:"markets/search"` with `params:{ q: "NBA" }`, or `polymarket/events` with `params:{ search: "NBA" }` — the bare `markets` route and its `league` filter were removed upstream on 2026-08-04 and 404 before payment. Upgrade to ≥ 0.49.0 so the error says all of this itself.
 - **`blockrun_surf` says `retired … 410 endpoint_retired since 2026-09-06`** → Surf (asksurf.ai) is gone from the gateway; not an outage, **nothing was charged** (no budget is reserved, the wallet is never asked to sign). Prices → `blockrun_price` (free), TVL/yields → `blockrun_defi`, prediction markets → `blockrun_markets`, DEX pairs → `blockrun_dex` (free). On-chain SQL, wallet labels and social mindshare have no replacement yet.
 - **No spend-confirmation dialog although `BLOCKRUN_CONFIRM_SPEND=on`** → Your client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI); the server proceeds without asking by design. Use `BLOCKRUN_BUDGET_LIMIT` as the guard, or a client from the [support table](#%EF%B8%8F-human-in-the-loop-payments).
 - **Polymarket: neg-risk ("winner") market buy fails, or `redeem` reverts, though setup shows ready** → Re-run `action:"setup" confirm:true` once (grants the on-chain approvals a pre-upgrade deposit wallet may lack — including the collateral-adapter approvals `redeem` needs). See the [setup guide](docs/polymarket-trading-setup.md).

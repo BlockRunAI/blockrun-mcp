@@ -169,7 +169,7 @@ test("the sports remedy points at routes that 402 today, and never at `league`",
   //   /v1/pm/markets/search?q=NBA → 402  (the only canonical-layer survivor)
   //   /v1/pm/polymarket/events    → 402  (free-text filter is `search`, not `league`)
   //   /v1/pm/kalshi/markets       → 402
-  // No live /v1/pm route accepts a `league` param. 0.48.1 shipped a remedy that
+  // No live /v1/pm route accepts a `league` param. an unreleased 0.48.1 draft shipped a remedy that
   // 404'd on first use; this pins the replacement.
   const out = describeDegradedSportsFailure("sports/markets", RELEASE_BRANCH_502) ?? "";
   assert.match(out, /markets\/search/);

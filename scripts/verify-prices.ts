@@ -328,7 +328,7 @@ for (const probe of PROBES) {
     // separate deployment that can lag Base) did not know azure/sora-2 and
     // quoted "Seedance 2.0 Pro video generation (5s)" at $1.135480 in its
     // place. That is a gateway bug to report, not an estimator gap to paper
-    // over by reserving the substitute's price — and since 0.48.1 every
+    // over by reserving the substitute's price — and since 0.49.0 every
     // manual-402 tool refuses a quote this far off the published rate before
     // signing (assertQuoteNearEstimate), nothing can be charged for it. Loud,
     // but not a release blocker for this repo.
