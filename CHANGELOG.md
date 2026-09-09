@@ -136,6 +136,14 @@ again. `scripts/` is also in the typecheck now: these files import from `src`
 and were checked by nothing, so a signature change surfaced when someone ran
 them against a funded wallet.
 
+**`scripts/smoke-speech.ts` charged the wallet for being run.** No flag, no
+prompt, `limit: null` so nothing capped it, under a header advertising "real
+$0.001 speak" while the run ends with a $0.0525 sound effect. It now refuses
+without `--confirm`, states the real total, and carries its own budget cap. A
+static test holds the line for the next script like it: the check is
+deliberately not behavioural, since a test that proved the gate by running the
+script would charge the wallet on the day the gate broke.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`
