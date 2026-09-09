@@ -14,6 +14,9 @@ triggers:
   - "equity quotes are not served"
   - "sports markets 500"
   - "501 not implemented"
+  - "blockrun unavailable"
+  - "server timed out"
+  - "startup_timeout_sec"
   - "refusing to sign it"
   - "quoted a different price"
   - "polymarket buy failed"
@@ -63,6 +66,7 @@ re-added at user scope leaves a duplicate. Then, in the session: `blockrun_walle
 | 401 from `api.blockrun.ai` | `BLOCKRUN_API_KEY` rejected. | Check the key at <https://user.blockrun.ai/dashboard/keys>. |
 | "needs wallet mode" on Polymarket / wallet / realface list | Keypair-only capability while `BLOCKRUN_API_KEY` is set. | Unset `BLOCKRUN_API_KEY` and restart to use a wallet. |
 | Startup error "not a valid BlockRun API key" | `BLOCKRUN_API_KEY` is malformed. It deliberately fails loudly rather than silently spending USDC from a wallet instead. | Fix the value or unset it. |
+| Grok (or any client with a startup timeout) shows `blockrun [unavailable]`, and `mcp doctor` says `server timed out (no response within 30s)` | NOT broken: a cold `npx -y` is still downloading the package and its dependency tree when the client gives up. Grok's `startup_timeout_sec` defaults to 30; the cold start measured 17s on a fast connection and 42-46s on a slower box. Nothing is charged — the server never started. | Raise it in `~/.grok/config.toml` (`[mcp_servers.blockrun]` … `startup_timeout_sec = 120`), or `npm install -g @blockrun/mcp@latest` and point the client at `blockrun-mcp`. Confirm the package itself is fine first: `npx -y @blockrun/mcp@latest` in a terminal answers an `initialize` line. Only the first run is slow — npx caches by exact spec. |
 | `fetch failed` / balance-check timeout | Base RPC blip; the tool rotates through 3 public RPCs | Wait 30 s, retry once. Persistent → a local proxy/firewall is blocking outbound RPC. |
 | `Video`/`Music generation timed out` | Upstream queue. **Not charged** — payment settles on completion only. | Retry, or pick a faster model. Do not retry-loop; jobs take 60–180 s. |
 | `blockrun_price` with `category:"stocks"` / `"usstock"` → `Equity quotes are not served (gateway 501 …)` | The gateway withdrew equity price/history on 2026-09-05 (licensing), and the tool answers before the wallet is consulted. Not an outage. **Not charged.** | Do not retry. `action:"list" category:"stocks" market:"us"` still returns the ticker catalog for free. Equity coverage: hello@blockrun.ai. |
