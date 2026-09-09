@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, recordActualSpend, reserveBudget } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -46,9 +46,19 @@ async function payAndPostJson(
   path: string,
   reqBody: string,
   fallbackDescription: string,
+  /**
+   * Called with the authoritative quote BEFORE anything is signed, on whichever
+   * rail is active. Throwing aborts unpaid. realface was the one manual-402
+   * tool with no such hook: it read the 402 amount and signed it five lines
+   * later, so a gateway quoting a different product (as sol.blockrun.ai did for
+   * azure/sora-2 on 2026-09-08) was paid without a word.
+   */
+  onQuote?: (quotedUsd: number | null, quotedFor?: string) => void,
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
   // ---- Rail 1: account API key. ----
   if (isApiKeyMode()) {
+    // No 402 on this rail: one POST, billed by the account. There is no quote
+    // to sanity-check, which is why onQuote is not called here.
     paidRequestInFlight = true;
     const resp = await fetchWithTimeout(`${getApiBase()}${path}`, {
       method: "POST",
@@ -67,8 +77,9 @@ async function payAndPostJson(
     const { solanaPaidPost } = await import("../utils/solana-402.js");
     paidRequestInFlight = true;
     try {
-      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000)
-        .finally(() => { paidRequestInFlight = false; });
+      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000, {
+        onQuote: (quotedUsd, quoteDetails) => onQuote?.(quotedUsd, quoteDetails?.resource?.description),
+      }).finally(() => { paidRequestInFlight = false; });
       return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
     } catch (err) {
       // solanaPaidPost throws on a non-2xx terminal response. Recover the status
@@ -103,6 +114,7 @@ async function payAndPostJson(
   const paymentRequired = parsePaymentRequired(prHeader);
   const details = extractPaymentDetails(paymentRequired);
 
+  onQuote?.(amountToUsd(details.amount), details.resource?.description);
   const paymentPayload = await createPaymentPayload(
     privateKey,
     account.address,
@@ -339,6 +351,20 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/portrait/enroll",
             JSON.stringify({ name, image_url }),
             "BlockRun Virtual Portrait enrollment",
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "portrait enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
@@ -410,6 +436,20 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/realface/enroll",
             JSON.stringify({ name, image_url, group_id }),
             "BlockRun RealFace enrollment",
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "RealFace enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
