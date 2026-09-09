@@ -218,8 +218,13 @@ function renderPreview(p: Preview): void {
       cancel.hidden = false;
       return;
     }
-    const args = { action: p.action, ...currentArgs(), confirm: true };
-    delete (args as Record<string, unknown>).side;
+    // Carry the bound the user was actually shown into the confirm. Without it
+    // the server re-walks a fresh book and signs THAT worst fill, so a book
+    // that moved between the quote and the click filled at a price this card
+    // never displayed. With it, a worse walk is refused unsigned.
+    const args: Record<string, unknown> = { action: p.action, ...currentArgs(), confirm: true };
+    delete args.side;
+    if (typeof p.worstFillPrice === "number") args.max_fill_price = p.worstFillPrice;
     submitting = true;
     setBusy(place, true, "Submitting…"); setBusy(requote, true); cancel.hidden = true;
     amountField.disabled = true;
