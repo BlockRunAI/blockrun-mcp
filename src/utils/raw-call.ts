@@ -1,7 +1,7 @@
 // src/utils/raw-call.ts
 //
-// One entry point for the path-based tools (search, exa, surf, markets, rpc,
-// defi, phone, modal), so each of them stops choosing a rail for itself.
+// One entry point for the path-based tools (search, exa, markets, rpc, defi,
+// phone, modal), so each of them stops choosing a rail for itself.
 //
 // WHY THIS EXISTS RATHER THAN "just call the SDK". On the account rail there is
 // no x402 to perform: no quote to read, nothing to sign, no retry-after-payment.

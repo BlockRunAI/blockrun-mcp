@@ -179,6 +179,20 @@ no test pinned. Both are now covered, along with the profile list itself, which
 was hardcoded in two places and would have left a newly added profile measured
 by neither.
 
+**CONTRIBUTING told new contributors to call the SDK directly.** Step 1 of
+"Adding a new MCP tool" was "copy `src/tools/surf.ts`", a file deleted with the
+tool in 0.49.0, and the payment section documented
+`client.getWithPaymentRaw` / `requestWithPaymentRaw` as the way to make a paid
+call. There are three payment rails and the SDK knows two: on the account rail
+it degrades to a plain Bearer fetch and discards the `x-blockrun-cost-usd`
+header, so a tool written from those instructions cannot report what it cost
+and books the wrong ledger figure. `src/utils/raw-call.ts` exists precisely so
+no tool picks a rail for itself, and every rail-parity bug this project has
+shipped came from one doing so. The steps now name files that exist and the
+helper that handles all three rails. `test/doc-file-refs.test.ts` fails when a
+doc names a repo path that is not there, and asserts that every path-based tool
+really does route through `raw-call`.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`
