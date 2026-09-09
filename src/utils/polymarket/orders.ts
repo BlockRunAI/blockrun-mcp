@@ -192,20 +192,44 @@ function bestQuote(book: OrderBookSummary, side: "buy" | "sell"): number | null 
   return side === "buy" ? Math.min(...prices) : Math.max(...prices);
 }
 
-function estimateMarketBuyShares(book: OrderBookSummary, amountUsd: number): { shares: number; unfilledUsd: number } {
-  const asks = (book.asks ?? [])
+/**
+ * Walk the opposite side of the book best-first for a market order.
+ *   buy:  `amount` is USD to spend → `filled` is the shares bought.
+ *   sell: `amount` is shares to sell → `filled` is the USD proceeds.
+ * `worstPrice` is the last level actually consumed — the price the user must
+ * be shown AND the limit the order must be signed at. Left to itself the SDK
+ * re-fetches the book at submit time and picks its own limit (the marginal
+ * level for FOK, the top-of-array level for FAK), so a book that thinned
+ * between preview and confirm was signed far from the "best ask" the user
+ * consented to. Books are not guaranteed sorted; sort explicitly.
+ * Exported for tests.
+ */
+export function walkBook(
+  book: OrderBookSummary,
+  side: "buy" | "sell",
+  amount: number,
+): { filled: number; unfilled: number; worstPrice: number | null } {
+  const levels = ((side === "buy" ? book.asks : book.bids) ?? [])
     .map((level) => ({ price: parseFloat(level.price), size: parseFloat(level.size) }))
     .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.size) && level.size > 0)
-    .sort((a, b) => a.price - b.price);
-  let remaining = amountUsd;
-  let shares = 0;
-  for (const level of asks) {
+    .sort((a, b) => (side === "buy" ? a.price - b.price : b.price - a.price));
+  let remaining = amount;
+  let filled = 0;
+  let worstPrice: number | null = null;
+  for (const level of levels) {
     if (remaining <= 1e-9) break;
-    const spend = Math.min(remaining, level.price * level.size);
-    shares += spend / level.price;
-    remaining -= spend;
+    if (side === "buy") {
+      const spend = Math.min(remaining, level.price * level.size);
+      filled += spend / level.price;
+      remaining -= spend;
+    } else {
+      const take = Math.min(remaining, level.size);
+      filled += take * level.price;
+      remaining -= take;
+    }
+    worstPrice = level.price;
   }
-  return { shares, unfilledUsd: Math.max(0, remaining) };
+  return { filled, unfilled: Math.max(0, remaining), worstPrice };
 }
 
 /**
@@ -403,11 +427,22 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         };
       }
 
+      // Market orders: walk the book once, here, and reuse the result for the
+      // preview, the fillability guards AND the signed limit below.
+      const walk = !isLimit
+        ? walkBook(book, input.action, input.action === "buy" ? (input.amount_usd as number) : (size as number))
+        : undefined;
+      // The worst level the walk consumed, rounded conservatively by side (an
+      // on-grid book level is unchanged), or the best quote if nothing filled.
+      const worstFillPrice = walk
+        ? roundToTick(walk.worstPrice ?? (quote as number), tickSize, input.action)
+        : undefined;
+
       const notional = isLimit
         ? (price as number) * (size as number)
         : input.action === "buy"
           ? (input.amount_usd as number)
-          : (size as number) * (quote as number);
+          : (walk as { filled: number }).filled; // walked proceeds, not size × best bid
 
       // Enforce the user's hard cap before doing any softer fillability
       // analysis, so an oversized order always fails for the primary reason.
@@ -420,15 +455,20 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         };
       }
 
-      const marketBuyEstimate = !isLimit && input.action === "buy"
-        ? estimateMarketBuyShares(book, input.amount_usd as number)
-        : undefined;
+      const marketBuyEstimate = walk && input.action === "buy" ? { shares: walk.filled, unfilledUsd: walk.unfilled } : undefined;
       const effectiveSize = marketBuyEstimate?.shares ?? size;
 
       if (marketBuyEstimate && marketBuyEstimate.unfilledUsd > 0.000001 && (input.order_type ?? "FOK") === "FOK") {
         return {
           text: `The live ask book cannot fill the full $${(input.amount_usd as number).toFixed(2)} FOK buy ` +
             `(about $${marketBuyEstimate.unfilledUsd.toFixed(2)} has no available asks). Reduce the amount or use FAK explicitly.`,
+          isError: true,
+        };
+      }
+      if (walk && input.action === "sell" && walk.unfilled > 0.000001 && (input.order_type ?? "FOK") === "FOK") {
+        return {
+          text: `The live bid book cannot fill the full ${size} shares FOK sell ` +
+            `(about ${walk.unfilled.toFixed(4)} shares have no available bids). Reduce the size or use FAK explicitly.`,
           isError: true,
         };
       }
@@ -462,8 +502,9 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
           ? `  Limit ${orderKind}: ${size} shares @ ${price} (notional $${notional.toFixed(2)})`
           : input.action === "buy"
             ? `  Market ${orderKind}: spend $${(input.amount_usd as number).toFixed(2)}${quote ? ` (best ask ${quote}` +
+              `, worst fill ≤ ${worstFillPrice}` +
               `${marketBuyEstimate ? `, est. ${marketBuyEstimate.shares.toFixed(4)} shares` : ""})` : ""}`
-            : `  Market ${orderKind}: sell ${size} shares${quote ? ` (best bid ${quote}, est. $${notional.toFixed(2)})` : ""}`,
+            : `  Market ${orderKind}: sell ${size} shares${quote ? ` (best bid ${quote}, worst fill ≥ ${worstFillPrice}, est. $${notional.toFixed(2)})` : ""}`,
         `  Tick ${tickSize} · negRisk ${negRisk} · min size ${minSize || "n/a"} · fees are taker-only`,
       ].join("\n");
 
@@ -490,6 +531,10 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
             outcome: token.outcome,
             conditionId: token.conditionId,
             bestQuote: quote,
+            // Market orders only: the limit the order WILL be signed at (buy:
+            // max price per share; sell: min price per share). Additive — the
+            // order card renders it next to the best quote.
+            worstFillPrice,
             minSize,
             maxBetUsd: maxBet,
             sessionSpentUsd: ledger.totalUsd,
@@ -524,6 +569,11 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
                 amount: input.action === "buy" ? (input.amount_usd as number) : (size as number),
                 side,
                 orderType: orderKind === "FAK" ? OrderType.FAK : OrderType.FOK,
+                // The previewed worst fill IS the signed limit (buy: taker
+                // shares = amount / price; sell: taker USD = shares × price),
+                // so the exchange can never fill worse than the user saw. With
+                // a price given the SDK also skips its own second book fetch.
+                price: worstFillPrice as number,
               },
               options,
               orderKind === "FAK" ? OrderType.FAK : OrderType.FOK,

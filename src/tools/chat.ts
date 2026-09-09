@@ -14,6 +14,7 @@ import {
   FREE_TIER_MAX_PROMPT_CHARS,
   CHAT_PRICE_PER_MTOKEN,
   DEFAULT_CHAT_PRICE,
+  FREE_CHAT_MODELS,
   canonicalChatModel,
   TIER_WORST_PRICE,
   GATEWAY_CHARS_PER_TOKEN,
@@ -61,6 +62,13 @@ export function freeTierTruncationNote(promptChars: number, model: string): stri
   // `nvidia/gpt-oss-120b`, and the bare spelling truncates identically — a
   // startsWith check on the raw string let the silent-truncation warning go
   // silent, which is the one failure this function exists to make loud.
+  //
+  // Still a VENDOR test, on purpose, unlike the $0 classifier (FREE_CHAT_MODELS):
+  // the 128 KiB cap was measured on the NVIDIA free path and nowhere else. The
+  // cohere/poolside free models are unmeasured, and a warning that says "a
+  // third of your prompt was dropped" must not be extended to a path where it
+  // may not have been — that would push agents off a working $0 path onto paid
+  // USDC on a false premise, the exact harm the byte-vs-char fix removed.
   if (!canonicalChatModel(model).startsWith("nvidia/")) return null; // paid models scale past this
   if (promptChars <= FREE_TIER_MAX_PROMPT_CHARS) return null;
   const keptPct = Math.round((FREE_TIER_MAX_PROMPT_CHARS / promptChars) * 100);
@@ -108,7 +116,11 @@ export function estimateChatCost(
   // nvidia check included — has to run on the catalog spelling.
   const canonical = model ? canonicalChatModel(model) : undefined;
   if (canonical) {
-    if (canonical.startsWith("nvidia/")) return 0; // genuinely free, whatever the mode
+    // Membership, not vendor: the catalogue bills cohere/north-mini-code and
+    // poolside/laguna-xs-2.1 at $0 too, and a `startsWith("nvidia/")` here
+    // reserved the $5/$30 default for them — an exhausted budget refused a
+    // free call. See FREE_CHAT_MODELS for the sweep that keeps the set honest.
+    if (FREE_CHAT_MODELS.has(canonical)) return 0; // genuinely free, whatever the mode
   } else if (mode === "free") {
     return 0; // no model to override it — resolves to the free tier
   }
@@ -117,7 +129,19 @@ export function estimateChatCost(
   // not max_tokens — is the dominant cost driver on the native claude-* path.
   // Fold it into the reserved output size so the gate can't be bypassed by a
   // tiny max_tokens + a huge budget_tokens.
-  const out = Math.max((maxTokens ?? 1024) + (thinkingBudget ?? 0), 256);
+  //
+  // ONLY there, though. `thinking` is forwarded on the native claude-* path and
+  // nowhere else — see the isAnthropicModel dispatch in the handler; the
+  // OpenAI-compat paths build their options from max_tokens/temperature/
+  // response_format/stop, exactly as the schema's "Ignored for non-Claude
+  // models" promises. Folding it unconditionally reserved ~$18 for
+  // mode:"powerful" + a 100k budget (gpt-5.4-pro output at $180/M) on a call
+  // that settles at cents: a spurious refusal for a delegated agent, and a
+  // wrong "Estimated: $X" put in front of a human under BLOCKRUN_CONFIRM_SPEND.
+  // Same classifier as the dispatch, run on the canonical id, so the two agree
+  // for the prefixed and the bare claude-* spelling alike.
+  const thinkingOut = canonical && isAnthropicModel(canonical) ? (thinkingBudget ?? 0) : 0;
+  const out = Math.max((maxTokens ?? 1024) + thinkingOut, 256);
 
   // Reserve at the REAL rate of what this call can settle at — the named model's
   // own price, or the most expensive member of the tier it will route through.
@@ -215,6 +239,32 @@ async function withSettledCost<T>(
   }
 }
 
+/**
+ * The error text for a call that SETTLED and then failed.
+ *
+ * x402 settles on the 200, before the body is read, and every paid path streams,
+ * so a stall or an in-band error event arrives with the money already gone.
+ * withSettledCost books it (onSettledThrow); this is the sentence that tells the
+ * CALLER. Without it the text was "Error: stream stalled: no data from the
+ * gateway for 120s" — indistinguishable from a free failure, so the obvious next
+ * step (retry) settled a second payment. The routing loop has said this since
+ * 0.40.1; the explicit-model and multi-turn paths, which by construction fail
+ * only after settlement, never did.
+ *
+ * formatError runs on the BARE error and the note is appended afterwards, on
+ * purpose: formatError classifies on keywords, and this note contains the word
+ * "payment", which its funding branch reads as an empty wallet. Fed the combined
+ * text, the routing loop's version ended in "your wallet needs funding" — the
+ * exact wrong advice for a call that just paid.
+ */
+function settledThenFailedText(error: unknown, settledUsd: number, tail: string): string {
+  return (
+    `${formatError(extractErrorMessage(error))}\n\nNote: payment had already settled when this failed, ` +
+    `so the charge stands ($${settledUsd.toFixed(6)}) and it has been recorded against your budget. ${tail}`
+  );
+}
+const RETRY_CHARGES_AGAIN = 'Retrying will incur a second charge — check blockrun_wallet action:"report" first.';
+
 export function registerChatTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_chat",
@@ -227,7 +277,7 @@ Notable modes:
 - mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
 - mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Tencent Hy3
 - mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
-- mode:"free" → NVIDIA models (no cost)
+- mode:"free" → free models (no cost)
 
 Pick directly: model:"anthropic/claude-opus-5", model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"xai/grok-4.5", model:"nvidia/gpt-oss-120b" (free).
 
@@ -236,7 +286,7 @@ Run blockrun_models to see all available models with pricing.`,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'moonshot/kimi-k3', 'openai/gpt-5.6-sol', 'zai/glm-5')"),
-        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = NVIDIA only (ignored if model specified)"),
+        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = $0 models (ignored if model specified)"),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),
@@ -346,6 +396,8 @@ Run blockrun_models to see all available models with pricing.`,
           ...messages,
           { role: "user" as const, content: message },
         ];
+        // USDC that left the wallet before the failure, if any (see settledThenFailedText).
+        let settledOnFailure = 0;
         try {
           // The SDK types ChatMessage.content as string-only, but the gateway
           // forwards `messages` verbatim and accepts image_url content arrays
@@ -375,7 +427,10 @@ Run blockrun_models to see all available models with pricing.`,
               stop,
             });
             return r.choices?.[0]?.message?.content || "";
-          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
+          }, (usd) => {
+            recordActualSpend(budget, usd, estimatedCost, agent_id);
+            settledOnFailure = usd;
+          });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           const note = freeTierTruncationNote(promptChars, targetModel);
           return {
@@ -383,13 +438,22 @@ Run blockrun_models to see all available models with pricing.`,
             structuredContent: { model_used: targetModel, response: reply, message_count: fullMessages.length, ...(note ? { truncated: true } : {}) },
           };
         } catch (error) {
-          return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
+          return {
+            content: [{
+              type: "text",
+              text: settledOnFailure > 0
+                ? settledThenFailedText(error, settledOnFailure, RETRY_CHARGES_AGAIN)
+                : formatError(extractErrorMessage(error)),
+            }],
+            isError: true,
+          };
         }
       }
 
       // If specific model provided, use it directly — streamed when the client
       // supports it (same 524 rationale as the multi-turn path above).
       if (model) {
+        let settledOnFailure = 0;
         try {
           const { result: response, settledUsd } = await withSettledCost(llm(), async () => {
             const client = llm();
@@ -406,12 +470,20 @@ Run blockrun_models to see all available models with pricing.`,
               responseFormat,
               stop,
             });
-          }, (usd) => recordActualSpend(budget, usd, estimatedCost, agent_id));
+          }, (usd) => {
+            recordActualSpend(budget, usd, estimatedCost, agent_id);
+            settledOnFailure = usd;
+          });
           recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
           return { content: [{ type: "text", text: `${response}${freeTierTruncationNote(promptChars, model) ?? ""}` }] };
         } catch (error) {
           return {
-            content: [{ type: "text", text: formatError(extractErrorMessage(error)) }],
+            content: [{
+              type: "text",
+              text: settledOnFailure > 0
+                ? settledThenFailedText(error, settledOnFailure, RETRY_CHARGES_AGAIN)
+                : formatError(extractErrorMessage(error)),
+            }],
             isError: true,
           };
         }
@@ -485,19 +557,27 @@ Run blockrun_models to see all available models with pricing.`,
         }
       }
 
+      // Say it plainly: the payment settled before the failure, so the charge
+      // stands and no fallback was attempted. An agent that reads "failed" as
+      // "free" would retry in a loop and pay each time. (Free models settle $0,
+      // so the deadline case below can never also be a settled one.)
+      if (settledOnFailure > 0) {
+        return {
+          content: [{
+            type: "text",
+            text: settledThenFailedText(lastError, settledOnFailure, "No fallback model was tried — retrying will incur a second charge."),
+          }],
+          isError: true,
+        };
+      }
       // Distinguish "every model rejected" from "we ran out of time" — they need
       // different things from the caller (retry vs. pick a paid model), and a bare
       // last-error would have blamed whichever model happened to be slowest.
       const errorMessage = deadlineHit
-        ? `The free tier did not answer within ${Math.round(FREE_TIER_DEADLINE_MS / 1000)}s. Free NVIDIA capacity is usually saturated when this happens — retry shortly, or pass an explicit model (or a paid mode) to skip the free tier.`
-        : settledOnFailure > 0
-          // Say it plainly: the payment settled before the failure, so the
-          // charge stands and no fallback was attempted. An agent that reads
-          // "failed" as "free" would retry in a loop and pay each time.
-          ? `${extractErrorMessage(lastError)}\n\nNote: payment had already settled when this failed, so the charge stands ($${settledOnFailure.toFixed(6)}) and it has been recorded against your budget. No fallback model was tried — retrying will incur a second charge.`
-          : lastError
-            ? extractErrorMessage(lastError)
-            : "All models failed";
+        ? `The free tier did not answer within ${Math.round(FREE_TIER_DEADLINE_MS / 1000)}s. Free-tier capacity is usually saturated when this happens — retry shortly, or pass an explicit model (or a paid mode) to skip the free tier.`
+        : lastError
+          ? extractErrorMessage(lastError)
+          : "All models failed";
       return {
         content: [{ type: "text", text: formatError(errorMessage) }],
         isError: true,

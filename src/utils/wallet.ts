@@ -9,8 +9,11 @@ import {
   SolanaLLMClient,
   AnthropicClient,
   getOrCreateWallet,
-  getOrCreateSolanaWallet,
+  createSolanaWallet,
+  saveSolanaWallet,
+  solanaPublicKey,
   loadSolanaWallet,
+  USDC_SOLANA,
   getPaymentLinks,
   formatWalletCreatedMessage,
   formatNeedsFundingMessage,
@@ -246,10 +249,14 @@ export async function ensureBothWallets(): Promise<{
   const chainBefore = readChainPreference() === null ? getChain() : null;
 
   const evm = ensureEvmWallet();
-  const sol = await getOrCreateSolanaWallet();
-  if (sol.isNew) {
-    console.error(formatWalletCreatedMessage(sol.address));
-  }
+  // NOT the SDK's getOrCreateSolanaWallet(): that loader knows only the env var
+  // and the file. Under BLOCKRUN_KEYCHAIN=strict the file is retired once the
+  // key is in the keychain, so the SDK saw an empty slate, minted keypair B,
+  // wrote it to .solana-session — and the next resolveSolanaKey() mirrored B
+  // into the keychain with -U, over the funded key A, then deleted the file.
+  // A was then nowhere. ensureSolanaWallet() reads the keychain first and
+  // refuses to mint when the keychain could not be read (audit 2026-09-08).
+  const sol = await ensureSolanaWallet();
 
   if (chainBefore !== null && getChain() !== chainBefore) {
     // writeAutoChain, NOT setChain: this is the machine preserving continuity,
@@ -433,10 +440,20 @@ export function getOrCreateWalletKey(): `0x${string}` {
   return info.privateKey as `0x${string}`;
 }
 
-// Resolved once per process. buildSolanaClient() is called per-request on the
-// non-cached paths (blockrun_chat, modal), and a keychain read spawns a
-// subprocess — fine once, not fine on every paid call.
-let _solanaKey: string | null | undefined;
+// Resolved once per process on a HIT. buildSolanaClient() is called
+// per-request on the non-cached paths (blockrun_chat, modal), and a keychain
+// read spawns a subprocess — fine once, not fine on every paid call. A MISS is
+// deliberately not memoised: a wallet provisioned later in the same process (by
+// ensureSolanaWallet, or by another process such as the CLI) must become
+// visible without a restart — the old `null` cache made the first status call
+// of a fresh install poison every later call.
+let _solanaKey: string | undefined;
+
+type SolanaKeyResolution = {
+  key?: string;
+  /** Set when the keychain was consulted and the read FAILED (not "absent"). */
+  keychainError?: string;
+};
 
 /**
  * Solana key precedence, mirroring the EVM path:
@@ -445,30 +462,79 @@ let _solanaKey: string | null | undefined;
  * file is not silently undone by a stale keychain entry; the keychain carries
  * the key only once the file is gone (strict mode). A key found in the file is
  * mirrored into the keychain on the way past.
+ *
+ * Uses keychainRead, not keychainLoad: "absent" and "error" must stay apart,
+ * because ensureSolanaWallet() decides whether to CREATE a wallet on the
+ * difference — the exact rule keychain.ts states for the EVM path.
  */
-export function resolveSolanaKey(): string | undefined {
-  if (process.env.SOLANA_WALLET_KEY) return process.env.SOLANA_WALLET_KEY;
-  if (_solanaKey !== undefined) return _solanaKey ?? undefined;
+function resolveSolanaKeyDetailed(): SolanaKeyResolution {
+  if (process.env.SOLANA_WALLET_KEY) return { key: process.env.SOLANA_WALLET_KEY };
+  if (_solanaKey) return { key: _solanaKey };
 
+  let keychainError: string | undefined;
   // Same precedence correction as the EVM path: an existing .solana-session is
   // the user's current intent, so it outranks whatever the keychain remembers.
   if (getKeychainMode() !== "off" && !fs.existsSync(SOLANA_WALLET_FILE_PATH)) {
-    const stored = keychainLoad(SOLANA_KEY_ACCOUNT);
-    if (stored) {
-      _solanaKey = stored;
-      return stored;
+    const read = keychainRead(SOLANA_KEY_ACCOUNT);
+    if (read.status === "found") {
+      _solanaKey = read.value;
+      return { key: read.value };
     }
+    if (read.status === "error") keychainError = read.detail;
   }
 
   const fromFile = loadSolanaWallet();
-  if (fromFile) persistKey(SOLANA_KEY_ACCOUNT, fromFile, SOLANA_WALLET_FILE_PATH);
-  _solanaKey = fromFile ?? null;
-  return fromFile ?? undefined;
+  if (fromFile) {
+    persistKey(SOLANA_KEY_ACCOUNT, fromFile, SOLANA_WALLET_FILE_PATH);
+    _solanaKey = fromFile;
+    return { key: fromFile };
+  }
+  return { keychainError };
 }
 
-/** Drop the cached Solana key. Test seam, and used when the wallet is re-provisioned. */
+export function resolveSolanaKey(): string | undefined {
+  return resolveSolanaKeyDetailed().key;
+}
+
+let _solanaWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
+
+/**
+ * The Solana twin of ensureEvmWallet(): return the existing wallet from
+ * whichever store holds it, and mint one ONLY when every store says "absent".
+ * A keychain read that FAILED is not a read that found nothing — the file is
+ * already gone in strict mode, so minting here would orphan a funded key that
+ * is very likely still sitting in a keychain we merely could not open.
+ */
+export async function ensureSolanaWallet(): Promise<{ address: string; privateKey: string; isNew: boolean }> {
+  if (_solanaWalletInfo) return _solanaWalletInfo;
+  const { key, keychainError } = resolveSolanaKeyDetailed();
+  if (key) {
+    _solanaWalletInfo = { address: await solanaPublicKey(key), privateKey: key, isNew: false };
+    return _solanaWalletInfo;
+  }
+  if (keychainError !== undefined) {
+    throw new Error(
+      `Could not read the Solana wallet key from the OS keychain (${keychainError}), and ` +
+        `~/.blockrun/.solana-session does not exist (BLOCKRUN_KEYCHAIN=strict retires it once the key is in the keychain). ` +
+        `Refusing to create a new Solana wallet — your existing one is most likely still in the keychain. ` +
+        `Unlock the keychain and retry, or set SOLANA_WALLET_KEY to your key. Nothing was charged.`,
+    );
+  }
+  const created = await createSolanaWallet();
+  saveSolanaWallet(created.privateKey);
+  // Mirror into the keychain; strict mode then retires the file after a
+  // verified read-back — the same sequence ensureEvmWallet() runs.
+  persistKey(SOLANA_KEY_ACCOUNT, created.privateKey, SOLANA_WALLET_FILE_PATH);
+  _solanaKey = created.privateKey;
+  _solanaWalletInfo = { address: created.address, privateKey: created.privateKey, isNew: true };
+  console.error(formatWalletCreatedMessage(created.address));
+  return _solanaWalletInfo;
+}
+
+/** Drop the cached Solana key and wallet. Test seam, and used when the wallet is re-provisioned. */
 export function resetSolanaKeyCache(): void {
   _solanaKey = undefined;
+  _solanaWalletInfo = null;
 }
 
 /**
@@ -502,8 +568,18 @@ function buildSolanaClient(timeout?: number): SolanaLLMClient {
     return new SolanaLLMClient({ apiKey, ...(timeout ? { timeout } : {}) });
   }
   const privateKey = resolveSolanaKey();
-  const opts = { ...(privateKey ? { privateKey } : {}), ...(timeout ? { timeout } : {}) };
-  return new SolanaLLMClient(Object.keys(opts).length ? opts : undefined);
+  if (!privateKey) {
+    // The SDK constructor would throw "Private key required. Pass privateKey in
+    // options or set SOLANA_WALLET_KEY" — true, and useless to someone on a
+    // fresh install where Solana is the default chain and nothing has minted a
+    // wallet yet. Provisioning is async (ensureSolanaWallet) and this factory
+    // is sync, so name the remedy instead of the symptom.
+    throw new Error(
+      `No Solana wallet on this machine yet. Run blockrun_wallet action:"setup" (or action:"chain" chain:"solana") to create one, ` +
+        `or set SOLANA_WALLET_KEY. Nothing was charged.`,
+    );
+  }
+  return new SolanaLLMClient({ privateKey, ...(timeout ? { timeout } : {}) });
 }
 
 export function getClient(): ApiClient {
@@ -626,15 +702,18 @@ export async function getWalletInfo(): Promise<AccountInfo> {
     };
   }
   if (getChain() === "solana") {
-    const client = getClient() as SolanaLLMClient;
-    const address = await client.getWalletAddress();
+    // ensureSolanaWallet, not getClient(): on a fresh install (Solana is the
+    // default since 0.46.0) nothing had minted a wallet yet, so every
+    // status/setup/qr/deposit call died in the SDK constructor before the
+    // one action that creates wallets was reached. Mirrors the EVM branch.
+    const info = await ensureSolanaWallet();
     return {
-      address,
+      address: info.address,
       network: "Solana" as const,
       chainId: null as number | null,
       currency: "USDC",
-      isNew: false,
-      explorerUrl: `https://solscan.io/account/${address}`,
+      isNew: info.isNew,
+      explorerUrl: `https://solscan.io/account/${info.address}`,
       fundingUrl: "https://sol.blockrun.ai",
     };
   }
@@ -653,9 +732,40 @@ export async function getWalletInfo(): Promise<AccountInfo> {
 
 export { formatNeedsFundingMessage };
 
-async function getSolanaUsdcBalance(): Promise<number | null> {
+const DEFAULT_SOLANA_RPC_URL = "https://sol.blockrun.ai/api/v1/solana/rpc";
+
+/**
+ * USDC balance of an explicit Solana ADDRESS. The SDK's getBalance() only ever
+ * reads the client's own wallet and ignores which address the caller is
+ * displaying, so the status screen could print address B beside the balance
+ * of key A. Same RPC call the SDK makes, keyed on the address we show. Returns
+ * null (not 0) when the RPC cannot be reached — "unavailable" is honest,
+ * "$0.00" beside a funded address is not.
+ */
+async function getSolanaUsdcBalance(address: string): Promise<number | null> {
+  const rpcUrl = process.env.SOLANA_RPC_URL || DEFAULT_SOLANA_RPC_URL;
   try {
-    return await buildSolanaClient().getBalance();
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTokenAccountsByOwner",
+        params: [address, { mint: USDC_SOLANA }, { encoding: "jsonParsed" }],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await response.json() as {
+      result?: { value?: Array<{ account?: { data?: { parsed?: { info?: { tokenAmount?: { uiAmount?: number } } } } } }> };
+      error?: unknown;
+    };
+    if (data.error || !data.result) return null;
+    let total = 0;
+    for (const acct of data.result.value ?? []) {
+      total += acct.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
+    }
+    return total;
   } catch { return null; }
 }
 
@@ -696,7 +806,7 @@ async function getBaseUsdcBalance(address: string): Promise<number | null> {
 
 /** USDC balance for an explicit chain — used to show BOTH wallets at once. */
 export async function getChainBalance(chain: "base" | "solana", address: string): Promise<number | null> {
-  return chain === "solana" ? getSolanaUsdcBalance() : getBaseUsdcBalance(address);
+  return chain === "solana" ? getSolanaUsdcBalance(address) : getBaseUsdcBalance(address);
 }
 
 export async function getUsdcBalance(address: string): Promise<number | null> {

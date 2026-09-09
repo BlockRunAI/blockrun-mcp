@@ -88,18 +88,22 @@ test("Solana image-to-video forwards image_url plus aspect_ratio like Base does 
 });
 
 test("a higher Solana quote within the cap swaps the reservation without double-booking", async () => {
-  quoteUsd = 5;
+  // 4s of seedance-2.5 estimates at $1.2643; $1.60 is 1.27x — a real token-priced
+  // overshoot, inside the 1.5x quote tolerance (a 4x quote is refused, see below).
+  quoteUsd = 1.6;
   const { call, budget } = makeHarness(10);
   const res = await call({ prompt: "a rainy alley", model: "bytedance/seedance-2.5", duration_seconds: 4 });
   assert.notEqual(res.isError, true, res.content?.[0]?.text);
-  assert.equal(res.structuredContent.cost_usd, 5);
-  assert.equal(budget.spent, 5, "reservation released, actual booked exactly once");
+  assert.equal(res.structuredContent.cost_usd, 1.6);
+  assert.equal(budget.spent, 1.6, "reservation released, actual booked exactly once");
 });
 
 test("the authoritative Solana quote is re-checked against the budget before signing", async () => {
   solanaCalls = 0;
-  quoteUsd = 5;
-  const { call, budget } = makeHarness(1);
+  // Estimate $1.2643 fits a $1.30 cap; the real $1.60 quote does not. The cap
+  // has to be enforced on the quote, not the estimate.
+  quoteUsd = 1.6;
+  const { call, budget } = makeHarness(1.3);
   const res = await call({ prompt: "a rainy alley", model: "bytedance/seedance-2.5", duration_seconds: 4 });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /budget|limit/i);
@@ -116,4 +120,20 @@ test("a malformed completed Solana payload still books the settled charge", asyn
   assert.match(res.content[0].text, /missing video URL/);
   assert.equal(budget.spent, 0.5);
   completedHasUrl = true;
+});
+
+test("a Solana quote for a different product than requested is refused unsigned", async () => {
+  // sol.blockrun.ai does not know azure/sora-2 and quotes Seedance 2.0 Pro at
+  // $1.135480 in its place (live 2026-09-08). The 4s Sora estimate is $0.4220.
+  quoteUsd = 1.13548;
+  const { call, budget } = makeHarness(5);
+  const res = await call({ prompt: "a rainy alley", model: "azure/sora-2", duration_seconds: 4 });
+  const text = res.content[0].text;
+  assert.equal(res.isError, true, text);
+  assert.match(text, /quoted \$1\.1355 for azure\/sora-2 video/);
+  assert.match(text, /does not serve azure\/sora-2 yet/);
+  assert.match(text, /chain:"base"/);
+  assert.match(text, /no charge was made/);
+  assert.doesNotMatch(text, /needs funding/i);
+  assert.equal(budget.spent, 0, "a refused quote settles nothing");
 });

@@ -38,9 +38,22 @@ mock.module("../src/utils/http.js", {
       if (!next) throw new Error("UNEXPECTED_NETWORK_CALL");
       return next();
     },
-    isTimeoutError: () => false,
+    // The real predicate, restated: the deadline cases below depend on the
+    // "did not complete within" message being classified as a timeout.
+    isTimeoutError: (err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError" || name === "TimeoutError") return true;
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      return msg.includes("abort") || msg.includes("timeout") || msg.includes("timed out") || msg.includes("did not complete within");
+    },
   },
 });
+// A movable clock. Jumping it past VIDEO_TOTAL_BUDGET_MS from inside a scripted
+// poll ends the loop on the next check, so the deadline paths run without
+// sitting through nine minutes of real time.
+const realNow = Date.now;
+let clockOffset = 0;
+mock.method(Date, "now", () => realNow() + clockOffset);
 mock.module("../src/utils/wallet.js", {
   namedExports: {
     getApiBase: () => "https://blockrun.ai/api",
@@ -169,4 +182,89 @@ test("upstream failure before completion books nothing (no charge per gateway co
   const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
   assert.equal(res.isError, true);
   assert.equal(budget.spent, 0, "failed jobs are not charged and must not be booked");
+});
+
+test("a 402 far above the published rate is refused BEFORE signing — nothing signed, nothing booked", async () => {
+  // Live 2026-09-08 shape: the Solana gateway quoted azure/sora-2 (4s, $0.4220
+  // expected) as Seedance 2.0 Pro at $1.135480. Same guard on the Base rail.
+  script = [resp402]; fetchCalls = 0; paymentsSigned = 0;
+  quotedAmount = "1135480";
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "azure/sora-2" });
+  const text = res.content.map((c: any) => c.text).join("\n");
+  assert.equal(res.isError, true, text);
+  assert.match(text, /quoted \$1\.1355 for azure\/sora-2 video/);
+  assert.match(text, /expected about \$0\.4220/);
+  assert.match(text, /no charge was made/);
+  assert.doesNotMatch(text, /needs funding/, "a bad quote is not a funding problem");
+  assert.equal(paymentsSigned, 0, "must not sign a quote it refused");
+  assert.equal(fetchCalls, 1, "must stop after the quote — no paid submit");
+  assert.equal(budget.spent, 0, "reservation must be fully released");
+  quotedAmount = "400000";
+});
+
+test("a quote inside the tolerance still re-reserves and pays (4K renders exceed the estimate by design)", async () => {
+  script = [resp402, respSubmit, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  quotedAmount = "450000"; // $0.45 against a $0.40 estimate: 1.125x
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
+  assert.notEqual(res.isError, true, res.content?.[0]?.text);
+  assert.ok(Math.abs(budget.spent - 0.45) < 1e-9, `books the quote: spent=${budget.spent}`);
+  quotedAmount = "400000";
+});
+
+// ---------------------------------------------------------------------------
+// The Base poll loop: transient trouble is retried, and every give-up says
+// whether money moved — and names the job, which stays claimable ~48h.
+// ---------------------------------------------------------------------------
+
+const respPoll202 = (status: string) => ({ status: 202, ok: true, headers: headers({}), json: async () => ({ status }) });
+const abortError = () => { const e = new Error("This operation was aborted"); e.name = "AbortError"; return e; };
+
+test("a transient poll rejection is retried inside the deadline, not fatal", async () => {
+  // One ECONNRESET used to throw out of the loop after (potentially) eight
+  // minutes of render, with no job id and no charge statement.
+  clockOffset = 0;
+  script = [resp402, respSubmit, () => { throw new TypeError("fetch failed"); }, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  quotedAmount = "400000";
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
+  assert.notEqual(res.isError, true, res.content?.[0]?.text);
+  assert.ok(Math.abs(budget.spent - 0.4) < 1e-9, `booked once: spent=${budget.spent}`);
+});
+
+test("a paid poll still in flight at the deadline MAY have settled: say so, book conservatively, no 'try again'", async () => {
+  // The gateway keeps going after a client disconnect — backup, then settle —
+  // so the last clamped poll can settle server-side after we abort it.
+  clockOffset = 0;
+  script = [resp402, respSubmit, () => { clockOffset += 3_600_000; throw abortError(); }];
+  quotedAmount = "400000";
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
+  const text = res.content.map((c: any) => c.text).join("\n");
+  assert.equal(res.isError, true, text);
+  assert.match(text, /MAY have settled/);
+  assert.match(text, /blockrun_wallet action:"report"/);
+  assert.match(text, /claimable.*job vid_1/);
+  assert.doesNotMatch(text, /please try again/);
+  assert.doesNotMatch(text, /No payment was taken/, "a possible settlement is not a known refund");
+  assert.ok(Math.abs(budget.spent - 0.4) < 1e-9, `booked conservatively: spent=${budget.spent}`);
+  clockOffset = 0;
+});
+
+test("the deadline with the last poll answered: no charge, the job id, and no 'try again'", async () => {
+  clockOffset = 0;
+  script = [resp402, respSubmit, () => { clockOffset += 3_600_000; return respPoll202("in_progress"); }];
+  quotedAmount = "400000";
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
+  const text = res.content.map((c: any) => c.text).join("\n");
+  assert.equal(res.isError, true, text);
+  assert.match(text, /did not complete within 540s \(last status: in_progress\)/);
+  assert.match(text, /No payment was taken/);
+  assert.match(text, /claimable.*job vid_1/);
+  assert.match(text, /would start and charge a new job/);
+  assert.doesNotMatch(text, /please try again/);
+  assert.equal(budget.spent, 0, "an answered poll that did not complete settles nothing");
+  clockOffset = 0;
 });

@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -12,7 +12,7 @@ import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
-import { apiKeyAsyncPost } from "../utils/api-key-call.js";
+import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -274,16 +274,38 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
   return withTxFee(VIDEO_BASE_PRICE_PER_SECOND[model] * seconds * VIDEO_MARGIN);
 }
 
+/**
+ * Refuse a 402 whose price is far above what the estimator (and the description
+ * the model read) said this call costs. See assertQuoteNearEstimate for the
+ * rule; this adds the one hint that is video-specific today. Verified live
+ * 2026-09-08: sol.blockrun.ai quotes azure/sora-2 as "Seedance 2.0 Pro video
+ * generation (5s)" at $1.135480 against Base's $0.421001.
+ */
+export function assertVideoQuoteSane(
+  quotedUsd: number | null,
+  estimatedCost: number,
+  model: string,
+  chain: "base" | "solana",
+  quotedFor?: string,
+): void {
+  const hint = chain === "solana"
+    ? (model === "azure/sora-2"
+      ? `The Solana gateway is a separate deployment and does not serve azure/sora-2 yet — it quotes Seedance 2.0 in its place. Switch to Base for Sora (blockrun_wallet action:"chain" chain:"base") or pick a Seedance model explicitly.`
+      : `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`)
+    : `Retry on Solana (blockrun_wallet action:"chain" chain:"solana") or pick another model.`;
+  assertQuoteNearEstimate(quotedUsd, estimatedCost, { what: `${model} video`, quotedFor, hint });
+}
+
 export function registerVideoTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_video",
     {
       description: `Generate short AI videos via BlockRun x402 on the active Base or Solana chain (async, client-polled).
 
-Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
+Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). Payment is settled only when upstream returns a finished video — if the job fails you are not charged; if this client gives up while a paid poll is still in flight the gateway may still settle, and the error text says so.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
-- azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
+- azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace. Base only for now: the Solana gateway quotes it as Seedance 2.0 at $1.135 and the tool refuses that quote unsigned.
 - xai/grok-imagine-video ($0.05/sec at 480p default, $0.07/sec at 720p; 8s default -> $0.401/clip, 1-15s) — stylized, fast. 480p/720p only.
 - bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace and first/last-frame
@@ -314,6 +336,16 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
+      // Visible to the catch, which has to book money that moved without a
+      // result: the account rail bills at submit, and a Base poll aborted in
+      // flight can still settle server-side. Every give-up also names the job.
+      let estimatedCost = 0;
+      let quotedUsd: number | null = null;
+      let jobId: string | undefined;
+      // True while a Base poll carrying the payment header has been issued and
+      // has not answered. A poll that rejects leaves it true: that request may
+      // still be settling on the gateway, which does not stop on disconnect.
+      let paidPollInFlight = false;
       try {
         const selectedModel = model || "xai/grok-imagine-video";
 
@@ -418,7 +450,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
 
         // Image input is NOT discounted upstream on Seedance (only video-to-video
         // is), so text-to-video and image-to-video share one per-second rate.
-        const estimatedCost = estimateVideoCost(selectedModel, billedSeconds, resolution);
+        estimatedCost = estimateVideoCost(selectedModel, billedSeconds, resolution);
         gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {
@@ -497,7 +529,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             body,
             {
               pollBudgetMs: SOLANA_VIDEO_TOTAL_BUDGET_MS,
-              onQuote: (quotedUsd) => {
+              onQuote: (quotedUsd, quoteDetails) => {
+                // WHAT was quoted, before how much: a substituted or repriced
+                // model is refused here, unsigned (QuoteMismatchError).
+                assertVideoQuoteSane(quotedUsd, estimatedCost, selectedModel, "solana", quoteDetails?.resource?.description);
                 if (quotedUsd === null || quotedUsd <= estimatedCost) return;
                 gate?.release();
                 gate = reserveBudget(budget, agent_id, quotedUsd);
@@ -578,6 +613,16 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             isError: true,
           };
         }
+        quotedUsd = settledUsd;
+
+        // WHAT was quoted, before how much. The estimator tracks the live 402 to
+        // within a cent (verify:prices), so a quote far above it is a reprice or
+        // a substituted model — refuse it unsigned rather than re-reserve it.
+        try {
+          assertVideoQuoteSane(settledUsd, estimatedCost, selectedModel, "base", details.resource?.description);
+        } catch (err) {
+          return { content: [{ type: "text", text: formatError(err instanceof Error ? err.message : String(err)) }], isError: true };
+        }
 
         // The 402 carries the REAL price; Seedance/Sora are token-priced, so a
         // 1080p/4K render can far exceed the per-second estimate reserved at
@@ -648,6 +693,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // that took the payment. A paid job polled on the wrong host is money
         // spent for a result that can never be collected.
         const pollAbsoluteUrl = resolveGatewayUrl(submitData.poll_url);
+        jobId = submitData.id;
 
         let lastStatus = submitData.status || "queued";
         let spendBooked = false;
@@ -673,10 +719,24 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           const pollTimeoutMs = pollTimeoutFor(deadline, Date.now(), VIDEO_POLL_TIMEOUT_MS);
           if (pollTimeoutMs === 0) break;
 
-          const pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
-            method: "GET",
-            headers: { "PAYMENT-SIGNATURE": paymentPayload },
-          }, pollTimeoutMs);
+          let pollResp: Response;
+          paidPollInFlight = true;
+          try {
+            pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
+              method: "GET",
+              headers: { "PAYMENT-SIGNATURE": paymentPayload },
+            }, pollTimeoutMs);
+          } catch {
+            // Polling is idempotent and settlement has not been observed. A
+            // transient disconnect is safe to retry inside the existing
+            // deadline (the EIP-3009 nonce is single-use, so re-sending the
+            // same header after a lost-in-flight settlement cannot settle
+            // twice), and one reset must not abandon a nine-minute render.
+            // paidPollInFlight stays true: the request that never answered may
+            // still be settling server-side.
+            continue;
+          }
+          paidPollInFlight = false;
 
           const pollData = await pollResp.json().catch(() => ({})) as {
             status?: string;
@@ -736,7 +796,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         }
 
         if (!completed) {
-          throw new Error(`Video generation did not complete within ${Math.round(VIDEO_TOTAL_BUDGET_MS / 1000)}s (last status: ${lastStatus}). No payment was taken.`);
+          // Whether money moved depends on paidPollInFlight, which the catch
+          // reads; the message here states only what was observed.
+          throw new Error(`Video generation did not complete within ${Math.round(VIDEO_TOTAL_BUDGET_MS / 1000)}s (last status: ${lastStatus}).`);
         }
 
         // Real settled price from the 402 (token-priced upstream); fall back to
@@ -772,6 +834,23 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        // The account rail bills at SUBMIT. A failure after that — deadline,
+        // poll error, terminal failure — leaves a charge the ledger must carry
+        // (finally releases the reservation, so without this booking the cap
+        // silently rises by the clip price), and the one thing the caller must
+        // not do is "try again": that submits and bills a second job. Checked
+        // before isTimeoutError, which matches the deadline message and would
+        // glue retry advice onto a note saying the job was billed.
+        if (err instanceof BilledJobError) {
+          recordActualSpend(budget, err.paidUsd, estimatedCost, agent_id);
+          const what = err.billing === "billed"
+            ? `Video generation did not return a clip, but the job was billed to the BlockRun account when the gateway accepted it${err.jobId ? ` (job ${err.jobId})` : ""}.`
+            : `Video generation got no answer to its submit, so the job MAY have been accepted and billed to the BlockRun account.`;
+          return {
+            content: [{ type: "text", text: `${what} Check https://user.blockrun.ai/dashboard/activity before doing anything else — a new blockrun_video call starts and bills a second job.\nError: ${errMsg}` }],
+            isError: true,
+          };
+        }
         if (isPaymentRejectionError(errMsg)) {
           return {
             content: [{ type: "text", text: `Video generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
@@ -779,8 +858,25 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           };
         }
         if (isTimeoutError(err)) {
+          const reclaim = jobId ? ` The finished job stays claimable on the gateway for ~48h (job ${jobId}); re-running blockrun_video would start and charge a new job.` : "";
+          if (paidPollInFlight) {
+            // The gateway's poll route passes the request signal only to the
+            // upstream check; on "completed" it backs up the clip and settles
+            // regardless of whether we are still connected. Book the quote
+            // conservatively — over-counting a slow poll that settled nothing
+            // is the documented trade-off; under-counting a real charge is not.
+            recordActualSpend(budget, quotedUsd, estimatedCost, agent_id);
+            return {
+              content: [{ type: "text", text: `Video generation timed out while a poll carrying the payment signature was still in flight, so the gateway MAY have settled the charge after this client gave up — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.${reclaim}\nError: ${errMsg}` }],
+              isError: true,
+            };
+          }
+          // On Base, settlement happens only on a poll the gateway answers
+          // "completed"; the last one answered otherwise, so nothing settled.
+          // The Solana helper describes its own money state in errMsg.
+          const base = !isApiKeyMode() && getChain() !== "solana";
           return {
-            content: [{ type: "text", text: `Video generation timed out. The upstream async job didn't complete in time — please try again.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Video generation timed out.${base ? ` No payment was taken.${reclaim}` : ""}\nError: ${errMsg}` }],
             isError: true,
           };
         }

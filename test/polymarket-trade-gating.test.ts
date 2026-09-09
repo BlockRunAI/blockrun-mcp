@@ -225,3 +225,112 @@ test("closed market is rejected with a redeem hint", async () => {
     marketResponse = null;
   }
 });
+
+// --- Market orders carry the previewed worst-fill bound (late audit finding) ---
+//
+// Without a `price`, clob-client-v2 picks the market order's limit itself at
+// submit time from a fresh book fetch: the marginal ask for FOK, the top-of-
+// array (worst) ask for FAK. The preview showed only the BEST ask, so the user
+// consented at "best ask 0.40" and could be signed at 0.99. Now the preview
+// walks the book, states the worst fill, and that same number is the signed
+// limit — the exchange can never fill worse than what the user saw.
+
+test("a market buy is signed at the previewed worst fill, not an SDK-chosen limit", async () => {
+  // Unsorted book, worst level first: the walk must sort best-first.
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.99", size: "1000" }, { price: "0.40", size: "25" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  try {
+    const preview = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5 });
+    assert.equal(preview.isError, undefined, preview.text);
+    assert.match(preview.text, /best ask 0\.4\b/);
+    assert.match(preview.text, /worst fill ≤ 0\.4\b/);
+    assert.equal((preview.structured as { worstFillPrice?: number }).worstFillPrice, 0.4);
+    const before = calls.length;
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+    assert.equal(res.isError, undefined, res.text);
+    assert.equal(calls.length, before + 1);
+    const call = calls[calls.length - 1];
+    assert.equal(call.kind, "market");
+    assert.equal(call.order.price, 0.4, "the signed limit must equal the previewed worst fill");
+    assert.equal(call.order.amount, 5);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("a thin top level raises the worst fill, and the preview says so before any signature", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.40", size: "5" }, { price: "0.90", size: "100" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  try {
+    const preview = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5 });
+    assert.equal(preview.isError, undefined, preview.text);
+    assert.match(preview.text, /best ask 0\.4\b/);
+    assert.match(preview.text, /worst fill ≤ 0\.9\b/, "the $3 beyond the top level fills at 0.90");
+    assert.match(preview.text, /est\. 8\.3333 shares/);
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+    assert.equal(res.isError, undefined, res.text);
+    assert.equal(calls[calls.length - 1].order.price, 0.9);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("FAK with insufficient depth is signed at the worst level actually consumed, not the SDK's top-of-array", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.45", size: "5" }], bids: [{ price: "0.44", size: "100" }],
+  }));
+  try {
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, order_type: "FAK", confirm: true });
+    assert.equal(res.isError, undefined, res.text);
+    const call = calls[calls.length - 1];
+    assert.equal(call.order.price, 0.45);
+    assert.equal(call.order.orderType, "FAK");
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("a market sell walks the bids: honest est. proceeds, worst bid stated and signed as the floor", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.50", size: "100" }], bids: [{ price: "0.30", size: "100" }, { price: "0.44", size: "3" }],
+  }));
+  try {
+    const preview = await executeTrade({ action: "sell", token_id: "111", size: 5 });
+    assert.equal(preview.isError, undefined, preview.text);
+    assert.match(preview.text, /best bid 0\.44\b/);
+    assert.match(preview.text, /worst fill ≥ 0\.3\b/);
+    // 3 × 0.44 + 2 × 0.30 = 1.92 — the old code printed 5 × best bid = $2.20.
+    assert.match(preview.text, /est\. \$1\.92/);
+    assert.ok(Math.abs(((preview.structured as { notionalUsd: number }).notionalUsd) - 1.92) < 1e-9);
+    assert.equal((preview.structured as { worstFillPrice?: number }).worstFillPrice, 0.3);
+    const res = await executeTrade({ action: "sell", token_id: "111", size: 5, confirm: true });
+    assert.equal(res.isError, undefined, res.text);
+    const call = calls[calls.length - 1];
+    assert.equal(call.order.price, 0.3, "a sell's signed limit is the previewed worst bid");
+    assert.equal(call.order.amount, 5);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("a FOK market sell the bid book cannot absorb is refused pre-sign, like the buy side", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "1",
+    asks: [{ price: "0.50", size: "100" }], bids: [{ price: "0.44", size: "3" }],
+  }));
+  try {
+    const before = calls.length;
+    const res = await executeTrade({ action: "sell", token_id: "111", size: 5, order_type: "FOK", confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /cannot fill the full 5 shares/i);
+    assert.equal(calls.length, before, "nothing may be signed");
+  } finally {
+    mock.restoreAll();
+  }
+});

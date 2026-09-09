@@ -2,6 +2,155 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.49.0
+
+**The error says whether money moved.** Issue #132 reported `blockrun_markets`
+and `blockrun_price` failing with `API error after payment: 502 / Request failed`
+while the wallet balance never changed. The balance was right and the words were
+wrong, and the words were wrong on three layers at once.
+
+The gateway had said exactly what happened — `Predexon 500: An unexpected error
+occurred (payment NOT charged)` — but `@blockrun/llm` kept only the top-level
+`error` string when it sanitized the body, so the cause and the settlement status
+never reached this server. That is fixed in `@blockrun/llm` 3.15.1 (PR #39), which
+carries the gateway's message through as `detail`; this release depends on it and
+reads the new field, because our own extractor only ever looked at `message` and
+`hint` and would have dropped it a second time. The formatter's "not charged"
+branch, which already existed, finally receives the string it was written for.
+
+**Sports is degraded upstream, and the tool now says so.** All four Predexon
+`sports/*` routes have returned an upstream 500 on every call since 2026-08-04.
+The gateway marks them degraded, withdrew them from discovery, and releases the
+payment nonce on upstream failure, so a call costs nothing and returns nothing.
+This server still advertised them as live. The description, the prediction-markets
+skill and the crypto-data and surf skills now say the routes are degraded and
+point at `markets/search` with `{ q: "NBA" }` or `polymarket/events` with
+`{ search: "NBA" }` instead; a `sports/*` 5xx renders the outage, the date, and
+whether money moved rather than "temporary API issue, try again". The routes
+stay callable, because the gateway is the authority on whether Predexon has
+recovered.
+
+An earlier draft of this release steered users to the canonical `markets` route
+with a `league` filter. That route, `outcomes/:predexon_id` and
+`matching-markets` were removed upstream on 2026-08-04 — they answer 404
+"Unknown Predexon endpoint" before payment — and no live `/v1/pm` route accepts
+`league` at all, so the headline remedy would have failed on first use across
+eight surfaces. Every one of them now names the two routes that quote a 402
+today (probed unauthenticated, both gateways), and the dead routes are gone from
+the tool description and the prediction-markets skill.
+
+**"Nothing was charged" now needs the gateway's word for it.** The sports
+formatter asserted no charge from a 5xx status range alone. Only the gateway's
+upstream-failure branch releases the payment nonce, and only that branch writes
+"(payment NOT charged)" into the body; its catch-all 500 deliberately does not
+release, because settlement ran in the same try, and a 504 after settlement
+carries no body at all. So the sentence is now gated on that evidence — "not
+charged", "no charge was made", "no payment was made", or the 502's "Upstream
+provider error" — and any other labelled 5xx on a sports path keeps the outage
+explanation and the steer but says to check `blockrun_wallet action:"report"`
+instead, the same hedge a post-payment 501 already gets. Today every wallet-rail
+sports failure comes from the release branch, so the wording changes for nobody;
+it would have been wrong on exactly the day Predexon recovers and a settle-side
+error follows.
+
+**Surf is gone, and so is `blockrun_surf`.** The gateway has answered every
+`/v1/surf/*` path with HTTP 410 `endpoint_retired` since 2026-09-06 (`retired_on`
+in the body; `sol.blockrun.ai` 404s; `/api/openapi` lists no Surf route). No 402
+is ever issued, so no payment could have been made — but the tool still reserved
+$0.0095 and, with `BLOCKRUN_CONFIRM_SPEND=on`, asked the user to approve a charge
+for a route that cannot succeed, while the SDK reduced the gateway's dated,
+reasoned notice to `API error: 410 — API request failed`. This release first made
+the tool answer with the retirement before any reservation, and then removed it:
+a tool that can only return an error is not worth the schema every agent carries
+on every turn, and the published brand artifact has said 19 tools since the
+delisting. The server now ships **19 tools**, the `trading` profile 8 and
+`research` 5. Former Surf questions route to `blockrun_price`, `blockrun_defi`,
+`blockrun_markets`, `blockrun_dex` and `blockrun_rpc`; the `surf` skill is now a
+map from each former endpoint to its replacement, and says plainly what has none
+yet (on-chain SQL, cross-chain wallet labels, CEX books, social mindshare).
+README, the crypto-data, gentech, rpc, blockrun and debug skills stop selling 83
+endpoints at $0.0095. A config that still names the tool gets an unknown-tool
+error from its MCP client; nothing can be charged either way.
+
+**Prices say base plus fee, once, everywhere.** `blockrun_markets`, `blockrun_exa`
+and `blockrun_defi` hand-typed a "charged" figure in their descriptions that was
+the reserve ($0.002 fee), not the charge; the live `payment-required` header
+decodes to base + $0.001 on Base and base alone on Solana, and README disagreed
+with itself about which it was quoting. `blockrun_rpc` went the other way and
+quoted the bare $0.002 base while its own reserve and confirm dialog show $0.004.
+Every description and README row now states the base and says the gateway adds
+its flat network fee ($0.001 today; $0.002 reserved; the 402 header carries the
+exact amount). The reserve constants are untouched — they are the conservative
+gate and were right.
+
+**The registry manifest told Solana users to put a bs58 key in the EVM slot.**
+`server.template.json`, stamped into the MCP registry's `server.json` at publish,
+described `BLOCKRUN_WALLET_KEY` as "hex for Base, bs58 for Solana". The code reads
+Solana keys only from `SOLANA_WALLET_KEY`; a bs58 key in `BLOCKRUN_WALLET_KEY`
+selects Base and dies in viem's hex parser on the first paid call. The manifest
+now describes `BLOCKRUN_WALLET_KEY` as the 0x-hex EVM key and Polymarket signer,
+and lists `SOLANA_WALLET_KEY` and `BLOCKRUN_API_KEY` alongside it.
+
+**Equity quotes are not served, and the tool no longer sells them.** Since
+2026-09-05 the gateway answers every `stocks/{market}/price` and `history` call
+(and the `usstock` alias) with a pre-payment 501: "We do not currently serve
+equity prices." This server's description, README and two skills still promised
+paid stock quotes, and on the default Solana chain the Base-only guard fired first
+and told the user to switch chains to pay for a route that cannot succeed. Paid
+stock calls now return the gateway's own answer before the wallet is consulted:
+withdrawn on 2026-09-05, nothing charged, the ticker catalog is still free, and
+who to contact for equity coverage. `formatError` also stops labelling any 501 a
+transient outage; it claims "nothing was charged" only when the 501 arrived
+before payment.
+
+**Pay what you were told, or nothing.** `npm run verify:prices` caught a third
+layer while this release was being cut: the Solana gateway is a separate
+deployment that can lag Base, and it does not know `azure/sora-2` — it quotes
+"Seedance 2.0 Pro video generation (5s)" at $1.135 in Sora's place, 2.7x the
+published rate, for a different model. The only check on the gateway's price was
+the budget cap, which would have let that through on any wallet holding $2.
+`blockrun_video` (both rails) and `blockrun_image` (Solana) now compare the 402
+against the estimate the model was shown and refuse, unsigned, anything more than
+1.5x above it; the message names the quoted amount, what the gateway labelled it,
+and how to proceed. The Solana helper hands callers the decoded 402 so they can
+judge what was quoted, not just how much. The price verifier classifies a Solana
+quote for a different product as a gateway bug to report rather than an
+estimator gap to paper over.
+
+### From the audit
+
+With #132 fixed, the whole server went through a ten-angle audit, each finding argued against by an adversarial verifier before it counted. Thirty-seven survived; every one is fixed below, ordered by what it would have cost.
+
+**A strict-mode Solana wallet could be destroyed by reading its own status.** `ensureBothWallets` — reached by the default `blockrun_wallet` action and by `action:"chain"` — provisioned the Solana side through the SDK's file-only loader. Under `BLOCKRUN_KEYCHAIN=strict` the `.solana-session` file is retired once the key is in the keychain, so that loader saw an empty slate and minted a new keypair; the next key resolution then mirrored the new key over the funded one with `-U` and deleted the file. The funded key was in neither store. The Solana path now has the same shape as the EVM path (`ensureSolanaWallet`: env, then file, then keychain via a read that keeps "absent" and "failed" apart), refuses to mint when the keychain could not be read, and no longer memoises a miss — a wallet provisioned later is visible without a restart. Two more wallet facts came out of the same reading: a fresh install (where Solana is the default) died in the SDK constructor with "Private key required" on every status, setup, QR and deposit call before it ever reached the one action that creates wallets — `getWalletInfo` now provisions, and the client factory names the remedy; and the status screen read the Solana balance from the client's own key rather than the address it was displaying, so it could print one wallet's address beside another's balance — the balance is now queried by address, and an unreachable RPC reads as "unavailable", not $0.
+
+**Polymarket's money paths got a round of audit hardening.** A market order is now signed at the worst fill the preview showed — the dry-run walks the live book and prints `worst fill ≤ X` (buy) / `≥ X` (sell), and that X becomes the order's limit, so a book that thins between preview and confirm can only fill less, never worse; estimated sell proceeds are the walked total, not size × best bid. `withdraw` validates `to_address` with a strict checksum before any I/O and labels the destination honestly — "your agent wallet" only when it is, otherwise a loud CUSTOM warning — and a bridge error is reported as the bridge, not as CLOB geoblock advice (redeem got the same scoping). A relayer submit whose response is lost now leaves the signed withdrawal tracked with anti-retry guidance instead of inviting a double-send, and a signer rotation no longer inherits the old vault's `deployed:true`, so setup deploys the new vault instead of telling you to bridge funds into an address with no code. `fund` gains an optional `POLYMARKET_MAX_FUND_USD` per-call cap (unset = unchanged), and the order card refuses to place an edited amount until you re-quote.
+
+**A job that is already paid for is never abandoned, and never called free.** The account rail bills an async video or music job the moment the gateway accepts it, and until now every failure after that point lost the thread: a dropped poll or a stalled upstream fell out of `apiKeyAsyncPost` as a bare error, `isTimeoutError` matched the text, and the tool said "please try again" — advice that submits and bills a second job — while the local ledger booked nothing, because `finally` released the reservation and no one recorded the charge. Both rails now poll through transient disconnects and proxy statuses inside the existing deadline, as the Solana helper already did; and every give-up after a successful submit is a `BilledJobError` that carries the settled cost and the job id, which `blockrun_video` and `blockrun_music` book against the cap and report with the dashboard link and no retry advice. A submit that never answers says the job *may* have been billed — no charge was observed, so none is asserted, and none is denied. On the Base rail, a poll aborted while carrying the payment header can still settle server-side; the tools now say so and book conservatively instead of promising "no payment was taken", and `blockrun_music` books a completed poll before validating its payload, the fix `blockrun_video` received in 0.39.1. `blockrun_realface` books a settled 2xx before checking for `asset_id`.
+
+**`blockrun_phone` now refuses paths outside `phone/*` and `voice/*` before reserving budget.** Every other passthrough tool concatenates onto a fixed prefix; phone's prefix was `/v1/` itself, so no traversal was needed — `path:"modal/sandbox/create"` with an H100 body ran at phone's $0.012 unknown reserve, clearing any budget cap and showing the confirm dialog a number 16,000× too small. The route the gateway will serve (decoded, lower-cased, query dropped) is what gets classified, so encoded, cased, and query-suffixed spellings of in-namespace routes still pass and no spelling of an out-of-namespace one does.
+
+**The chat price table said it held every model priced above the $5/$30 default; two flagships had been sitting above it for weeks.** `openai/gpt-6-astra` and `anthropic/claude-fable-5.1` ($10/$50 on both gateways) now have rows, and `npm run verify:prices` sweeps the live catalogue so the eighth cannot go unnoticed — it also fails when a row reads below the live rate, when a "free" model starts costing, and when an Anthropic row over-books the native ledger, which is how `claude-sonnet-5` drops to its real $2/$10 after a 1.5x over-count. A chat call that settled and then stalled mid-stream now says so on every path, without the "needs funding" advice the routing loop's own note used to earn from the formatter. `thinking.budget_tokens` is reserved only for Claude, as the schema always promised. The native ledger reads the gateway's dashed echoes (`claude-fable-5-1`) as their catalogue key instead of prefix-matching a sibling's rate. "Free" is a set, not a vendor: `cohere/north-mini-code` and `poolside/laguna-xs-2.1` reserve $0. And a 5xx the gateway marks "(payment NOT charged)" finally says, in the tool's voice, that nothing was charged (#132).
+
+**The tests can no longer spend, and the guards can no longer skip.** `image-cost.test.ts` said the paid client was mocked, and it was — but `blockrun_image` decides its rail from the account key before it ever asks for that client, so on a developer machine set up for account mode the suite left the mocks and posted to the gateway with the real key. The rail is now pinned to a temp `HOME` with no key before the tool loads, and the shared fetch helper is a trap, so an escape fails for the right reason. The confirm-spend guard keyed on `reserveBudget` and skipped any file without one — the one offender it could not see was a tool that pays and never reserves; it now reads the payment surfaces off the imports and holds every one of them to reserve *and* confirm, and `blockrun_image` finally has its own row in the decline table. `blockrun_price`'s equity pre-flight is proved at the handler, not as a string: before the chain guard, the budget gate and the confirm dialog. Two smaller honesty fixes ride along: a `BLOCKRUN_BUDGET_LIMIT` that does not parse (`5,00`, `0`, `5 USD`) now says on stderr that the cap is OFF instead of silently running unlimited, and the image-edit confirm dialog names the real path of every local file about to leave the machine — a symlink is shown as its target.
+
+**The startup key scanner no longer tells a user who followed the docs to rotate their wallet.** `BLOCKRUN_WALLET_KEY` / `SOLANA_WALLET_KEY` under `mcpServers.*.env` is the documented override — on Claude Code it is the only way to set it — yet every launch printed the "treat this key as compromised" banner. That location now gets a short note (the file is plaintext and synced; prefer `~/.blockrun/.session` or the OS keychain), the banner is reserved for a key somewhere it was never meant to be, a raw key hiding in `args` is finally caught, and the Cursor and Windsurf config files the README documents are scanned too. Around it, four smaller honesty fixes: an unknown `--profile` says so instead of quietly loading all 20 tools (and whitespace/case no longer count as a typo); the update notice stops recommending a `claude mcp add` that refuses an existing name; `blockrun_dex` validates the token address before it goes into the URL path; and `skills install --help` exits 0. CI now runs the full suite on Node 20.19 as well as 22, which `engines` has claimed since the badge went up.
+
+Also shipping, landed on `main` since 0.48.0:
+
+- **`blockrun_image` reads the settled cost on the account rail** instead of an
+  estimate that was high by the transaction fee the rail does not charge, and
+  stops labelling an exact figure "estimated" (#140).
+- **OpenClaw is verified** end-to-end on 2026.8.2 with the published `npx`
+  package, with install notes on spend confirmation per chat surface; the
+  `deepseek/deepseek-v4-pro` rate follows the gateway's repricing (#131).
+- Brand numbers refreshed from the canonical snapshot (#141).
+
+Two adversarial passes (a fresh-context Claude subagent and Codex) reviewed the
+change; every finding was addressed, including the two that mattered: a
+post-payment 501 must not claim nothing was charged, and the sports matcher must
+use the same labelled-status rule as `formatError` so an incidental "501 items"
+in a 4xx body is not sold as the outage.
+
 ## 0.48.0
 
 **A key can live in a file, not just an environment variable.** Write it to

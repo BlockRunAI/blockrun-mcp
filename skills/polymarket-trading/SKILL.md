@@ -32,7 +32,10 @@ this tool only trades.
    trade.** Call once WITHOUT confirm → show the dry-run preview → ask → re-call
    with `confirm:true`.
 2. Per-order cap `POLYMARKET_MAX_BET_USD` (default $25) and optional session cap
-   are enforced server-side; don't try to split orders to sneak past them.
+   are enforced server-side; don't try to split orders to sneak past them. The
+   optional `POLYMARKET_MAX_FUND_USD` bounds a single `fund` call the same way.
+   A `withdraw` preview marks any `to_address` that is not the user's own agent
+   wallet as `CUSTOM` — show the user that line verbatim before confirming.
 3. On ANY error, read the message — it says exactly what to do next (fund,
    approve, region, re-run setup). Don't retry blindly.
 
@@ -84,6 +87,8 @@ blockrun_polymarket action:"withdraw" confirm:true                   # (partial:
 ## Order semantics
 
 - Prices are probabilities 0–1, auto-rounded to the market's tick grid.
+- A market-order preview states `worst fill ≤ X` (buy) / `≥ X` (sell); the
+  order is signed at that bound, so quote it to the user as the price limit.
 - Market **buy** = `amount_usd` (dollars). Market **sell** = `size` (shares).
 - Limit orders: `price` + `size`; default GTC; `post_only:true` for maker-only.
 - FOK fails whole-or-nothing; FAK fills what it can. On "FOK not filled", offer

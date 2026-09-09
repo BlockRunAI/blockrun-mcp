@@ -3,12 +3,19 @@
 // OS keychain storage for wallet private keys.
 //
 // Background: the wallet key lives at ~/.blockrun/.session as plaintext (mode
-// 0600). File permissions stop other UNIX users, but not anything running as
-// you — a malicious postinstall script, a backup agent that syncs the home
-// directory to iCloud/Dropbox, or a leaky log collector all read it trivially.
-// The same class of leak already bit us once through ~/.claude.json, which is
-// why utils/key-leak-scanner.ts exists. The keychain moves the secret behind
-// an OS-mediated API instead of a readable path.
+// 0600). File permissions stop other UNIX users, but not anything that reads
+// the home directory as data — a backup agent syncing to iCloud/Dropbox, a
+// disk image, a dotfile or log slurper. The same class of leak already bit us
+// once through ~/.claude.json, which is why utils/key-leak-scanner.ts exists.
+// The keychain moves the secret behind an OS-mediated API instead of a
+// readable path, so it protects the key AT REST.
+//
+// What it does NOT do: defend against code running as you. `security
+// add-generic-password` without -T/-A grants the creating application (here,
+// /usr/bin/security itself) access, and any process running as the user can
+// run `security find-generic-password -w` / `secret-tool lookup` and read the
+// value back — a malicious postinstall script included. Do not describe the
+// keychain as protection against same-user code; it is not.
 //
 // Technique credit: the `security -i` approach below (and the 128-byte
 // truncation gotcha it avoids) is adapted from Circle's CLI, Apache-2.0.

@@ -337,10 +337,15 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             throw new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`);
           }
 
+          // The gateway answers 2xx only AFTER settling, so the charge is real
+          // whatever the body looks like. Book it before validating the payload:
+          // a truncated or asset-less body used to throw first, the catch
+          // formatted a failure, and finally released the reservation — a real
+          // charge the ledger never saw (same ordering video.ts and speech.ts fixed).
+          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Portrait response missing asset_id: ${JSON.stringify(data)}`);
-
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
 
           const txHash = data.settlement?.tx_hash || undefined;
           const lines = [
@@ -406,10 +411,12 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             throw new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`);
           }
 
+          // Book before validating the payload — see the portrait action above:
+          // a settled 2xx with a malformed body must not un-record the charge.
+          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Enroll response missing asset_id: ${JSON.stringify(data)}`);
-
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
 
           const txHash = data.settlement?.tx_hash || undefined;
           const lines = [

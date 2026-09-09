@@ -19,7 +19,7 @@
 // wrapped to pUSD through the collateral onramp first (sweep design from
 // @KillerQueen-Z's #59/#66, tracked in #71).
 import axios from "axios";
-import { encodeFunctionData, formatUnits, http, createWalletClient, type Hex } from "viem";
+import { encodeFunctionData, formatUnits, http, createWalletClient, isAddress, type Hex } from "viem";
 import { polygon } from "viem/chains";
 import {
   BASE_CHAIN_ID,
@@ -37,7 +37,6 @@ import {
 import { getPolymarketAccount } from "./client.js";
 import { assertTransactionSucceeded } from "./transactions.js";
 import type { ToolResult } from "./orders.js";
-import { mapClobError } from "./orders.js";
 import { getFundsAddress } from "./positions.js";
 import { loadState, saveState } from "./creds.js";
 import { getRelayerTransactionState, sendWalletBatch } from "./relayer.js";
@@ -134,7 +133,24 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
   } catch (err) {
     return { text: err instanceof Error ? err.message : String(err), isError: true };
   }
-  const recipient = (input.to_address as Hex) || getPolymarketAccount().address;
+  // The destination is forwarded to the bridge as `recipientAddr` and the USDC
+  // lands wherever it says — irreversibly. Validate BEFORE any I/O: strict
+  // isAddress rejects non-addresses and mixed-case strings whose EIP-55
+  // checksum does not match (the transposition-typo shape); all-lowercase input
+  // carries no checksum and is accepted as-is.
+  if (input.to_address !== undefined && !isAddress(input.to_address, { strict: true })) {
+    return {
+      text: `to_address must be a valid 0x… Base address (40 hex chars; if mixed-case, the checksum must match). ` +
+        `Got ${JSON.stringify(input.to_address)}. Nothing withdrawn.`,
+      isError: true,
+    };
+  }
+  const agent = getPolymarketAccount().address;
+  const recipient = (input.to_address as Hex | undefined) ?? agent;
+  // The dry-run is the one human checkpoint before the transfer. Label the
+  // destination from what it IS, not from where the default would have gone:
+  // a caller-supplied third-party address used to print as "agent wallet".
+  const isCustom = recipient.toLowerCase() !== agent.toLowerCase();
 
   try {
     // Refuse to sign while an earlier withdrawal batch may still land: its
@@ -145,13 +161,18 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     if (pending && input.confirm === true) {
       const graceSec = 60; // relayer can mine right at the deadline; don't race it
       if (Math.floor(Date.now() / 1000) < pending.deadline + graceSec) {
-        const state = await getRelayerTransactionState(pending.transactionID);
+        // "unknown" = the relayer never returned an id (submit response lost,
+        // see relayer.ts sendWalletBatch). There is nothing to look up, and the
+        // signed batch may still land — block until the deadline passes.
+        const idUnknown = pending.transactionID === "unknown";
+        const state = idUnknown ? undefined : await getRelayerTransactionState(pending.transactionID);
         if (state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
           saveState({ pendingWithdraw: undefined });
         } else {
           const waitSecs = pending.deadline + graceSec - Math.floor(Date.now() / 1000);
+          const stateLabel = idUnknown ? "unknown — the submit response was lost" : (state ?? "unreachable");
           return {
-            text: `A previous withdrawal (relayer tx ${pending.transactionID}, state: ${state ?? "unreachable"}) ` +
+            text: `A previous withdrawal (relayer tx ${pending.transactionID}, state: ${stateLabel}) ` +
               `may still execute — its signed transfer stays valid for up to ~${waitSecs}s more. Signing another ` +
               `one now could double-send. Re-run after that window, when the balance reads will show what happened.`,
             isError: true,
@@ -188,7 +209,7 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
           `DRY RUN — nothing withdrawn.`,
           `Withdraw $${amountUsd.toFixed(2)} → native USDC on Base`,
           `  from deposit wallet: ${owner}`,
-          `  to (agent wallet): ${recipient}`,
+          `  to: ${recipient}${isCustom ? "  ⚠️ CUSTOM destination — NOT your agent wallet" : "  (your agent wallet)"}`,
           ...(wrapRaw > 0n
             ? [``, `  First wrap: $${Number(formatUnits(wrapRaw, PUSD_DECIMALS)).toFixed(2)} legacy USDC.e → pUSD (collateral onramp, same wallet)`]
             : []),
@@ -275,7 +296,7 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       text: [
         `✅ Withdrawal submitted: $${amountUsd.toFixed(2)} → USDC on Base`,
         ...(wrapRaw > 0n ? [`  (included wrapping $${Number(formatUnits(wrapRaw, PUSD_DECIMALS)).toFixed(2)} legacy USDC.e → pUSD first)`] : []),
-        `  to your agent wallet: ${recipient}`,
+        `  to ${isCustom ? "CUSTOM address (not your agent wallet)" : "your agent wallet"}: ${recipient}`,
         ...(txHash ? [`  pUSD transfer tx: https://polygonscan.com/tx/${txHash}`] : []),
         `  The bridge unwraps + delivers USDC to Base (usually within a minute).`,
         `  Track: GET ${BRIDGE_API_HOST}/status/${owner}`,
@@ -287,6 +308,27 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       },
     };
   } catch (err) {
-    return { text: await mapClobError(err), isError: true };
+    // No CLOB call happens anywhere in this function, so mapClobError's
+    // taxonomy does not apply: a bridge 403 used to come back as "point
+    // POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region
+    // relay" (the relay does not serve the bridge) and any transport message
+    // containing "closed" as "market resolved, go redeem". Report the bridge
+    // as the bridge; pass everything else through verbatim — the relayer's
+    // anti-retry wording (sendWalletBatch) must reach the user unchanged.
+    return { text: describeWithdrawError(err), isError: true };
   }
+}
+
+/** Plain, source-honest error text for the withdraw path. Exported for tests. */
+export function describeWithdrawError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const e = err as { isAxiosError?: boolean; response?: { status?: number; data?: unknown } };
+  if (e?.isAxiosError === true) {
+    const status = e.response?.status;
+    const data = e.response?.data !== undefined ? ` — ${typeof e.response.data === "string" ? e.response.data : JSON.stringify(e.response.data)}` : "";
+    return `Polymarket bridge request failed (POST ${BRIDGE_API_HOST}/withdraw${status ? `, HTTP ${status}` : ""}): ${message}${data}. ` +
+      `Nothing was transferred — the pUSD move only happens after the bridge answers. This is the BRIDGE host ` +
+      `(POLYMARKET_BRIDGE_HOST), not the CLOB/relayer egress; check the bridge status, then retry.`;
+  }
+  return message;
 }

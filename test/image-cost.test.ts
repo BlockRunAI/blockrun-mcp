@@ -1,10 +1,34 @@
-// Run with: npm test  (tsx --test)
+// Run with: npm test  (tsx --experimental-test-module-mocks --test)
 // Verifies the Cost footer added to blockrun_image, without any real spend:
-// the paid ImageClient and the chain selector are mocked, then the registered
-// handler is invoked and its text/structured output is asserted.
+// the auth rail is pinned to wallet/Base, the paid ImageClient and the chain
+// selector are mocked, and the shared fetch helper is a trap — then the
+// registered handler is invoked and its text/structured output is asserted.
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { BudgetState } from "../src/types.js";
+
+// Pin the RAIL before anything can load utils/auth.ts. image.ts asks
+// isApiKeyMode() BEFORE it consults the mocked getChain()/getImageClient(), and
+// that answer comes from the developer's own BLOCKRUN_API_KEY / ~/.blockrun/.api-key
+// — so on a machine set up for account mode the six handler calls below used to
+// leave the mocks entirely and POST to the gateway with the real Bearer key.
+// Same discipline as auth-mode.test.ts: a temp HOME (auth.ts captures the key
+// file path from os.homedir() at import time) and no env key. auth.js itself is
+// NOT mocked — onramp.ts (imported by image.ts) needs PORTAL_CREDITS_URL from
+// it, and a partial namedExports mock fails to link.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "blockrun-image-cost-"));
+const realHome = process.env.HOME;
+const savedApiKey = process.env.BLOCKRUN_API_KEY;
+process.env.HOME = home;
+delete process.env.BLOCKRUN_API_KEY;
+process.on("exit", () => {
+  if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome;
+  if (savedApiKey === undefined) delete process.env.BLOCKRUN_API_KEY; else process.env.BLOCKRUN_API_KEY = savedApiKey;
+  fs.rmSync(home, { recursive: true, force: true });
+});
 
 // Mock the wallet module BEFORE importing the tool: force Base chain and hand
 // back a fake ImageClient whose generate/edit resolve to a hosted URL (no
@@ -27,8 +51,26 @@ mock.module("../src/utils/wallet.js", {
     resolveSolanaKey: () => undefined,
   },
 });
+// Belt and braces: every rail that is not the mocked ImageClient (account
+// apiKeyPost, Solana manual x402) bottoms out in this helper. If a future
+// change routes past the pin above, the test fails HERE, for the right reason,
+// instead of reaching the network.
+let networkCalls = 0;
+mock.module("../src/utils/http.js", {
+  namedExports: {
+    fetchWithTimeout: async () => { networkCalls++; throw new Error("network call escaped the mocks"); },
+    isTimeoutError: () => false,
+  },
+});
 
 const { registerImageTool, estimateCost } = await import("../src/tools/image.js");
+const { isApiKeyMode } = await import("../src/utils/auth.js");
+
+test("the suite runs on the wallet rail whatever the developer's account setup", () => {
+  // If this fails, every handler test below is exercising the account rail —
+  // and without the pin, a real key.
+  assert.equal(isApiKeyMode(), false);
+});
 
 // Minimal McpServer stub: capture the handler registerImageTool installs.
 function makeHarness() {
@@ -53,6 +95,7 @@ test("generate result includes a Cost line at the CHARGED price, not the catalog
   assert.match(text, /Cost: \$0\.0650/); // 0.06 catalog x 1.05 + $0.002
   assert.equal(res.structuredContent.cost_usd, 0.065);
   assert.equal(res.isError, undefined);
+  assert.equal(networkCalls, 0, "the mocked ImageClient must be the only rail this suite touches");
 });
 
 test("large gpt-image-2 render is billed at the large-size CHARGED price", async () => {

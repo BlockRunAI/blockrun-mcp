@@ -173,6 +173,16 @@ export function getMaxSessionUsd(): number | null {
 }
 
 /**
+ * Optional per-call cap on action:"fund" (Base USDC → own vault), in dollars;
+ * null = uncapped (unset — fund is a self-to-self move, reversible via
+ * withdraw, and no cap ever applied, so a default would silently break
+ * existing users); 0/garbage = freeze. Read per call like the other caps.
+ */
+export function getMaxFundUsd(): number | null {
+  return parseCapEnv("POLYMARKET_MAX_FUND_USD", process.env.POLYMARKET_MAX_FUND_USD, null);
+}
+
+/**
  * Bounded pUSD approvals in dollars; null = unlimited (maxUint256). The CTF
  * ERC-1155 approval is inherently all-or-nothing either way. Only a valid
  * positive value bounds; 0/garbage → unlimited (approvals are not a per-order

@@ -24,7 +24,6 @@ export type ToolName =
   | "dex"
   | "modal"
   | "phone"
-  | "surf"
   | "rpc"
   | "defi"
   | "polymarket_read"
@@ -35,7 +34,7 @@ export type ToolName =
 // real ToolName (catches typos).
 export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
-  "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
+  "search", "exa", "markets", "price", "dex", "modal", "phone", "rpc", "defi",
   "polymarket_read", "polymarket",
 ] as const satisfies readonly ToolName[];
 
@@ -57,20 +56,30 @@ export const PROFILES: Record<string, ToolName[] | "all"> = {
   // Markets & on-chain data: prediction markets (data + Polymarket trading),
   // realtime prices, DEX/CEX data, DeFi metrics, and raw RPC, plus the wallet
   // for balance/funding.
-  trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc", "polymarket_read", "polymarket"],
+  trading: ["wallet", "price", "dex", "markets", "defi", "rpc", "polymarket_read", "polymarket"],
   // Web research & analysis: live search, neural search, Surf's news/SQL,
   // and chat for synthesis, plus wallet and the model catalogue.
-  research: ["wallet", "models", "chat", "search", "exa", "surf"],
+  research: ["wallet", "models", "chat", "search", "exa"],
   // Minimal LLM gateway: just chat + model discovery + wallet.
   chat: ["wallet", "models", "chat"],
 };
 
 const DEFAULT_PROFILE = "full";
 
+// Profile names are case-insensitive and whitespace-tolerant: a JSON client's
+// `"args": ["--profile", "trading "]` or `BLOCKRUN_MCP_PROFILE=" Media"` is a
+// typo, not a different profile. Blank means "not specified".
+function normalizeProfileName(raw: string | undefined): string {
+  const name = (raw ?? "").trim().toLowerCase();
+  return name || DEFAULT_PROFILE;
+}
+
 /**
  * Resolve the active profile name. Precedence: explicit `--profile <name>` /
  * `--profile=<name>` CLI flag, then BLOCKRUN_MCP_PROFILE env, then "full".
- * An unknown name falls back to "full" (logged by the caller).
+ * Returns the name as REQUESTED (trimmed, lower-cased); it may not be a known
+ * profile — `resolveTools` does the fallback and reports both names so the
+ * caller can log when they differ.
  */
 export function resolveProfileName(
   argv: string[] = process.argv.slice(2),
@@ -78,32 +87,40 @@ export function resolveProfileName(
 ): string {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--profile") return (argv[i + 1] ?? DEFAULT_PROFILE).toLowerCase();
-    if (arg.startsWith("--profile=")) return arg.slice("--profile=".length).toLowerCase();
+    if (arg === "--profile") return normalizeProfileName(argv[i + 1]);
+    if (arg.startsWith("--profile=")) return normalizeProfileName(arg.slice("--profile=".length));
   }
-  if (env.BLOCKRUN_MCP_PROFILE) return env.BLOCKRUN_MCP_PROFILE.toLowerCase();
-  return DEFAULT_PROFILE;
+  return normalizeProfileName(env.BLOCKRUN_MCP_PROFILE);
+}
+
+/** The profile names `--profile` accepts, for help text and the unknown-name warning. */
+export function knownProfileNames(): string[] {
+  return Object.keys(PROFILES);
 }
 
 /**
  * Resolve a profile name to the concrete set of tools to register.
  * Returns the canonical profile name actually used (after unknown-name
- * fallback) alongside the tool list, so the server can log it accurately.
+ * fallback) alongside the tool list, plus the name that was requested, so the
+ * server can log accurately — and can say so when the two differ, because a
+ * misspelt `--profile tradng` otherwise loads all 20 schemas in silence for a
+ * user who asked for 9.
  */
 export function resolveTools(
   argv?: string[],
   env?: NodeJS.ProcessEnv,
-): { profile: string; tools: Set<ToolName> } {
+): { profile: string; tools: Set<ToolName>; requested: string } {
   const requested = resolveProfileName(argv, env);
   // Use hasOwn so inherited Object.prototype members ("constructor",
   // "__proto__", …) are treated as unknown names and fall back to "full"
   // instead of resolving to a non-iterable function and crashing at startup.
   const spec = Object.hasOwn(PROFILES, requested) ? PROFILES[requested] : undefined;
   if (!spec) {
-    return { profile: DEFAULT_PROFILE, tools: new Set(ALL_TOOLS) };
+    return { profile: DEFAULT_PROFILE, tools: new Set(ALL_TOOLS), requested };
   }
   return {
     profile: requested,
     tools: new Set(spec === "all" ? ALL_TOOLS : spec),
+    requested,
   };
 }

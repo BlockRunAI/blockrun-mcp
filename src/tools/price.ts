@@ -1,8 +1,22 @@
 // src/tools/price.ts
 //
 // Pyth-backed market data tool. Crypto, FX and commodity are fully free
-// (price + history + list); stocks (`stocks/{market}` and the `usstock`
-// legacy alias) charge $0.001 per price or history call.
+// (price + history + list).
+//
+// Equity is catalog-only. Since 2026-09-05 the gateway answers every
+// `stocks/{market}/price` and `/history` call (and the `usstock` alias) with a
+// pre-payment 501 — "We do not currently serve equity prices" — after
+// blockrun#517 moved the free tier onto licensed sources. `stocks/{market}/list`
+// still serves the ticker catalog for free (the Solana gateway has no equity
+// route at all — it answers with the site HTML).
+//
+// Paid stock price/history is therefore answered HERE, before the chain guard
+// and before any network call: on the default Solana chain the Base-only guard
+// used to fire first and tell the user to switch chains to pay for a route
+// that 501s. The gateway's answer is a product decision with a contact
+// address, not a transient fault, so pre-empting it loses nothing. Retire the
+// pre-flight (and re-enable the paid path below it) once
+// `curl https://blockrun.ai/v1/stocks/us/price/AAPL` answers 402 again.
 //
 // Supported markets: us, hk, jp, kr, gb, de, fr, nl, ie, lu, cn, ca.
 
@@ -18,7 +32,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
-import { baseOnlyMessage, getPriceClient } from "../utils/wallet.js";
+import { getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
@@ -35,11 +49,25 @@ function isPaidPriceCall(action: "price" | "history" | "list", category: string)
   return action !== "list" && (category === "stocks" || category === "usstock");
 }
 
+/**
+ * What the gateway itself answers for equity price/history since 2026-09-05
+ * (HTTP 501, verified live 2026-09-08), said before the wallet is consulted.
+ * Exported for the test; nothing here touches the network.
+ */
+export function equityNotServedMessage(action: string, category: string, market?: string): string {
+  const mkt = market ?? "us";
+  return `Error: Equity ${action === "history" ? "history" : "quotes"} are not served (gateway 501 for category "${category}").\n\n` +
+    `The gateway withdrew equity price and history on 2026-09-05 — this is not an outage, retrying will not help, ` +
+    `and nothing was charged (the wallet was not asked to sign).\n` +
+    `The ticker catalog still works and is free: { action: "list", category: "stocks", market: "${mkt}" }.\n` +
+    `For realtime or global equity coverage, contact hello@blockrun.ai.`;
+}
+
 export function registerPriceTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_price",
     {
-      description: `Realtime quotes and OHLC history for crypto, FX, commodities and 12 global stock markets (Pyth-backed).
+      description: `Realtime quotes and OHLC history for crypto, FX and commodities (Pyth-backed), plus the ticker catalog for 12 stock markets.
 
 - action="price" — realtime quote for a symbol
 - action="history" — OHLC bars between from/to (unix seconds)
@@ -47,20 +75,20 @@ export function registerPriceTool(server: McpServer, budget: BudgetState): void 
 
 Pricing:
 - crypto / fx / commodity: FREE across price, history and list
-- stocks / usstock: $0.001 per price or history call (list free)
+- stocks / usstock: list (ticker catalog) FREE; price/history NOT SERVED — gateway 501 before payment since 2026-09-05, nothing charged, do not retry
 
 Stocks markets: us, hk, jp, kr, gb, de, fr, nl, ie, lu, cn, ca (required when category="stocks").
 
 Examples:
 - { action: "price", category: "crypto", symbol: "BTC-USD" }
-- { action: "price", category: "stocks", symbol: "AAPL", market: "us" }
+- { action: "price", category: "fx", symbol: "EUR-USD" }
 - { action: "history", category: "crypto", symbol: "ETH-USD", resolution: "D", from: 1700000000, to: 1710000000 }
 - { action: "list", category: "crypto", query: "sol" }`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         action: ACTION.describe("Which endpoint to hit: price, history, or list."),
         category: CATEGORY.describe("Market category."),
-        symbol: z.string().optional().describe("Ticker (required for price+history). e.g. BTC-USD, AAPL, EUR-USD."),
+        symbol: z.string().optional().describe("Ticker (required for price+history). e.g. BTC-USD, EUR-USD, XAU-USD."),
         market: MARKET.optional().describe("Stock market code — required when category='stocks'."),
         session: SESSION.optional().describe("Equity session hint (pre/post/on); ignored for non-equity."),
         resolution: RESOLUTION.optional().describe("Bar resolution for history (default D)."),
@@ -73,14 +101,21 @@ Examples:
     },
     async ({ action, category, symbol, market, session, resolution, from, to, query, limit, agent_id }) => {
       try {
+        // Equity price/history first — before the market-required throw, so the
+        // most natural stocks call (no market) gets the real answer in one round
+        // trip instead of a validation error for a route that is not served.
+        const paid = isPaidPriceCall(action, category);
+        if (paid) {
+          return {
+            content: [{ type: "text", text: equityNotServedMessage(action, category, market) }],
+            isError: true,
+          };
+        }
+        // Re-enable when the equity route returns (see the header): the paid
+        // path is Base-only, so restore `baseOnlyMessage("Paid stock price/history calls")`
+        // here ahead of the reservation.
         if (category === "stocks" && !market) {
           throw new Error("market is required when category='stocks'");
-        }
-
-        const paid = isPaidPriceCall(action, category);
-        const chainBlock = paid ? baseOnlyMessage("Paid stock price/history calls") : null;
-        if (chainBlock) {
-          return { content: [{ type: "text", text: formatError(chainBlock) }], isError: true };
         }
 
         // withTxFee: the gateway charges base + $0.002 (src/utils/tx-fee.ts), so a

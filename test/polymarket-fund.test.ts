@@ -115,3 +115,58 @@ test("confirm:true signs the deposit auth and calls the gateway with the right b
   assert.equal(call.body.amountMicro, "5000000"); // $5 * 1e6
   assert.equal(call.body.depositAuthorization, "BASE64_DEPOSIT_PAYLOAD");
 });
+
+// --- Optional per-call cap (audit cluster F) ---
+//
+// fund signs an EIP-3009 authorization for the FULL amount outside the x402
+// budget ledger and outside POLYMARKET_MAX_BET_USD (orders only). It is a
+// self-to-self move (own Base USDC → own vault), so the default stays uncapped;
+// POLYMARKET_MAX_FUND_USD lets an operator bound a single call, read per call
+// like the other caps and enforced before any RPC/bridge/signing.
+
+test("POLYMARKET_MAX_FUND_USD refuses a larger single funding call before any signing", async () => {
+  baseBalance = 500;
+  postCalls = [];
+  process.env.POLYMARKET_MAX_FUND_USD = "50";
+  try {
+    const res = await fundVault({ amount_usd: 100, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /POLYMARKET_MAX_FUND_USD/);
+    assert.match(res.text, /\$50/);
+    assert.match(res.text, /Nothing moved/);
+    assert.equal(postCalls.length, 0, "must not sign/POST over the cap");
+    // The dry-run reports the refusal too, so the agent learns the bound before asking for confirm.
+    const dry = await fundVault({ amount_usd: 100 });
+    assert.equal(dry.isError, true);
+    assert.match(dry.text, /POLYMARKET_MAX_FUND_USD/);
+    // Exactly at the cap is allowed.
+    const atCap = await fundVault({ amount_usd: 50, confirm: true });
+    assert.equal(atCap.isError, undefined, atCap.text);
+    assert.equal(postCalls.length, 1);
+  } finally {
+    delete process.env.POLYMARKET_MAX_FUND_USD;
+  }
+});
+
+test("without POLYMARKET_MAX_FUND_USD funding stays uncapped (no silent behaviour change)", async () => {
+  baseBalance = 500;
+  postCalls = [];
+  delete process.env.POLYMARKET_MAX_FUND_USD;
+  const res = await fundVault({ amount_usd: 400, confirm: true });
+  assert.equal(res.isError, undefined, res.text);
+  assert.equal(postCalls.length, 1);
+});
+
+test("a garbage POLYMARKET_MAX_FUND_USD fails closed like the other caps", async () => {
+  baseBalance = 500;
+  postCalls = [];
+  process.env.POLYMARKET_MAX_FUND_USD = "$100";
+  try {
+    const res = await fundVault({ amount_usd: 5, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /POLYMARKET_MAX_FUND_USD/);
+    assert.equal(postCalls.length, 0);
+  } finally {
+    delete process.env.POLYMARKET_MAX_FUND_USD;
+  }
+});

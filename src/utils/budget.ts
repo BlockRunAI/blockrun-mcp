@@ -205,3 +205,64 @@ export function parseBudgetLimitEnv(raw: string | undefined): number | null {
   const n = Number(raw.trim().replace(/^\$/, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+// ---------------------------------------------------------------------------
+// Quote sanity — pay what you were told, or nothing
+// ---------------------------------------------------------------------------
+//
+// Every manual-402 tool estimates the charge from a published rate table, then
+// reads the REAL price off the gateway's 402 before signing. Until now the only
+// check on that real price was the budget cap: a quote above the estimate was
+// re-reserved and paid. That is right for a token-priced 4K render that the
+// table undershoots by a cent, and wrong for what verify:prices found on
+// 2026-09-08: the Solana gateway (a separate deployment that can lag Base)
+// does not know azure/sora-2 and quotes it as "Seedance 2.0 Pro video
+// generation (5s)" at $1.135 — 2.7x the published Sora rate, for a different
+// model. The budget cap would have let that through on any wallet with $2.
+//
+// So: a quote more than QUOTE_TOLERANCE_RATIO above the estimate (and more than
+// QUOTE_TOLERANCE_FLOOR_USD above it, so a $0.003 quote against a $0.001
+// estimate is not a "3x") is refused before anything is signed. The estimators
+// are verified against live 402s to within $0.001 (`npm run verify:prices`), so
+// the honest cases live far inside 1.5x; a legitimate gateway reprice past it
+// fails loud until the estimator is updated, which is the safe direction for
+// money. Nothing here touches the ledger — a refused quote settles nothing.
+export const QUOTE_TOLERANCE_RATIO = 1.5;
+export const QUOTE_TOLERANCE_FLOOR_USD = 0.02;
+
+export class QuoteMismatchError extends Error {
+  readonly quotedUsd: number;
+  readonly estimateUsd: number;
+  constructor(message: string, quotedUsd: number, estimateUsd: number) {
+    super(message);
+    this.name = "QuoteMismatchError";
+    this.quotedUsd = quotedUsd;
+    this.estimateUsd = estimateUsd;
+  }
+}
+
+/**
+ * Throws QuoteMismatchError when the gateway's authoritative quote is far above
+ * what the caller told the user to expect. `null` quotes are not judged here —
+ * callers already fail closed on an unreadable amount. The message ends with
+ * "no charge was made" so formatError() does not append funding advice.
+ */
+export function assertQuoteNearEstimate(
+  quotedUsd: number | null | undefined,
+  estimateUsd: number,
+  opts: { what: string; quotedFor?: string; hint?: string },
+): void {
+  if (typeof quotedUsd !== "number" || !Number.isFinite(quotedUsd)) return;
+  if (!(estimateUsd > 0)) return; // a $0 estimate means "free": nothing to compare
+  const ratio = quotedUsd / estimateUsd;
+  if (ratio <= QUOTE_TOLERANCE_RATIO || quotedUsd - estimateUsd <= QUOTE_TOLERANCE_FLOOR_USD) return;
+  const labelled = opts.quotedFor ? ` — the gateway labels that quote "${opts.quotedFor}"` : "";
+  throw new QuoteMismatchError(
+    `The gateway quoted $${quotedUsd.toFixed(4)} for ${opts.what}, but this tool expected about $${estimateUsd.toFixed(4)} ` +
+      `(${ratio.toFixed(1)}x the published rate)${labelled}. Refusing to sign it — no charge was made. ` +
+      `A gap this large means the gateway repriced the model or substituted a different one.` +
+      (opts.hint ? ` ${opts.hint}` : ""),
+    quotedUsd,
+    estimateUsd,
+  );
+}

@@ -14,14 +14,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  # package.json says `engines.node >=20.19` and the README carries the badge,
+  # but until this matrix existed every check ran on Node 22 only. A dependency
+  # reaching for a 22-only API (Promise.withResolvers, Set.prototype.union) would
+  # have shipped green and broken on the oldest Node the package claims to
+  # support. 20.19 is the floor: mock.module (which `npm test` needs) landed in
+  # 20.18, and vite 8 / rolldown (the pretest MCP Apps build) require ^20.19.
+  test-node:
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19", "22"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - run: npm ci
@@ -58,3 +69,17 @@ jobs:
       # a blockrun.ai deploy in progress cannot fail this repo's CI.
       - name: Brand numbers
         run: node scripts/sync-brand-numbers.mjs --check
+
+  # Branch protection on main requires a status check named exactly `test`.
+  # A matrix job reports one check per leg ("test (node 20.19)", "test (node
+  # 22)") and never one called `test`, so without this gate every PR would sit
+  # unmergeable waiting for a check that can no longer arrive. `if: always()`
+  # makes it run even when a leg fails, so the failure is reported as a red
+  # `test` rather than a check that never completes.
+  test:
+    needs: test-node
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All Node versions passed
+        run: test "${{ needs.test-node.result }}" = "success"

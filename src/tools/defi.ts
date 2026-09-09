@@ -32,19 +32,19 @@ export function registerDefiTool(server: McpServer, budget: BudgetState): void {
     {
       description: `DeFi fundamentals via DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices. Pays per call in USDC, no API key.
 
-Paths (GET only):
-- protocols                      ($0.007 charged) — all DeFi protocols ranked by TVL
-- protocol/{slug}                ($0.007 charged) — one protocol's TVL history + chain breakdown, e.g. protocol/aave-v3
-- chains                         ($0.007 charged) — TVL by chain
-- yields                         ($0.007 charged) — yield pools with APY + TVL (large; filter client-side)
-- prices/{coins}                 ($0.003 charged) — token prices, coins like 'base:0x833589...,coingecko:ethereum'
+Paths (GET only; price = base + the gateway's flat tx fee, $0.001 today — we reserve $0.002; the 402 header carries the exact charge):
+- protocols                      ($0.005 base) — all DeFi protocols ranked by TVL
+- protocol/{slug}                ($0.005 base) — one protocol's TVL history + chain breakdown, e.g. protocol/aave-v3
+- chains                         ($0.005 base) — TVL by chain
+- yields                         ($0.005 base) — yield pools with APY + TVL (large; filter client-side)
+- prices/{coins}                 ($0.001 base) — token prices, coins like 'base:0x833589...,coingecko:ethereum'
 
 Examples:
   blockrun_defi({ path: "protocol/uniswap-v3" })
   blockrun_defi({ path: "prices/coingecko:bitcoin,coingecko:ethereum" })
   blockrun_defi({ path: "chains" })
 
-Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pairs, blockrun_surf for labeled on-chain data — this tool is for protocol/TVL/yield fundamentals.`,
+Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pairs — this tool is for protocol/TVL/yield fundamentals.`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         path: z.string().describe("Endpoint under /v1/defillama/, e.g. 'protocols', 'protocol/aave-v3', 'chains', 'yields', 'prices/coingecko:ethereum'"),

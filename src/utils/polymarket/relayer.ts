@@ -148,7 +148,34 @@ export async function sendWalletBatch(
   opts?: { guidance?: string; trackPendingWithdraw?: boolean },
 ): Promise<{ transactionHash?: string }> {
   const deadlineSec = Math.floor(Date.now() / 1000) + BATCH_DEADLINE_SECS;
-  const response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
+  let response: Awaited<ReturnType<RelayClient["executeDepositWalletBatch"]>>;
+  try {
+    response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
+  } catch (err) {
+    // The SDK signs, THEN posts. A lost response (proxy 502/504, reset — the
+    // SDK surfaces these as `{"error":"connection error"}` or a 5xx "request
+    // error") leaves the signature executable until deadlineSec with nothing
+    // on disk to say so, and the old error text invited an immediate retry —
+    // the #72.1 double-send on the submit side. Only a definite 4xx proves the
+    // relayer accepted nothing. Pre-sign failures (signer/config/nonce) are
+    // 4xx-free too but cannot have signed anything; we cannot tell them apart
+    // from a lost post here, so the conservative side wins for tracked
+    // (money-moving) batches: arm the guard, say so, and let the deadline
+    // clear it (withdraw.ts). Untracked batches (approvals, wrap) are safe to
+    // retry and rethrow as before.
+    const message = err instanceof Error ? err.message : String(err);
+    const definitelyRejected = /"status":4\d\d/.test(message);
+    if (opts?.trackPendingWithdraw && !definitelyRejected) {
+      saveState({ pendingWithdraw: { transactionID: "unknown", deadline: deadlineSec } });
+      throw new Error(
+        `${description}: the relayer returned no transaction id (${message}). It may still have ACCEPTED the ` +
+        `signed batch — a transfer may already be in flight, and the signature stays executable for ` +
+        `${BATCH_DEADLINE_SECS / 60} minutes. Do NOT retry yet: wait for that deadline to pass, then ` +
+        `${opts?.guidance ?? 're-run action:"setup" to re-check state'}.`,
+      );
+    }
+    throw err;
+  }
   if (opts?.trackPendingWithdraw) {
     saveState({ pendingWithdraw: { transactionID: response.transactionID, deadline: deadlineSec } });
   }

@@ -28,18 +28,19 @@ test("hasPathTraversal catches percent-encoded and backslash traversal", () => {
 // to a naive equality check, but IS one by the time fetch() resolves it. The
 // literal + %2e + backslash checks above all missed this shape, and it was live:
 //
-//   blockrun_surf({ path: "..\t/phone/numbers/buy" })
+//   blockrun_exa({ path: "..\t/phone/numbers/buy" })   (found on blockrun_surf,
+//                                                        retired 2026-09-06)
 //     -> guard saw the segment "..\t", passed it
 //     -> parser stripped the tab -> /api/v1/phone/numbers/buy
-//     -> reserved $0.0095 (surf), charged $5.00 — a 526x under-reserve that also
+//     -> reserved the tool's own price, charged $5.00 — a 526x under-reserve that also
 //        escapes profile scoping (a research-profile install could buy numbers).
 //
 // Each case is asserted against the REAL parser first: a guard test that blocks
 // something harmless proves nothing.
 test("hasPathTraversal catches tab/newline-obfuscated traversal (URL parser strips them)", () => {
-  const BASE = "https://blockrun.ai/api/v1/surf/";
+  const BASE = "https://blockrun.ai/api/v1/exa/";
   const escapes = (p: string) => {
-    try { return !new URL(BASE + p).pathname.startsWith("/api/v1/surf/"); } catch { return false; }
+    try { return !new URL(BASE + p).pathname.startsWith("/api/v1/exa/"); } catch { return false; }
   };
   for (const p of [
     "..\t/phone/numbers/buy",
@@ -168,8 +169,8 @@ test("normalizeClassifyPath survives a tab splitting a percent-escape", () => {
 test("hasPathTraversal survives a tab splitting a dot-escape (namespace escape)", () => {
   // Worse than a mispricing: this one leaves the tool's own namespace, so a
   // research-profile install that never exposes blockrun_phone could reach
-  // phone/numbers/buy on blockrun_surf's $0.0095 reserve.
-  const BASE = "https://blockrun.ai/api/v1/surf/";
+  // phone/numbers/buy on the passthrough tool's own much smaller reserve.
+  const BASE = "https://blockrun.ai/api/v1/exa/";
   for (const raw of [
     "%\t2e%\t2e/phone/numbers/buy",
     "%2\te%2\te/phone/numbers/buy",

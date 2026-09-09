@@ -38,12 +38,12 @@
     {
       "name": "crypto-data",
       "source": "./skills/crypto-data",
-      "description": "Use for any crypto data question — token prices, FX, commodities, stocks, OHLC history, DEX pairs, DeFi TVL and yields, on-chain SQL, wallet labels and net worth, social mindshare. Routes across five overlapping tools and says which one to use and which are free."
+      "description": "Use for any crypto data question — token prices, FX, commodities, stock ticker catalog, OHLC history, DEX pairs, DeFi TVL and yields, on-chain SQL, wallet labels and net worth, social mindshare. Routes across five overlapping tools and says which one to use and which are free."
     },
     {
       "name": "surf",
       "source": "./skills/surf",
-      "description": "Use when the user wants deep crypto data — on-chain SQL, CEX order books, wallet labels and net worth, social mindshare, news and unified search across exchange, on-chain, wallet, social and prediction endpoints."
+      "description": "Surf data endpoints were retired by the gateway on 2026-09-06 — this skill redirects each former Surf question to the tool that still serves it (blockrun_price, blockrun_defi, blockrun_markets, blockrun_dex, blockrun_rpc) and names what has no replacement yet."
     },
     {
       "name": "rpc",

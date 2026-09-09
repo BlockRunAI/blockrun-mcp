@@ -1,6 +1,8 @@
 // scripts/verify-prices.ts — run with: npm run verify:prices
 //
-// Compares every local cost estimator against what the LIVE gateway quotes.
+// Compares every local cost estimator against what the LIVE gateway quotes, and
+// the chat price table against the live model catalogue (see the sweep at the
+// end — it is the only check that can see a model the table does NOT list).
 //
 // WHY: the estimators feed the budget gate. If one under-quotes, the gate
 // reserves less than the call settles for and an agent walks past its cap; the
@@ -9,7 +11,8 @@
 // silent, and by construction it appears in production, not in CI.
 //
 // This has already gone wrong three times in the same direction:
-//   1. stale Surf tiers after the gateway went flat,
+//   1. stale Surf tiers after the gateway went flat (Surf itself is gone since
+//      2026-09-06 — kept in this list because the defect class is not),
 //   2. the 402 body's `price` (the BASE) mistaken for what x402 charges,
 //   3. round() instead of the gateway's ceil(), one micro short wherever a
 //      x1.05 margin drifts in float.
@@ -23,7 +26,6 @@
 // as "free" rather than raising. Hence the explicit check below.
 import { estimateModalCost } from "../src/tools/modal.js";
 import { estimatePhoneCost } from "../src/tools/phone.js";
-import { estimateSurfCost, SURF_PRICE_USD } from "../src/tools/surf.js";
 import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateCost as estimateImageCost } from "../src/tools/image.js";
 import { estimateExaCost } from "../src/tools/exa.js";
@@ -31,6 +33,7 @@ import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
 import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
+import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS } from "../src/utils/constants.js";
 
 // TWO gateways, and they do not agree. Base and Solana are separate deployments
 // with separate env, and TRANSACTION_FEE_USD is env-overridable in the gateway —
@@ -61,14 +64,16 @@ type Probe = {
   allowOver?: boolean;
 };
 
-async function quote(host: string, path: string, body?: unknown): Promise<number | string> {
+type Quote = { usd: number; description?: string };
+
+async function quote(host: string, path: string, body?: unknown): Promise<Quote | string> {
   const res = await fetch(host + path, {
     method: body === undefined ? "GET" : "POST",
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
   const header = res.headers.get("payment-required");
   if (!header) return `no 402 (HTTP ${res.status})`;
-  let parsed: { accepts?: Array<{ amount?: string }> };
+  let parsed: { accepts?: Array<{ amount?: string; extra?: { description?: string } }>; resource?: { description?: string } };
   try {
     parsed = JSON.parse(Buffer.from(header.trim(), "base64").toString("utf8"));
   } catch {
@@ -78,15 +83,20 @@ async function quote(host: string, path: string, body?: unknown): Promise<number
   if (raw === undefined) return "no `amount` in accepts[0] (x402 version changed?)";
   const micro = Number(raw);
   if (!Number.isFinite(micro)) return `unparseable amount: ${String(raw)}`;
-  return micro / 1e6;
+  // The 402 also says WHAT is being sold ("Sora 2 video generation (4s)"). Both
+  // gateways carry it — Base under `resource`, Solana under accepts[0].extra —
+  // and it is how a quote for a substituted model is told apart from a reprice.
+  const description = parsed.resource?.description ?? parsed.accepts?.[0]?.extra?.description;
+  return { usd: micro / 1e6, description };
+}
+
+/** Strip the duration suffix so "Sora 2 video generation (4s)" and "(8s)" compare equal. */
+function product(description: string | undefined): string | undefined {
+  return description?.replace(/\s*\(\d+s\)\s*$/i, "").trim().toLowerCase() || undefined;
 }
 
 const PROBES: Probe[] = [
   // Flat-rate routes.
-  { label: "surf/market/price", path: "surf/market/price?symbol=BTC", expected: estimateSurfCost("market/price") },
-  { label: "surf/wallet/detail", path: "surf/wallet/detail?address=0x0000000000000000000000000000000000000000", expected: estimateSurfCost("wallet/detail") },
-  // The former T3: on-chain SQL used to cost more. It must stay flat.
-  { label: "surf/onchain/sql", path: "surf/onchain/sql", body: { sql: "SELECT 1" }, expected: SURF_PRICE_USD },
   { label: "pm/polymarket/markets", path: "pm/polymarket/markets", expected: MARKETS_PRICE_USD },
   { label: "pm/kalshi/markets", path: "pm/kalshi/markets", expected: MARKETS_PRICE_USD },
   { label: "pm/markets/search", path: "pm/markets/search?q=election", expected: MARKETS_PRICE_USD },
@@ -243,9 +253,13 @@ const PROBES: Probe[] = [
     };
   }),
 
-  // The five models priced ABOVE the $5/$30 default an unknown model falls back
-  // to. Reachable as an explicit `model`, where no tier bound applies at all.
-  ...(["openai/gpt-5.5-pro", "openai/gpt-5.2-pro", "openai/o1", "anthropic/claude-fable-5"].map((model) => {
+  // Every model priced ABOVE the $5/$30 default an unknown model falls back to
+  // (gpt-5.4-pro is the `powerful` row above). Reachable as an explicit
+  // `model`, where no tier bound applies at all. This list is hand-written, and
+  // that is exactly how gpt-6-astra and claude-fable-5.1 sat unprobed for weeks
+  // after landing at $10/$50 — the catalogue sweep below is what catches the
+  // next one; this list only pins the reserve for the ones already known.
+  ...(["openai/gpt-5.5-pro", "openai/gpt-5.2-pro", "openai/o1", "anthropic/claude-fable-5", "openai/gpt-6-astra", "anthropic/claude-fable-5.1"].map((model) => {
     const message = "word ".repeat(20_000);
     return {
       label: `chat explicit ${model.split("/")[1]} 100k`,
@@ -273,16 +287,22 @@ let solShort = 0; // reserve < what SOLANA charges -> genuine under-reserve, blo
 let solDearer = 0; // Solana dearer than Base but still covered -> policy note only
 let solCheaper = 0; // Solana charges LESS than Base -> safe, but the docs quote one number
 let solMissing = 0; // route not served on Solana at all
+let solSubstituted = 0; // Solana quotes a DIFFERENT product than Base for the same request
 const solNotes: string[] = [];
+const solSubstitutions: string[] = [];
 
 console.log(`Verifying ${PROBES.length} routes against live 402 quotes on BOTH gateways (free — no payment attached)\n`);
 
 for (const probe of PROBES) {
   // Both chains at once so adding the second gateway costs no wall-clock.
-  const [live, solLive] = await Promise.all([
+  const [liveQ, solQ] = await Promise.all([
     quote(BASE, probe.path, probe.body),
     quote(SOL, probe.path, probe.body),
   ]);
+  const live = typeof liveQ === "string" ? liveQ : liveQ.usd;
+  const solLive = typeof solQ === "string" ? solQ : solQ.usd;
+  const liveProduct = typeof liveQ === "string" ? undefined : product(liveQ.description);
+  const solProduct = typeof solQ === "string" ? undefined : product(solQ.description);
 
   // Compare the chains before judging the estimator, so a Solana-only problem is
   // still reported when the Base probe itself is unreachable.
@@ -291,6 +311,27 @@ for (const probe of PROBES) {
     solMissing++;
     solTag = "  [sol: not served]";
     solNotes.push(`${probe.label}: Solana ${solLive}`);
+  } else if (
+    typeof live === "number" && liveProduct && solProduct && liveProduct !== solProduct &&
+    // A different label alone is not a substitution — the Solana gateway writes
+    // longer marketing descriptions for the same route (rpc/ethereum: 40 words
+    // vs Base's 5, same $0.002). Substitution is a different label AND a price
+    // materially ABOVE Base for the same request; a cheaper Solana row falls
+    // through to the deliberate-pricing branch below.
+    solLive - live > Math.max(EPSILON, 0.25 * live)
+  ) {
+    // Not a price for the same thing. Found 2026-09-08: sol.blockrun.ai (a
+    // separate deployment that can lag Base) did not know azure/sora-2 and
+    // quoted "Seedance 2.0 Pro video generation (5s)" at $1.135480 in its
+    // place. That is a gateway bug to report, not an estimator gap to paper
+    // over by reserving the substitute's price — and since 0.49.0 every
+    // manual-402 tool refuses a quote this far off the published rate before
+    // signing (assertQuoteNearEstimate), nothing can be charged for it. Loud,
+    // but not a release blocker for this repo.
+    solSubstituted++;
+    const guarded = /^(videos|images)\//.test(probe.path);
+    solTag = `  [sol: quotes a DIFFERENT product — "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}; ${guarded ? "the tool refuses it unsigned" : "NOT guarded — this tool reserves the Base figure"}]`;
+    solSubstitutions.push(`${probe.label}: Base sells "${typeof liveQ === "string" ? "" : liveQ.description}" at $${live.toFixed(6)}, Solana sells "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}`);
   } else if (typeof live === "number") {
     const chainDelta = solLive - live;
     if (chainDelta > EPSILON) {
@@ -346,8 +387,13 @@ console.log(
 if (unreachable) console.log("Unreachable routes were NOT verified — treat them as unknown, not as passing.");
 
 console.log(
-  `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served`,
+  `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served, ${solSubstituted} substituted`,
 );
+if (solSubstituted) {
+  console.log("  GATEWAY BUG — Solana quotes a different, dearer product than Base for the same request. blockrun_video");
+  console.log("  and blockrun_image refuse such a quote before signing (assertQuoteNearEstimate); report it to the gateway owner:");
+  for (const n of solSubstitutions) console.log(`    ${n}`);
+}
 if (solCheaper) {
   console.log(
     "  Solana charges no transaction fee — DELIBERATE pricing (owner decision,\n" +
@@ -364,13 +410,119 @@ if (solMissing) {
   console.log("  Not served on Solana — an agent that switched chains gets a 404/503, not a cheaper call:");
   for (const n of solNotes) console.log(`    ${n}`);
 }
+// ---- CATALOGUE SWEEP ----
+//
+// Everything above checks rows the chat price table HAS. This checks the rows it
+// LACKS. An explicit `model` with no CHAT_PRICE_PER_MTOKEN row reserves
+// DEFAULT_CHAT_PRICE, which is only safe while nothing in the catalogue is priced
+// above it — a premise the table's header asserted and nothing verified. It was
+// false for weeks: openai/gpt-6-astra and anthropic/claude-fable-5.1 landed at
+// $10/$50 on both gateways with no row, so the gate reserved half of what
+// settled, and the 402 probes above never saw them because they only probe ids
+// someone thought to list. GET /v1/models is free and unauthenticated: read it
+// and fail on any available chat model the reserve does not cover.
+//
+// A row that exists but reads BELOW the live rate is the same under-reserve with
+// a different cause (a reprice rather than a new model) and fails the same way.
+// A FREE_CHAT_MODELS member that the catalogue now PRICES is the worst case of
+// all — the gate reserves $0 for it — and fails too.
+//
+// Rows ABOVE the live rate are the safe direction on the OpenAI-compat paths
+// (over-reserve; the ledger books the real settle) and only warn — EXCEPT for
+// anthropic/* on Base, where the native /v1/messages path has no settlement
+// counter and anthropicCallCost books THIS TABLE. claude-sonnet-5 sat at $3/$15
+// for weeks after both gateways cut it to $2/$10: a 1.5x over-count on every
+// call, tripping caps at two-thirds of their allowance. That fails.
+//
+// Listed-but-unknown $0 models and unlisted free[] entries are reported, not
+// failed: the first only over-reserves, and absence from the catalogue is a
+// listing decision, not a death certificate (see the doctrine in constants.ts).
+type CatalogueModel = { id: string; available?: boolean; pricing?: { input?: unknown; output?: unknown } };
+
+async function catalogue(host: string): Promise<CatalogueModel[] | string> {
+  try {
+    const res = await fetch(host + "models");
+    if (!res.ok) return `HTTP ${res.status}`;
+    const body = (await res.json()) as { data?: unknown };
+    return Array.isArray(body.data) ? (body.data as CatalogueModel[]) : "no `data` array in the response";
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+const catalogueGaps: string[] = []; // fail
+const catalogueNotes: string[] = []; // report only
+let catalogueUnreachable = 0;
+console.log("\nCatalogue sweep: every live chat model must be covered by its price row, by the default, or by FREE_CHAT_MODELS");
+for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
+  const models = await catalogue(host);
+  if (typeof models === "string") {
+    console.log(`  ?  ${name.padEnd(26)} ${models}`);
+    catalogueUnreachable++;
+    continue;
+  }
+  let checked = 0;
+  let gaps = 0;
+  const listed = new Set<string>();
+  for (const m of models) {
+    const { input, output } = m.pricing ?? {};
+    // Per-image, per-second and per-character products share the catalogue but
+    // not this price table; only $/M-token pricing is a chat model.
+    if (typeof input !== "number" || typeof output !== "number") continue;
+    // Base marks retired rows `available:false`; Solana omits the field
+    // entirely, and an omitted flag is a served model, not an unknown one.
+    if (m.available === false) continue;
+    checked++;
+    listed.add(m.id);
+    const isFree = FREE_CHAT_MODELS.has(m.id);
+    const row = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, m.id) ? CHAT_PRICE_PER_MTOKEN[m.id] : undefined;
+    // What estimateChatCost reserves for an explicit call to this id.
+    const reserve = isFree ? { input: 0, output: 0 } : (row ?? DEFAULT_CHAT_PRICE);
+    if (input > reserve.input || output > reserve.output) {
+      gaps++;
+      catalogueGaps.push(
+        `${name}: ${m.id} is $${input}/$${output} live but ` +
+          (isFree
+            ? "FREE_CHAT_MODELS lists it as free — the gate reserves $0 for a paid call"
+            : row
+              ? `its row reserves $${row.input}/$${row.output}`
+              : `has NO row and reserves the $${DEFAULT_CHAT_PRICE.input}/$${DEFAULT_CHAT_PRICE.output} default`),
+      );
+      continue;
+    }
+    if (row && (input < row.input || output < row.output)) {
+      if (name === "Base" && m.id.startsWith("anthropic/")) {
+        // Native Anthropic is Base-only and books this row as the ledger.
+        gaps++;
+        catalogueGaps.push(`${name}: ${m.id} row is $${row.input}/$${row.output} but the gateway charges $${input}/$${output} — the native ledger over-books every call`);
+      } else {
+        catalogueNotes.push(`${name}: ${m.id} row $${row.input}/$${row.output} is above the live $${input}/$${output} — over-reserves (safe), but stale`);
+      }
+    }
+    if (!isFree && input === 0 && output === 0) {
+      catalogueNotes.push(`${name}: ${m.id} is billed $0 but FREE_CHAT_MODELS does not list it — an explicit call reserves the default, and an exhausted budget refuses a free call`);
+    }
+  }
+  for (const id of MODEL_TIERS.free) {
+    if (!listed.has(id)) catalogueNotes.push(`${name}: free[] routes ${id}, which the catalogue does not list — not a death certificate (gpt-oss-120b is hidden-alive); probe with a realistic POST before removing`);
+  }
+  console.log(`  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve`);
+}
+for (const g of catalogueGaps) console.log(`  ✗  ${g}`);
+for (const n of catalogueNotes) console.log(`  !  ${n}`);
+if (catalogueUnreachable) console.log("  A catalogue that could not be read was NOT verified — treat it as unknown, not as passing.");
+
 // Under-reserving is a release blocker: it means the budget cap is a lie. That is
 // true per CHAIN — an estimator built off Base is a lie on Solana the moment
-// Solana costs more, and nothing else in the repo would notice.
+// Solana costs more, and nothing else in the repo would notice. It is equally
+// true for a catalogue model the table does not know: the gate reserves the
+// default for it, and the default is a claim about the catalogue.
 // Over-reserving only blocks affordable calls, so it warns without failing.
-if (short || solShort) {
-  console.log(
-    `\nFAIL: an estimator reserves less than the gateway charges${solShort ? " (on Solana)" : ""}. Fix it before publishing.`,
-  );
+if (short || solShort || catalogueGaps.length) {
+  const why = [
+    short || solShort ? `an estimator reserves less than the gateway charges${solShort ? " (on Solana)" : ""}` : "",
+    catalogueGaps.length ? `${catalogueGaps.length} live chat model${catalogueGaps.length === 1 ? "" : "s"} disagree${catalogueGaps.length === 1 ? "s" : ""} with the price table in a direction that costs money` : "",
+  ].filter(Boolean).join("; ");
+  console.log(`\nFAIL: ${why}. Fix it before publishing.`);
   process.exit(1);
 }

@@ -38,7 +38,9 @@ export const BASE_RPC_URLS = [
 //   presence in the catalogue is NECESSARY BUT NOT SUFFICIENT for health;
 //   absence from it is NOT SUFFICIENT for death — probe before deleting.
 //
-// OpenAI (27): gpt-5.6-sol ($5/$30, 1M, deepest reasoning), gpt-5.6-terra
+// OpenAI (28): gpt-6-astra ($10/$50, 1M — the GPT-6 flagship; listed by
+//   2026-09-08 ABOVE the $5/$30 default, so it carries a CHAT_PRICE_PER_MTOKEN
+//   row), gpt-5.6-sol ($5/$30, 1M, deepest reasoning), gpt-5.6-terra
 //   ($2/$12, 1M — the balanced default; CUT from $2.5/$15), gpt-5.6-luna
 //   ($0.2/$1.2, 1M, no reasoning; CUT from $1/$6), plus the 2026-08 "pro
 //   reasoning mode" trio: gpt-5.6-sol-pro ($5/$30), gpt-5.6-terra-pro ($1/$6 —
@@ -50,10 +52,13 @@ export const BASE_RPC_URLS = [
 //   gpt-5.3-codex ($1.75/$14), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
 //   o1 ($15/$60), o3 ($2/$8), o3-mini, o4-mini
-// Anthropic (9): claude-opus-5 ($5/$25, 1M, 128k out — newest Opus,
+// Anthropic (10): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
+//   the default, so it carries a price row), claude-opus-5 ($5/$25, 1M, 128k out — newest Opus,
 //   step-change over 4.8 at the same price; live-probed 2026-08-12),
 //   claude-opus-4.8 ($5/$25, 1M), claude-fable-5 ($10/$50, 1M),
-//   claude-opus-4.7 ($5/$25, 1M), claude-sonnet-5 ($3/$15, 1M),
+//   claude-opus-4.7 ($5/$25, 1M), claude-sonnet-5 ($2/$10, 1M — CUT from
+//   $3/$15; both gateways 2026-09-08. On the native path the price row IS the
+//   ledger, so the stale row over-booked every sonnet-5 call 1.5x),
 //   claude-opus-4.5, claude-sonnet-4.6, claude-sonnet-4.5, claude-haiku-4.5
 // Google (9): gemini-3.1-pro ($2/$12), gemini-3.6-flash ($1.5/$7.5, thinking —
 //   newest Flash), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
@@ -94,6 +99,18 @@ export const BASE_RPC_URLS = [
 //   aliases on Base (it served itself in 0.97s; July saw it alias to
 //   gpt-oss-120b there) — so the reason it was documented-but-unrouted is
 //   gone, and it joins free[].
+//   2026-09-08 CATALOGUE (listing only — no POST probe was run): the
+//   billing_mode:"free" set on both chains is nemotron-3-nano-omni,
+//   llama-3.2-11b-vision, nemotron-3-ultra-550b, nemotron-3.5-lightning
+//   (available:false on Base that day) — plus, for the first time, two $0
+//   models OUTSIDE nvidia/: cohere/north-mini-code and poolside/laguna-xs-2.1.
+//   That is why FREE_CHAT_MODELS exists below: "free" was a vendor-prefix test,
+//   and it refused those two at an exhausted budget. Solana additionally lists
+//   muse-glimmer-30b and gemma-4-31b. step-3.7-flash, mistral-nemotron,
+//   gpt-oss-20b and both nemotron-nano-* are no longer listed anywhere — and by
+//   the rule above that is NOT a death certificate (gpt-oss-120b has been
+//   hidden-alive since July). They stay routed at the tail of free[] until a
+//   realistic-prompt POST probe reads their response `model` field.
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
@@ -130,7 +147,27 @@ export const MODEL_TIERS = {
   // healthy; the same model on a realistic 1.5K-token prompt took 123.2s. That
   // is the trap the gateway's own probe script added a --real mode for. Never
   // health-check a free model with a 16-token ping.
-  free: ["nvidia/gpt-oss-120b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron", "nvidia/gpt-oss-20b", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2"],
+  //
+  // 2026-09-08 order, three bands, from the live catalogue (listing evidence
+  // only — see the NVIDIA note above for what was and was not probed):
+  //   1. gpt-oss-120b — hidden-alive, the gateway's own free fallback; and
+  //      nemotron-3-nano-omni — listed, available, served itself on 2026-08-12.
+  //   2. Listed billing_mode:"free" on BOTH chains and available: the two new
+  //      NVIDIA entries and the first two non-NVIDIA free models. Unprobed for
+  //      latency, so they sit behind the proven pair, not ahead of it.
+  //   3. The four delisted entries. Delisting tells you nothing either way;
+  //      each is bounded by FREE_MODEL_TIMEOUT_MS and the loop by
+  //      FREE_TIER_DEADLINE_MS, so a dead tail costs time, never money.
+  //      Remove them only on a POST probe that shows aliasing or a crawl.
+  // Skipped on purpose: nemotron-3.5-lightning (available:false on Base),
+  // muse-glimmer-30b and gemma-4-31b (Solana catalogue only) — routing has to
+  // hold on both chains. They are still in FREE_CHAT_MODELS, so an explicit
+  // call to one reserves $0 like any other free id.
+  free: [
+    "nvidia/gpt-oss-120b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    "nvidia/llama-3.2-11b-vision", "nvidia/nemotron-3-ultra-550b", "cohere/north-mini-code", "poolside/laguna-xs-2.1",
+    "nvidia/step-3.7-flash", "nvidia/mistral-nemotron", "nvidia/gpt-oss-20b", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2",
+  ],
   coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
 } as const;
@@ -138,9 +175,40 @@ export const MODEL_TIERS = {
 export type RoutingMode = keyof typeof MODEL_TIERS;
 
 /**
+ * Every chat model the gateway bills at $0 — the set the budget gate consults to
+ * reserve nothing, and the truth the routing tier's free[] has to be a subset of.
+ *
+ * This used to be a vendor test, `startsWith("nvidia/")`. It was true of the
+ * whole free tier on 2026-08-12 and is wrong since the 2026-09-08 catalogue,
+ * which bills cohere/north-mini-code and poolside/laguna-xs-2.1 at $0 on both
+ * gateways: an explicit call to either reserved the $5/$30 DEFAULT, so an
+ * exhausted budget refused a free call and confirm-spend asked a human to
+ * approve a phantom charge — the false refusal the bare-`gpt-oss-120b`
+ * canonicalisation fixed, reopened on the vendor axis. Membership is by id.
+ *
+ * The dangerous direction is the other one: a member that STARTS costing money
+ * gets a $0 reserve for a paid call, which is the total gate bypass this file
+ * spends so many words preventing. So `npm run verify:prices` checks every
+ * member against the live catalogue and fails if one is priced. A Set needs no
+ * hasOwn guard — there are no prototype keys to leak through `.has`.
+ *
+ * Not every member is routed: MODEL_TIERS.free wants a both-chain, latency-
+ * ordered list (see its notes); this set only says what is free.
+ */
+export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
+  ...MODEL_TIERS.free,
+  // Live billing_mode:"free" on 2026-09-08 but deliberately not routed.
+  "nvidia/nemotron-3.5-lightning", // available:false on Base that day
+  "nvidia/muse-glimmer-30b", // Solana catalogue only
+  "nvidia/gemma-4-31b", // Solana catalogue only
+]);
+
+/**
  * $/M input and output for every model a routing tier can resolve to, plus every
  * catalog model priced ABOVE the DEFAULT_CHAT_PRICE an explicit `model` falls
- * back to. Read off the live GET /v1/models on 2026-08-13.
+ * back to. Read off the live GET /v1/models on 2026-08-13; gpt-6-astra and
+ * claude-fable-5.1 added from the 2026-09-08 catalogue, after both had sat
+ * above the default with no row for weeks (see the block comment below).
  *
  * This exists because the budget gate used to reserve chat against two hardcoded
  * constants — "$5/M input" and "4 chars per token" — and BOTH were wrong at the
@@ -165,17 +233,27 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  *
  * Keep this in step with MODEL_TIERS: a tier member with no entry here reserves
  * DEFAULT_CHAT_PRICE, which is correct for everything at or below $5/$30 and
- * SHORT for the five models above it. `npm run verify:prices` probes one row per
- * tier against the live 402 so drift shows up as a failure, not as a surprise
- * invoice.
+ * SHORT for the seven models above it. `npm run verify:prices` probes one row
+ * per tier against the live 402, and sweeps GET /v1/models on both gateways for
+ * any available model priced above the default with no row here — so drift in
+ * EITHER direction (a reprice, or a new model landing above the line) shows up
+ * as a failure, not as a surprise invoice.
  */
 export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: number }> = {
-  // Above the default — the five that made the gate unsafe. Reachable as an
-  // explicit `model` as well as through powerful/reasoning.
+  // Above the default — the ids that make the gate unsafe without a row.
+  // Reachable as an explicit `model` as well as through powerful/reasoning.
+  // Seven as of 2026-09-08: the five pro-tier outliers the table was built for,
+  // plus the two flagships that landed above $5/$30 afterwards and went
+  // unnoticed for weeks — no row, no test, and no sweep, so an explicit
+  // model:"openai/gpt-6-astra" reserved at half its real rate and the
+  // confirm-spend prompt showed a human the same wrong number. The catalogue
+  // sweep in scripts/verify-prices.ts now fails on the eighth.
   "openai/gpt-5.4-pro": { input: 30, output: 180 },
   "openai/gpt-5.5-pro": { input: 30, output: 180 },
   "openai/gpt-5.2-pro": { input: 21, output: 168 },
   "openai/o1": { input: 15, output: 60 },
+  "openai/gpt-6-astra": { input: 10, output: 50 },
+  "anthropic/claude-fable-5.1": { input: 10, output: 50 },
   "anthropic/claude-fable-5": { input: 10, output: 50 },
   // At or below the default — listed so the CHEAP tiers reserve their own real
   // rate instead of the $5/$30 worst case, which would price a qwen3.7-flash
@@ -184,7 +262,12 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "anthropic/claude-opus-4.8": { input: 5, output: 25 },
   "anthropic/claude-opus-4.7": { input: 5, output: 25 },
   "anthropic/claude-opus-4.5": { input: 5, output: 25 },
-  "anthropic/claude-sonnet-5": { input: 3, output: 15 },
+  // CUT to $2/$10 by 2026-09-08 (both gateways; was $3/$15). On the native
+  // /v1/messages path this row is the LEDGER, not just the reserve — see
+  // anthropicCallCost — so a stale-high Anthropic row is not "safe", it
+  // over-books budget.spent (1.5x here) and trips caps early. The catalogue
+  // sweep fails on an anthropic/* row above the Base rate for this reason.
+  "anthropic/claude-sonnet-5": { input: 2, output: 10 },
   // The rest of the Anthropic family: in no tier, but every one of them is
   // reachable as an explicit `model` — and that path goes to the NATIVE
   // /v1/messages endpoint, where this table is also what reconstructs the ledger
@@ -223,8 +306,16 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
 
 /**
  * What an UNKNOWN explicit model reserves. $5/$30 is the ceiling of the catalog
- * excluding the five outliers above, so a model added upstream between releases
- * is covered unless it is priced in the pro tier — and those five are listed.
+ * excluding the ids listed above it in CHAT_PRICE_PER_MTOKEN (seven on
+ * 2026-09-08), so a model added upstream between releases is covered unless it
+ * lands above that line. That premise is now CHECKED rather than assumed — the
+ * catalogue sweep in `npm run verify:prices` fails on any live model priced
+ * above this with no row — because it was assumed for four weeks while two
+ * $10/$50 flagships (gpt-6-astra, claude-fable-5.1) reserved at half rate.
+ *
+ * Do not raise this to cover such a model instead of adding its row: it would
+ * double the reserve for every genuinely unknown non-pro model, which is the
+ * small-budget lockout the cheap-tier rows exist to avoid.
  */
 export const DEFAULT_CHAT_PRICE = { input: 5, output: 30 } as const;
 
@@ -283,7 +374,7 @@ export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
  * mapping is unambiguous.
  */
 const BARE_TO_PREFIXED: Record<string, string> = Object.fromEntries(
-  [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat()]
+  [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat(), ...FREE_CHAT_MODELS]
     .filter((id: string) => id.includes("/"))
     .map((id: string) => [id.slice(id.indexOf("/") + 1), id]),
 );
@@ -302,7 +393,7 @@ export const TIER_WORST_PRICE: Record<RoutingMode, { input: number; output: numb
       const rates = MODEL_TIERS[mode].map((id: string) =>
         Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)
           ? CHAT_PRICE_PER_MTOKEN[id]
-          : (id.startsWith("nvidia/") ? { input: 0, output: 0 } : DEFAULT_CHAT_PRICE),
+          : (FREE_CHAT_MODELS.has(id) ? { input: 0, output: 0 } : DEFAULT_CHAT_PRICE),
       );
       return [mode, {
         input: Math.max(...rates.map((r) => r.input)),

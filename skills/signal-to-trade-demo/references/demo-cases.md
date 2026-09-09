@@ -17,7 +17,7 @@ volume is zero, no Yes/No token is present, or the dry-run finds no book.
 
 Search an open Fed/rates or inflation question with a precise resolution rule.
 Use the same market-history, smart-money, and book lenses. Add live news only
-when the Trading profile's `blockrun_surf` can cite a current source. Keep news
+when `blockrun_search` or `blockrun_exa` can cite a current source. Keep news
 and market-implied probability separate.
 
 ## Case C — crypto up/down (short-form fallback)

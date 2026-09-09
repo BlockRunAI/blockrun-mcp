@@ -24,6 +24,8 @@ interface Preview {
   outcome?: string;
   conditionId?: string;
   bestQuote?: number | null;
+  /** Market orders: the limit the order will be signed at (buy: max, sell: min price per share). */
+  worstFillPrice?: number;
   minSize?: number;
   maxBetUsd?: number;
   sessionSpentUsd?: number;
@@ -114,6 +116,11 @@ function renderPreview(p: Preview): void {
   const grid = el("div", { class: "grid" },
     kv(isBuy ? "You spend" : "You receive (est.)", usd(p.notionalUsd), true),
     kv(priceLabel, `${prob}  ·  ${Number.isFinite(priceVal) ? priceVal.toFixed(3) : "—"}`, true),
+    // Market orders are SIGNED at this bound (the server walks the book), so
+    // the fill can never be worse than the number shown here.
+    ...(!isLimit && typeof p.worstFillPrice === "number"
+      ? [kv(isBuy ? "Worst fill (signed max)" : "Worst fill (signed min)", `${(p.worstFillPrice * 100).toFixed(1)}¢  ·  ${p.worstFillPrice.toFixed(3)}`)]
+      : []),
     kv("Shares", shares !== undefined ? `${isLimit ? "" : "≈ "}${shares.toFixed(4)}` : "—"),
     kv("Max payout if right", isBuy && shares !== undefined ? usd(shares) : "—"),
     kv("Per-order cap", el("span", {}, `${usd(p.notionalUsd)} of ${cap ? usd(cap) : "—"}`, el("div", { class: "meter" }, el("i", { style: `width:${capPct}%` })))),
@@ -169,7 +176,25 @@ function renderPreview(p: Preview): void {
   let armed = false;
   const disarm = () => { armed = false; place.textContent = `Place ${p.action} · ${usd(p.notionalUsd)}`; place.classList.remove("danger"); cancel.hidden = true; };
   cancel.addEventListener("click", disarm);
+
+  // Every figure on this card — notional, shares, worst fill, the confirm
+  // label — describes the amount that was QUOTED. currentArgs() reads the
+  // field live, so an edited amount used to be submitted under the old
+  // label ("Confirm — sign & submit $5.00" placing $50). Placing is only
+  // allowed while the field still equals the quoted amount; a change disarms
+  // and disables Place until Re-quote renders a fresh card.
+  const quotedAmount = parseFloat(amountField.value);
+  const syncPlace = () => {
+    const stale = parseFloat(amountField.value) !== quotedAmount;
+    if (stale && armed) disarm();
+    place.disabled = stale;
+    place.title = stale ? "Amount changed — Re-quote first" : "";
+    if (stale) { note.className = "note"; note.textContent = "Amount changed — Re-quote first to refresh the price and notional before placing."; }
+  };
+  amountField.addEventListener("input", syncPlace);
+
   place.addEventListener("click", async () => {
+    if (parseFloat(amountField.value) !== quotedAmount) { syncPlace(); return; }
     if (!armed) {
       armed = true;
       place.textContent = `Confirm — sign & submit ${usd(p.notionalUsd)}`;

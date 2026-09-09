@@ -1,6 +1,6 @@
 ---
 name: blockrun-debug
-description: "Use when the BlockRun MCP server (@blockrun/mcp) is installed but misbehaving — 'Failed to connect', spawn npx ENOENT, blockrun missing from claude mcp list, HTTP 402 / Insufficient balance, fetch failed, video or music timeouts, spend-confirmation dialogs not appearing, or a Polymarket buy/redeem failing after funding. Symptom → cause → fix, plus what never to do."
+description: "Use when the BlockRun MCP server (@blockrun/mcp) is installed but misbehaving — 'Failed to connect', spawn npx ENOENT, blockrun missing from claude mcp list, HTTP 402 / Insufficient balance, fetch failed, video or music timeouts, a 501 'not served' error or 'API error after payment' while the balance never moved, spend-confirmation dialogs not appearing, or a Polymarket buy/redeem failing after funding. Symptom → cause → fix, plus what never to do."
 triggers:
   - "blockrun failed to connect"
   - "blockrun not working"
@@ -10,6 +10,12 @@ triggers:
   - "blockrun 402"
   - "fetch failed blockrun"
   - "video generation timed out"
+  - "api error after payment"
+  - "equity quotes are not served"
+  - "sports markets 500"
+  - "501 not implemented"
+  - "refusing to sign it"
+  - "quoted a different price"
   - "polymarket buy failed"
   - "insufficient allowance"
   - "redeem reverts"
@@ -59,8 +65,13 @@ re-added at user scope leaves a duplicate. Then, in the session: `blockrun_walle
 | Startup error "not a valid BlockRun API key" | `BLOCKRUN_API_KEY` is malformed. It deliberately fails loudly rather than silently spending USDC from a wallet instead. | Fix the value or unset it. |
 | `fetch failed` / balance-check timeout | Base RPC blip; the tool rotates through 3 public RPCs | Wait 30 s, retry once. Persistent → a local proxy/firewall is blocking outbound RPC. |
 | `Video`/`Music generation timed out` | Upstream queue. **Not charged** — payment settles on completion only. | Retry, or pick a faster model. Do not retry-loop; jobs take 60–180 s. |
+| `blockrun_price` with `category:"stocks"` / `"usstock"` → `Equity quotes are not served (gateway 501 …)` | The gateway withdrew equity price/history on 2026-09-05 (licensing), and the tool answers before the wallet is consulted. Not an outage. **Not charged.** | Do not retry. `action:"list" category:"stocks" market:"us"` still returns the ticker catalog for free. Equity coverage: hello@blockrun.ai. |
+| `blockrun_markets` on `sports/*` → `Predexon's sports/* routes have returned an upstream 500 … since 2026-08-04` (builds before 0.49.0: `API error after payment: 502 / Request failed` with no balance change) | Upstream Predexon outage since 2026-08-04. The gateway releases the payment on the upstream 500, so the old wording asserted a charge that never happened. **Not charged** when the response carries the gateway's `(payment NOT charged)` confirmation — the error then says so; without it the error tells you to check `blockrun_wallet action:"report"`. | Use `path:"markets/search"` with `params:{ q:"NBA" }` or `polymarket/events` with `params:{ search:"NBA" }`. Not `markets` + `league` — removed upstream 2026-08-04, 404s before payment. Do not retry `sports/*`. Upgrade to ≥ 0.49.0 so the error says this itself. |
+| A config names `blockrun_surf` → the client reports an unknown tool | The tool was REMOVED in 0.49.0: the gateway has answered every Surf path with `410 endpoint_retired` since 2026-09-06, so it could only ever error. **Nothing is charged.** | Use `blockrun_price` / `blockrun_dex` / `blockrun_defi` / `blockrun_markets` / `blockrun_rpc`; the `surf` skill maps each former endpoint. Drop `blockrun_surf` from any allowlist. |
+| `blockrun_video` / `blockrun_image` → `The gateway quoted $X for <model>, but this tool expected about $Y (N.Nx the published rate) … Refusing to sign it — no charge was made` | The 402 price is far above the published rate: the gateway repriced the model, or a lagging deployment substituted another one. Live 2026-09-08: `sol.blockrun.ai` does not know `azure/sora-2` and quotes Seedance 2.0 Pro at $1.135 in its place. **Not charged** — the tool refuses before signing. | For Sora: `blockrun_wallet action:"chain" chain:"base"`. Otherwise pick another model or chain, and report the quote (the message names what the gateway labelled it) so the estimator or the gateway gets fixed. |
+| Any tool → `The gateway does not serve this endpoint (501 Not Implemented)` | The route is withdrawn, not down. Before payment the message ends "nothing was charged"; after payment it tells you to check the ledger instead, because the formatter cannot know whether the nonce was released. | Do not retry. `blockrun_wallet action:"report"` shows whether the call settled. |
 | Model id 404s | Delisted upstream | `blockrun_models` for the live list. |
-| Startup prints `🚨 WALLET PRIVATE KEY DETECTED IN CONFIG FILE` | The key was pasted into `~/.claude.json` (old hosted-auth flow) | Treat the key as compromised: move funds to a new wallet, remove it from the config. |
+| Startup prints `🚨 WALLET PRIVATE KEY DETECTED IN CONFIG FILE` | A raw key sits somewhere it was never meant to be — a header, an `args` entry, the old hosted-auth field — in a client config file (`~/.claude.json`, Claude Desktop, Cursor, Windsurf). Since 0.49.0 the DOCUMENTED override `mcpServers.*.env.BLOCKRUN_WALLET_KEY` / `SOLANA_WALLET_KEY` does NOT trigger this banner; it gets a short plaintext-and-synced note instead. | Banner: treat the key as compromised — move funds to a new wallet, remove it from the config. Note: optional; prefer `~/.blockrun/.session` or `BLOCKRUN_KEYCHAIN=auto`. |
 | No spend-confirmation dialog with `BLOCKRUN_CONFIRM_SPEND=on` | Client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI) — the server proceeds without asking, by design | Use `BLOCKRUN_BUDGET_LIMIT` / `blockrun_wallet action:"delegate"` as the guard, or use Claude Code / Cursor / VS Code where the dialog renders. |
 | Dialog appears, user clicks OK, tool says "declined" | Only an explicit **Decline** stops a charge; Cancel/ESC proceeds. If it says declined, Decline was pressed. | Re-run the call; approve it. |
 | `Update available: vX → vY` on stderr | Informational | Switch to the `blockrun-upgrade` skill. |

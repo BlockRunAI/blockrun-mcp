@@ -22,10 +22,10 @@ function collect(argv: string[]): { annotations: Map<string, Annotation>; profil
   return { annotations, profile: result.profile };
 }
 
-test("trading profile exposes nine annotated tools and no media surface", () => {
+test("trading profile exposes eight annotated tools and no media surface", () => {
   const { annotations, profile } = collect(["--profile", "trading"]);
   assert.equal(profile, "trading");
-  assert.equal(annotations.size, 9);
+  assert.equal(annotations.size, 8);
   assert.equal(annotations.has("blockrun_image"), false);
   assert.equal(annotations.has("blockrun_video"), false);
 
@@ -60,7 +60,7 @@ test("costing USDC does not make a data query destructive", () => {
   const { annotations } = collect([]);
   for (const name of [
     "blockrun_markets", "blockrun_search", "blockrun_exa",
-    "blockrun_surf", "blockrun_defi", "blockrun_price",
+    "blockrun_defi", "blockrun_price",
   ]) {
     assert.deepEqual(annotations.get(name), {
       readOnlyHint: true,

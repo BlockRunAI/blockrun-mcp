@@ -1,3 +1,4 @@
+import { hasLabelledServerStatus } from "./errors.js";
 import { normalizeClassifyPath } from "./path-safety.js";
 
 /**
@@ -151,4 +152,77 @@ export function validateMarketRequest(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Degraded upstream routes — known to fail, NOT charged
+// ---------------------------------------------------------------------------
+//
+// Every sports/* path has returned a consistent Predexon 500 ("An unexpected
+// error occurred") since 2026-08-04 — re-verified live 2026-09-08 (#132). The
+// gateway marks them `status: "degraded"` in its predexon.ts: still routed for
+// anyone who knows the path, withheld from openapi.json and the x402 manifest,
+// and on an upstream 5xx it releases the payment nonce, so nothing settles.
+//
+// Not a pre-payment block like markets/listings above: that one is a 410 sunset
+// and settles before failing, this one is an upstream bug that may recover, and
+// the gateway is the authority on whether it has. What we own is the wording.
+// The SDK reduced the gateway's "(payment NOT charged)" body to
+// `API error after payment: 502`, which asserts a charge that did not happen.
+export const DEGRADED_SPORTS_SINCE = "2026-08-04";
+
+// The one remedy that 402s today on both gateways. Verified 2026-09-08 with
+// unauthenticated GETs: markets/search?q=, polymarket/events and kalshi/markets
+// all quote a 402; bare `markets`, `outcomes/:id` and `matching-markets` were
+// removed upstream 2026-08-04 and 404 BEFORE payment ("Unknown Predexon
+// endpoint"), and no live /v1/pm route accepts a `league` param — which is what
+// 0.48.1 (never released — folded into 0.49.0) shipped as the steer, so it failed on first use.
+const SPORTS_REMEDY =
+  `For sports odds use "markets/search" with params { q: "NBA" } (every venue in one call), ` +
+  `"polymarket/events" with params { search: "NBA" }, or "kalshi/markets".`;
+
+/**
+ * The gateway's own words for "the payment nonce was released". Only its
+ * `!upstreamResponse.ok` branch releases, and only that branch writes
+ * "(payment NOT charged)" / "Upstream provider error" into the body; the
+ * catch-all 500 ("Internal server error") deliberately does not release
+ * because settle ran in the same try, and a Vercel 504 after settle is
+ * text/plain. A 5xx status alone therefore proves nothing about money —
+ * the phrase does. Mirrors formatError's `explicitlyUncharged` (errors.ts),
+ * which is not exported; kept local so this file owns its own wording.
+ */
+function carriesUnchargedEvidence(message: string): boolean {
+  return /not charged|no charge was made|no payment was made|upstream provider error/i.test(message);
+}
+
+export function isDegradedSportsPath(path: string): boolean {
+  // Same normalizer as every other rule here (query strip → decode → tab strip),
+  // so "sports%2Fcategories" gets the same wording as the plain path.
+  const clean = normalizeMarketPath(path);
+  return clean === "sports" || clean.startsWith("sports/");
+}
+
+/**
+ * Returns the full user-facing error text for a sports/* upstream failure, or
+ * null when the failure is not the known outage (a 4xx, or a non-sports path)
+ * so the caller falls back to the generic formatter.
+ *
+ * "Nothing was charged" is asserted only when the message carries the
+ * gateway's own release evidence. Any other labelled 5xx on a sports path is
+ * still the outage — same explanation, same steer — but money is hedged the
+ * way formatError hedges a post-payment 501: point at the ledger.
+ */
+export function describeDegradedSportsFailure(path: string, message: string): string | null {
+  if (!isDegradedSportsPath(path)) return null;
+  // Same labelled-status rule as formatError, so "501 items" in an upstream
+  // 4xx body cannot be mistaken for the outage and sold as "not charged".
+  if (!hasLabelledServerStatus(message)) return null;
+  const money = carriesUnchargedEvidence(message)
+    ? `it released the payment when upstream failed — nothing was charged for this call.`
+    : `it releases the payment when upstream fails, but this response does not carry the gateway's ` +
+      `"payment NOT charged" confirmation. Check blockrun_wallet action:"report" to see whether this call settled.`;
+  return `Error: ${message}\n\n` +
+    `Predexon's sports/* routes have returned an upstream 500 on every call since ${DEGRADED_SPORTS_SINCE}. ` +
+    `The gateway still routes them but no longer advertises them, and ${money}\n` +
+    `Retrying will not help until Predexon repairs the route. ${SPORTS_REMEDY}`;
 }

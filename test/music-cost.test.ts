@@ -15,13 +15,20 @@ function headers(map: Record<string, string>) {
   return { get: (name: string) => lower[name.toLowerCase()] ?? null };
 }
 
-// fetchWithTimeout sequence: 1) POST → 402, 2) POST(pay) → 200 inline track.
+// Default fetchWithTimeout sequence: 1) POST → 402, 2) POST(pay) → 200 inline
+// track. A test that sets `script` takes over: each call shifts one response,
+// and an empty script means the test expected NO further network call.
 let fetchCall = 0;
+let script: Array<() => unknown> | null = null;
+const resp402 = () => ({ status: 402, ok: false, headers: headers({ "payment-required": "x402 base ..." }), json: async () => ({}) });
 const fakeFetch = async () => {
-  fetchCall++;
-  if (fetchCall === 1) {
-    return { status: 402, ok: false, headers: headers({ "payment-required": "x402 base ..." }), json: async () => ({}) };
+  if (script) {
+    const next = script.shift();
+    if (!next) throw new Error("UNEXPECTED_NETWORK_CALL");
+    return next();
   }
+  fetchCall++;
+  if (fetchCall === 1) return resp402();
   return {
     status: 200, ok: true,
     headers: headers({ "X-Payment-Receipt": "0xmusictxhash" }),
@@ -30,8 +37,23 @@ const fakeFetch = async () => {
 };
 
 mock.module("../src/utils/http.js", {
-  namedExports: { fetchWithTimeout: fakeFetch, isTimeoutError: () => false },
+  namedExports: {
+    fetchWithTimeout: fakeFetch,
+    // The real predicate, restated: the deadline cases below depend on the
+    // "did not complete within" message being classified as a timeout.
+    isTimeoutError: (err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError" || name === "TimeoutError") return true;
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      return msg.includes("abort") || msg.includes("timeout") || msg.includes("timed out") || msg.includes("did not complete within");
+    },
+  },
 });
+// A movable clock: jumping it past the poll deadline from inside a scripted
+// poll ends the loop on the next check without four minutes of real time.
+const realNow = Date.now;
+let clockOffset = 0;
+mock.method(Date, "now", () => realNow() + clockOffset);
 mock.module("../src/utils/wallet.js", {
   namedExports: { getChain: () => "base", getOrCreateWalletKey: () => TEST_KEY, getWalletInfo: async () => ({ address: "0xTEST" }), getApiBase: () => "https://blockrun.ai/api", resolveGatewayUrl: (u: string) => (u.startsWith("http") ? u : `https://blockrun.ai/api${u.startsWith("/api/") ? u.slice(4) : u}`), },
 });
@@ -141,4 +163,100 @@ test("the music poll window cannot outlive the payment authorization, even after
       "a poll attempted at the deadline must be refused, not issued",
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// The Base async path: the same money-path holes video.ts closed in 0.39.1,
+// which music never received (PR #101 touched video only).
+// ---------------------------------------------------------------------------
+
+const respSubmit202 = () => ({ status: 202, ok: true, headers: headers({}), json: async () => ({ id: "trk_1", poll_url: "/api/v1/audio/generations/trk_1", status: "queued" }) });
+const respPoll = (http: number, body: unknown) => ({ status: http, ok: http >= 200 && http < 300, headers: headers({}), json: async () => body });
+const abortError = () => { const e = new Error("This operation was aborted"); e.name = "AbortError"; return e; };
+const text = (res: any) => res.content.map((c: any) => c.text).join("\n");
+
+test("a malformed completed poll still BOOKS the settled spend (the money already moved)", async () => {
+  // Settlement happens on the first completed poll. The old path threw on the
+  // missing URL first, the catch returned an error, and finally released the
+  // reservation: $0.20 gone on-chain, $0 in the ledger.
+  script = [resp402, respSubmit202, () => respPoll(200, { status: "completed", data: [] })];
+  clockOffset = 0;
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  assert.equal(res.isError, true, "a payload with no track URL is still an error for the caller");
+  assert.match(text(res), /missing track URL/);
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `settled charge must stay booked: spent=${budget.spent}`);
+  script = null;
+});
+
+test("an inline 200 with no receipt header and no track URL still books — a 200 on this route IS a settlement", async () => {
+  script = [resp402, () => respPoll(200, {})];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  assert.equal(res.isError, true);
+  assert.match(text(res), /No track URL/);
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `settled charge must stay booked: spent=${budget.spent}`);
+  script = null;
+});
+
+test("the happy async path books the settled amount exactly once", async () => {
+  script = [resp402, respSubmit202, () => respPoll(200, { status: "completed", data: [{ url: "https://blockrun.ai/media/trk_1.mp3", duration_seconds: 180 }] })];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  assert.notEqual(res.isError, true, text(res));
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `booked once, not twice: spent=${budget.spent}`);
+  script = null;
+});
+
+test("a transient poll rejection is retried inside the deadline, not fatal", async () => {
+  script = [resp402, respSubmit202, () => { throw new TypeError("fetch failed"); }, () => respPoll(200, { status: "completed", data: [{ url: "https://blockrun.ai/media/trk_1.mp3" }] })];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  assert.notEqual(res.isError, true, text(res));
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `booked once: spent=${budget.spent}`);
+  script = null;
+});
+
+test("a paid poll still in flight at the deadline MAY have settled: say so, book conservatively, no 'try again'", async () => {
+  script = [resp402, respSubmit202, () => { clockOffset += 3_600_000; throw abortError(); }];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  const t = text(res);
+  assert.equal(res.isError, true, t);
+  assert.match(t, /MAY have settled/);
+  assert.match(t, /blockrun_wallet action:"report"/);
+  assert.match(t, /claimable.*job trk_1/);
+  assert.doesNotMatch(t, /please try again|peak load/);
+  assert.doesNotMatch(t, /No payment was taken/, "a possible settlement is not a known refund");
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `booked conservatively: spent=${budget.spent}`);
+  script = null; clockOffset = 0;
+});
+
+test("the deadline with the last poll answered: no charge, the job id, and no 'try again'", async () => {
+  script = [resp402, respSubmit202, () => { clockOffset += 3_600_000; return respPoll(202, { status: "in_progress" }); }];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  const t = text(res);
+  assert.equal(res.isError, true, t);
+  assert.match(t, /did not complete within 240s \(last status: in_progress\)/);
+  assert.match(t, /No payment was taken/);
+  assert.match(t, /claimable.*job trk_1/);
+  assert.doesNotMatch(t, /please try again|peak load/);
+  assert.equal(budget.spent, 0, "an answered poll that did not complete settles nothing");
+  script = null; clockOffset = 0;
+});
+
+test("a paid submit that aborts MAY have settled inline: say so and book conservatively", async () => {
+  // Fast tracks settle inline on the submit itself (200), so a submit that
+  // leaves with the payment header and never answers is not "no charge".
+  script = [resp402, () => { throw abortError(); }];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "lofi beat" });
+  const t = text(res);
+  assert.equal(res.isError, true, t);
+  assert.match(t, /MAY have settled/);
+  assert.doesNotMatch(t, /please try again|peak load/);
+  assert.doesNotMatch(t, /No payment was taken/);
+  assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `booked conservatively: spent=${budget.spent}`);
+  script = null;
 });

@@ -1,19 +1,21 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ALL_TOOLS, PROFILES, resolveProfileName, resolveTools } from "../src/profiles.js";
+import { ALL_TOOLS, PROFILES, knownProfileNames, resolveProfileName, resolveTools } from "../src/profiles.js";
 
 const EXPECTED_COUNTS: Record<string, number> = {
-  full: 20,
+  full: 19,
   media: 7,
-  trading: 9,
-  research: 6,
+  trading: 8,
+  research: 5,
   chat: 3,
 };
 
-test("ALL_TOOLS has the full 20-tool set", () => {
-  assert.equal(ALL_TOOLS.length, 20);
-  assert.equal(new Set(ALL_TOOLS).size, 20, "no duplicates");
+test("ALL_TOOLS has the full 19-tool set", () => {
+  // 20 until 2026-09-06: blockrun_surf went with the Surf delisting. The number
+  // is pinned against the published brand artifact by brand-numbers.test.ts.
+  assert.equal(ALL_TOOLS.length, 19);
+  assert.equal(new Set(ALL_TOOLS).size, 19, "no duplicates");
 });
 
 test("resolveProfileName precedence: --profile flag > env > default", () => {
@@ -46,16 +48,16 @@ test("every profile includes wallet (needed to pay)", () => {
   }
 });
 
-test("unknown profile name falls back to full (20 tools)", () => {
+test("unknown profile name falls back to full (19 tools)", () => {
   const { profile, tools } = resolveTools(["--profile", "nonsense"], {});
   assert.equal(profile, "full");
-  assert.equal(tools.size, 20);
+  assert.equal(tools.size, 19);
 });
 
 test("no args → full", () => {
   const { profile, tools } = resolveTools([], {});
   assert.equal(profile, "full");
-  assert.equal(tools.size, 20);
+  assert.equal(tools.size, 19);
 });
 
 test("Object.prototype key names fall back to full instead of crashing", () => {
@@ -64,7 +66,7 @@ test("Object.prototype key names fall back to full instead of crashing", () => {
   for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
     const { profile, tools } = resolveTools(["--profile", name], {});
     assert.equal(profile, "full", `${name} should fall back to full`);
-    assert.equal(tools.size, 20, `${name} should expose all 20 tools`);
+    assert.equal(tools.size, 19, `${name} should expose all 19 tools`);
   }
 });
 
@@ -74,4 +76,51 @@ test("trimmed profiles only contain real tools", () => {
     const { tools } = resolveTools(["--profile", name], {});
     for (const t of tools) assert.ok(all.has(t), `${name}: ${t} is a real tool`);
   }
+});
+
+test("resolveProfileName trims whitespace (a JSON client's `\"trading \"` is a typo, not a new profile)", () => {
+  assert.equal(resolveProfileName(["--profile", " trading "], {}), "trading");
+  assert.equal(resolveProfileName(["--profile=Media\t"], {}), "media");
+  assert.equal(resolveProfileName([], { BLOCKRUN_MCP_PROFILE: "  Research" }), "research");
+  assert.equal(resolveTools(["--profile", " chat "], {}).profile, "chat");
+});
+
+test("a blank profile means 'not specified', not 'unknown'", () => {
+  // `--profile ""` / `--profile "  "` / an empty env var would otherwise be
+  // reported as an unknown profile called "".
+  for (const argv of [["--profile", ""], ["--profile", "   "], ["--profile="]]) {
+    const r = resolveTools(argv, {});
+    assert.equal(r.requested, "full", `${JSON.stringify(argv)}: requested`);
+    assert.equal(r.profile, "full");
+  }
+  assert.equal(resolveTools([], { BLOCKRUN_MCP_PROFILE: "" }).requested, "full");
+  assert.equal(resolveTools([], { BLOCKRUN_MCP_PROFILE: "  " }).requested, "full");
+});
+
+test("resolveTools reports the REQUESTED name so the caller can log an unknown-name fallback", () => {
+  // The fallback itself was already pinned above; what was missing is any way
+  // for index.ts to know it happened. `--profile tradng` starting with 19 tools
+  // and printing "19 tools" hid the typo from the user who wanted 8.
+  const typo = resolveTools(["--profile", "tradng"], {});
+  assert.equal(typo.requested, "tradng");
+  assert.equal(typo.profile, "full");
+  assert.notEqual(typo.requested, typo.profile, "differs → caller logs");
+
+  const ok = resolveTools(["--profile", "trading"], {});
+  assert.equal(ok.requested, "trading");
+  assert.equal(ok.profile, "trading");
+
+  const none = resolveTools([], {});
+  assert.equal(none.requested, none.profile, "no flag → nothing to warn about");
+
+  // Env path too, normalised the same way.
+  const envTypo = resolveTools([], { BLOCKRUN_MCP_PROFILE: "Reserch " });
+  assert.equal(envTypo.requested, "reserch");
+  assert.equal(envTypo.profile, "full");
+});
+
+test("knownProfileNames lists every profile, full first", () => {
+  assert.deepEqual(knownProfileNames(), Object.keys(PROFILES));
+  assert.equal(knownProfileNames()[0], "full");
+  assert.deepEqual([...knownProfileNames()].sort(), Object.keys(EXPECTED_COUNTS).sort());
 });

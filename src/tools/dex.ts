@@ -4,6 +4,30 @@ import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { fetchWithTimeout } from "../utils/http.js";
 
+/**
+ * What DexScreener's `/latest/dex/tokens/{addresses}` accepts: one or more
+ * (up to 30, comma-separated) token addresses — 0x…40-hex on EVM chains,
+ * base58 on Solana, and the longer forms other chains use (Sui coin types like
+ * `0x2::sui::SUI`, TON, Aptos). Rather than enumerate those per chain, allow
+ * the characters addresses are made of and nothing that URL syntax gives a
+ * meaning to: no `/ ? # % & +`, no whitespace, and no segment that starts with
+ * a dot (so `.` and `..` cannot travel up the path). `:` is a legal path
+ * character (RFC 3986 pchar), so no percent-encoding is needed once the shape
+ * is enforced.
+ */
+const TOKEN_ADDRESS_RE = /^[A-Za-z0-9][A-Za-z0-9_:.-]{1,199}$/;
+const MAX_TOKEN_ADDRESSES = 30;
+
+/**
+ * Split and validate the `token` argument. Returns the cleaned addresses, or
+ * null when any item fails the shape check. Exported for tests.
+ */
+export function parseTokenAddresses(raw: string): string[] | null {
+  const items = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (items.length === 0 || items.length > MAX_TOKEN_ADDRESSES) return null;
+  return items.every((s) => TOKEN_ADDRESS_RE.test(s)) ? items : null;
+}
+
 export function registerDexTool(server: McpServer): void {
   server.registerTool(
     "blockrun_dex",
@@ -33,7 +57,24 @@ Examples:
         let searchTerm = query || symbol || "";
 
         if (token) {
-          url = `https://api.dexscreener.com/latest/dex/tokens/${token}`;
+          // The caller's string goes into the URL PATH. Validate the shape
+          // instead of splicing it raw: `../search?q=pepe` or `abc#x` would
+          // otherwise rewrite the request and return another endpoint's
+          // answer (or nothing) labelled as token data.
+          const addresses = parseTokenAddresses(token);
+          if (!addresses) {
+            return {
+              content: [{
+                type: "text",
+                text:
+                  `Invalid token address: ${JSON.stringify(token)}. Expected a contract or mint address ` +
+                  `(0x… on EVM chains, base58 on Solana), or up to ${MAX_TOKEN_ADDRESSES} of them separated by commas. ` +
+                  `To search by name or symbol use query instead.`,
+              }],
+              isError: true,
+            };
+          }
+          url = `https://api.dexscreener.com/latest/dex/tokens/${addresses.join(",")}`;
         } else if (searchTerm) {
           url = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchTerm)}`;
         } else {

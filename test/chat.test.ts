@@ -3,7 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost, freeTierTruncationNote } from "../src/tools/chat.js";
 import { handleAnthropicNative, anthropicCallCost } from "../src/tools/chat-anthropic.js";
-import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN } from "../src/utils/constants.js";
+import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS } from "../src/utils/constants.js";
+import { withTxFee } from "../src/utils/tx-fee.js";
 import type { BudgetState } from "../src/types.js";
 
 function newBudget(limit: number | null = null): BudgetState {
@@ -93,7 +94,9 @@ test("estimateChatCost keeps the cheap tiers cheaper than the frontier ones", ()
 
 test("estimateChatCost prices an unknown model at the catalog ceiling, not a guess", () => {
   // A model added upstream between releases has no table entry. $5/$30 covers
-  // everything in the catalog except the five pro-tier ids, which ARE listed.
+  // everything in the catalog except the ids priced above it, which ARE listed
+  // (seven as of 2026-09-08 — `npm run verify:prices` sweeps the live catalogue
+  // and fails the moment an eighth appears without a row).
   const unknown = estimateChatCost(1024, undefined, "someone/brand-new-model", undefined, 100_000);
   assert.equal(unknown, estimateChatCost(1024, undefined, "openai/gpt-5.6-sol", undefined, 100_000));
   assert.ok(unknown >= 0.244171);
@@ -155,19 +158,42 @@ test("handleAnthropicNative adds no JSON instruction for plain text", async () =
 });
 
 // estimateChatCost reserves $0 for mode:"free" with no model to override it. That
-// is only sound because every free[] entry is an nvidia/* model the gateway serves
-// at $0 — an unenforced invariant on a hand-edited array that has now been
-// rewritten in three consecutive releases (0.31.x, 0.32.0, 0.32.1). One paid model
-// landing in free[] silently switches the budget gate off for mode:"free", and
-// every other test here still passes. Pin it.
-test("every MODEL_TIERS.free entry is an nvidia/* model (keeps the $0 reserve honest)", () => {
+// is only sound because every free[] entry is a model the gateway serves at $0 —
+// an unenforced invariant on a hand-edited array that has now been rewritten in
+// four releases (0.31.x, 0.32.0, 0.32.1, and this one). One paid model landing
+// in free[] silently switches the budget gate off for mode:"free", and every
+// other test here still passes. Pin it.
+//
+// This used to pin "every free[] entry is nvidia/*", and the $0 classifier was
+// the same vendor test. Both are wrong-by-design since the 2026-09-08 catalogue:
+// cohere/north-mini-code and poolside/laguna-xs-2.1 are billed $0 on both
+// gateways, so an explicit call to either reserved the $5/$30 default and an
+// exhausted budget refused a free call. FREE_CHAT_MODELS is the set now; the
+// catalogue sweep in `npm run verify:prices` fails if any member starts costing.
+test("every MODEL_TIERS.free entry is in FREE_CHAT_MODELS, and every member reserves $0", () => {
   assert.ok(MODEL_TIERS.free.length > 0, "free tier must not be empty");
   for (const m of MODEL_TIERS.free) {
-    assert.ok(
-      m.startsWith("nvidia/"),
-      `${m} is in the free tier but is not nvidia/* — estimateChatCost would reserve $0 for a paid model`,
-    );
+    assert.ok(FREE_CHAT_MODELS.has(m), `${m} is routed as free but FREE_CHAT_MODELS does not list it — estimateChatCost would reserve for a $0 call`);
   }
+  for (const m of FREE_CHAT_MODELS) {
+    assert.equal(estimateChatCost(1024, undefined, m, undefined, 600 * 1024), 0, m);
+    // The bare spelling is a real, chargeable-or-free id too (see BARE_TO_PREFIXED).
+    assert.equal(estimateChatCost(1024, undefined, m.slice(m.indexOf("/") + 1), undefined, 600 * 1024), 0, `bare ${m}`);
+  }
+});
+
+test("a $0 model outside nvidia/ is free — the classifier is membership, not vendor", () => {
+  // Live billing_mode:"free" on both gateways, 2026-09-08. Before FREE_CHAT_MODELS
+  // both reserved the unknown-model ceiling (the gpt-5.6-sol figure).
+  for (const id of ["cohere/north-mini-code", "poolside/laguna-xs-2.1", "north-mini-code", "laguna-xs-2.1"]) {
+    assert.equal(estimateChatCost(1024, undefined, id, undefined, 100_000), 0, id);
+  }
+  // ...and a paid model from the same vendors is not swept along.
+  assert.ok(estimateChatCost(1024, undefined, "cohere/command-a", undefined, 100_000) > 0);
+  // The truncation warning stays NVIDIA-only: the 128 KiB silent cap was measured
+  // on that path and nowhere else, so it is not asserted for cohere/poolside.
+  assert.equal(freeTierTruncationNote(200_000, "cohere/north-mini-code"), null);
+  assert.ok(freeTierTruncationNote(200_000, "nvidia/nemotron-3-ultra-550b"));
 });
 
 // A tier that empties out resolves MODEL_TIERS[mode][0] to undefined, which sends
@@ -244,7 +270,7 @@ test("anthropicCallCost honours the $0.001 floor and the prefixed/bare id", () =
     anthropicCallCost("claude-opus-5", 10_000, 1024),
     anthropicCallCost("anthropic/claude-opus-5", 10_000, 1024),
   );
-  // A date-suffixed id still resolves via the prefix match.
+  // A date-suffixed id still resolves — the suffix is stripped, not prefix-matched.
   assert.ok(anthropicCallCost("claude-opus-5-20260101", 2, 1024) !== null);
   // An unknown model returns null so the caller falls back to the estimate,
   // rather than inventing a number.
@@ -307,7 +333,7 @@ test("a vendor-less free model is still free, and still warns about truncation",
 });
 
 test("every catalog id has a unique vendor-less segment — the mapping cannot be ambiguous", () => {
-  const ids = [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat()].filter((i) => i.includes("/"));
+  const ids = [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat(), ...FREE_CHAT_MODELS].filter((i) => i.includes("/"));
   const byBare = new Map<string, Set<string>>();
   for (const id of ids) {
     const bare = id.slice(id.indexOf("/") + 1);
@@ -316,4 +342,116 @@ test("every catalog id has a unique vendor-less segment — the mapping cannot b
   }
   const clashes = [...byBare.entries()].filter(([, set]) => set.size > 1);
   assert.deepEqual(clashes, [], `two vendors ship the same model name: ${JSON.stringify(clashes)}`);
+});
+
+// ── Two flagship ids landed above the default, and nothing noticed ──
+//
+// Live GET /v1/models on BOTH gateways, 2026-09-08: openai/gpt-6-astra and
+// anthropic/claude-fable-5.1 are $10/$50, available, and had no table row, so an
+// explicit `model` fell to DEFAULT_CHAT_PRICE ($5/$30) — 2x short on input,
+// 1.67x on output, and the confirm-spend prompt showed the same wrong figure.
+// This is the exact defect class the table was introduced to close; the table
+// header even asserted it held "every catalog model priced ABOVE the default".
+// `npm run verify:prices` now sweeps the live catalogue for this shape and fails
+// on any above-default id without a row; these pin the two rows that closed it.
+test("gpt-6-astra and claude-fable-5.1 reserve at their live $10/$50, not the $5/$30 default", () => {
+  assert.deepEqual(CHAT_PRICE_PER_MTOKEN["openai/gpt-6-astra"], { input: 10, output: 50 });
+  assert.deepEqual(CHAT_PRICE_PER_MTOKEN["anthropic/claude-fable-5.1"], { input: 10, output: 50 });
+
+  const fable5 = estimateChatCost(1024, undefined, "anthropic/claude-fable-5", undefined, 100_000);
+  const unknown = estimateChatCost(1024, undefined, "someone/brand-new-model", undefined, 100_000);
+  // Bare spellings ride along: BARE_TO_PREFIXED is derived from the table keys.
+  for (const id of ["openai/gpt-6-astra", "anthropic/claude-fable-5.1", "gpt-6-astra", "claude-fable-5.1"]) {
+    const reserved = estimateChatCost(1024, undefined, id, undefined, 100_000);
+    // 100k chars at 2 chars/token = 50k input tokens at $10/M; 1024 output at $50/M.
+    assert.equal(reserved, withTxFee((50_000 / 1e6) * 10 + (1024 / 1e6) * 50), id);
+    assert.equal(reserved, fable5, `${id} shares fable-5's $10/$50 rate`);
+    assert.ok(reserved > unknown, `${id} must reserve above the unknown-model default (${reserved} vs ${unknown})`);
+    // fable-5's live settle for this exact call (LIVE_CHARGE_100K above): same
+    // rate, same gateway formula, so the same charge has to be covered.
+    assert.ok(reserved >= 0.486310, id);
+  }
+  // And the default itself did not move: raising it would double the reserve for
+  // every genuinely unknown non-pro model and lock small budgets out.
+  assert.deepEqual(DEFAULT_CHAT_PRICE, { input: 5, output: 30 });
+});
+
+// ── thinking.budget_tokens is only ever SENT on the native claude-* path ──
+//
+// The schema says "Ignored for non-Claude models", and the handler honours that:
+// only handleAnthropicNative receives `thinking`; the multi-turn, explicit-model
+// and routing paths build their options from {maxTokens, temperature,
+// responseFormat, stop}. But the reserve folded budget_tokens into output
+// unconditionally, so mode:"powerful" + a 100k budget reserved ~$18 (gpt-5.4-pro
+// at $180/M) for a call that settles at cents — a spurious refusal for a
+// delegated agent, and a wrong "Estimated: $X" shown to a human under
+// BLOCKRUN_CONFIRM_SPEND. Over-reserve is the safe direction for the gate, but
+// a number a human is asked to approve has to be the number the call can settle at.
+test("estimateChatCost ignores thinking.budget_tokens for non-Claude models, as the schema promises", () => {
+  assert.equal(estimateChatCost(1024, "cheap", undefined, 100_000), estimateChatCost(1024, "cheap", undefined));
+  assert.equal(estimateChatCost(1024, "powerful", undefined, 100_000), estimateChatCost(1024, "powerful", undefined));
+  assert.equal(estimateChatCost(1024, undefined, "openai/gpt-5.6-terra", 100_000), estimateChatCost(1024, undefined, "openai/gpt-5.6-terra"));
+  assert.equal(estimateChatCost(1024, undefined, "gpt-5.4-pro", 100_000), estimateChatCost(1024, undefined, "gpt-5.4-pro"));
+  // Every Claude spelling still folds — canonicalChatModel + isAnthropicModel
+  // agree with the dispatch in the handler, so prefixed and bare both count.
+  assert.ok(estimateChatCost(1024, undefined, "claude-opus-4.8", 100_000) > estimateChatCost(1024, undefined, "claude-opus-4.8") * 10);
+  assert.ok(estimateChatCost(1024, undefined, "anthropic/claude-fable-5.1", 100_000) > estimateChatCost(1024, undefined, "anthropic/claude-fable-5.1") * 10);
+});
+
+// ── The native ledger keys on the CATALOGUE spelling; the gateway echoes another ──
+//
+// /v1/messages echoes the UPSTREAM id (blockrun's ANTHROPIC_MODEL_MAP), which is
+// dashed and often dated: claude-fable-5-1, claude-haiku-4-5-20251001,
+// claude-sonnet-4-5-20250929. The table is dotted: anthropic/claude-fable-5.1.
+// The old lookup fell back to a startsWith prefix match, which (a) never fired
+// for those dashed echoes — every one silently booked the pre-call estimate
+// instead of the reconstructed quote — and (b) DID fire on a version suffix, so
+// "claude-fable-5-1" booked claude-fable-5's row: right by coincidence today
+// (both $10/$50), and a sibling priced differently from its major would book
+// the wrong number with no signal, because "null -> estimate" never engages
+// when a rate WAS found. On this path the table IS the ledger.
+test("anthropicCallCost normalises the gateway's echo to the catalogue key and never prefix-matches", () => {
+  const ECHOES: Array<[string, string]> = [
+    ["claude-fable-5-1", "anthropic/claude-fable-5.1"],
+    ["claude-fable-5.1", "anthropic/claude-fable-5.1"],
+    ["claude-haiku-4-5-20251001", "anthropic/claude-haiku-4.5"],
+    ["claude-opus-4-8", "anthropic/claude-opus-4.8"],
+    ["claude-sonnet-4-5-20250929", "anthropic/claude-sonnet-4.5"],
+    ["claude-sonnet-4.6-20260301", "anthropic/claude-sonnet-4.6"],
+    ["claude-opus-5-20260101", "anthropic/claude-opus-5"],
+    ["anthropic/claude-opus-5", "anthropic/claude-opus-5"],
+  ];
+  for (const [echo, key] of ECHOES) {
+    const booked = anthropicCallCost(echo, 100_000, 1024);
+    assert.ok(booked !== null, `${echo} must resolve to a row`);
+    assert.equal(booked, anthropicCallCost(key, 100_000, 1024), `${echo} -> ${key}`);
+  }
+  // Rows stay distinct: haiku's echo books haiku, not a dearer sibling.
+  assert.ok(anthropicCallCost("claude-haiku-4-5-20251001", 100_000, 1024)! < anthropicCallCost("claude-sonnet-4-5-20250929", 100_000, 1024)!);
+  // A sibling with NO row returns null — the estimate fallback — rather than
+  // borrowing its major version's rate. This is the mechanism that would have
+  // let claude-fable-5.1 book fable-5's row before it had one of its own.
+  for (const unlisted of ["claude-sonnet-5-1", "claude-sonnet-5.1", "claude-fable-5-2", "claude-opus-5-5-20270101", "claude-opus-5x", "claude-does-not-exist"]) {
+    assert.equal(anthropicCallCost(unlisted, 100_000, 1024), null, `${unlisted} has no row and must not borrow one`);
+  }
+});
+
+// ── The Anthropic rows are the native LEDGER, so a stale-high row is not "safe" ──
+//
+// On the OpenAI-compat paths a row above the live rate only over-reserves (the
+// gate is tighter than it needs to be; recordActualSpend books the real settle).
+// On the native /v1/messages path there is no settlement counter to read, so
+// anthropicCallCost books THIS TABLE — and both gateways cut claude-sonnet-5 to
+// $2/$10 while the row stayed at $3/$15, a 1.5x over-count on every call that
+// tripped budget caps at two-thirds of their real allowance. Live GET /v1/models,
+// both gateways, 2026-09-08. The catalogue sweep now fails on an anthropic/* row
+// above the Base rate for exactly this reason.
+test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => {
+  assert.deepEqual(CHAT_PRICE_PER_MTOKEN["anthropic/claude-sonnet-5"], { input: 2, output: 10 });
+  // 100k chars -> ceil(100000/2.08)+20 = 48,097 input tokens at $2/M = $0.096194;
+  // 1024 max_tokens x 0.1 = 102.4 output tokens at $10/M = $0.001024;
+  // + the $0.001 observed fee, ceiled to a micro-USDC = $0.098218.
+  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.098218);
+  // The old row booked $0.146827 for the same call.
+  assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.146827 * 0.7);
 });

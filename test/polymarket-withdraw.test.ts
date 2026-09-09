@@ -16,6 +16,7 @@ let usdceRaw = 0n;
 // Mutable state-file + relayer doubles so the double-spend guard is testable.
 let stateFile: Record<string, unknown> = {};
 let relayerState: string | undefined;
+let relayerStateCalls = 0;
 
 mock.module("../src/utils/polymarket/positions.js", {
   namedExports: { getFundsAddress: () => DEPOSIT },
@@ -57,16 +58,19 @@ mock.module("../src/utils/polymarket/creds.js", {
 mock.module("../src/utils/polymarket/relayer.js", {
   namedExports: {
     sendWalletBatch: async () => ({ transactionHash: "0x" + "ab".repeat(32) }),
-    getRelayerTransactionState: async () => relayerState,
+    getRelayerTransactionState: async () => { relayerStateCalls++; return relayerState; },
     BATCH_DEADLINE_SECS: 300,
   },
 });
 // The confirm path's first network touch is the bridge POST — fail it loudly
-// so tests can prove the guard LET a call through without real I/O.
+// so tests can prove the guard LET a call through without real I/O. The thrown
+// error is swappable so the error-routing tests can shape it like axios.
+const BRIDGE_OFFLINE = new Error("bridge offline (test)");
+let bridgeError: unknown = BRIDGE_OFFLINE;
 mock.module("axios", {
   defaultExport: {
-    post: async () => { throw new Error("bridge offline (test)"); },
-    get: async () => { throw new Error("bridge offline (test)"); },
+    post: async () => { throw bridgeError; },
+    get: async () => { throw bridgeError; },
   },
 });
 
@@ -224,4 +228,123 @@ test("parseUsdAmount accepts amounts whose float noise exceeds a naive absolute 
   // 1234.56 * 1e6 = 1_234_559_999.9999998 — noise 2.4e-7 micro, which a 1e-7
   // absolute threshold (the #66 draft) wrongly rejected as over-precision.
   assert.equal(parseUsdAmount(1234.56), 1_234_560_000n);
+});
+
+// --- Destination validation + honest labelling (audit cluster F) ---
+//
+// The dry-run is the ONE human checkpoint before an irreversible pUSD → bridge
+// transfer. It used to print "to (agent wallet): <addr>" for ANY to_address, so
+// a hallucinated/injected third-party address was labelled as the user's own.
+
+test("a custom to_address is labelled CUSTOM in the dry-run — never 'agent wallet'", async () => {
+  pusdRaw = 5_000_000n; usdceRaw = 0n; stateFile = {};
+  const other = "0x1111111111111111111111111111111111111111";
+  const res = await withdrawFunds({ to_address: other });
+  assert.equal(res.isError, undefined, res.text);
+  assert.match(res.text, new RegExp(other));
+  assert.match(res.text, /CUSTOM destination/);
+  assert.match(res.text, /NOT your agent wallet/);
+  assert.doesNotMatch(res.text, /to \(agent wallet\)/);
+  assert.doesNotMatch(res.text, /\(your agent wallet\)/);
+  assert.equal((res.structured as { to?: string }).to, other, "structured.to stays the raw destination");
+});
+
+test("to_address equal to the agent wallet (any case) is still labelled as the agent wallet", async () => {
+  pusdRaw = 5_000_000n; usdceRaw = 0n; stateFile = {};
+  const res = await withdrawFunds({ to_address: AGENT.toLowerCase() });
+  assert.equal(res.isError, undefined, res.text);
+  assert.match(res.text, /\(your agent wallet\)/);
+  assert.doesNotMatch(res.text, /CUSTOM/);
+});
+
+test("the default destination (no to_address) is labelled as the agent wallet", async () => {
+  pusdRaw = 5_000_000n; usdceRaw = 0n; stateFile = {};
+  const res = await withdrawFunds({});
+  assert.match(res.text, /\(your agent wallet\)/);
+  assert.doesNotMatch(res.text, /CUSTOM/);
+});
+
+test("a mixed-case to_address with a bad checksum is refused before any I/O", async () => {
+  pusdRaw = 5_000_000n; usdceRaw = 0n; stateFile = {};
+  // AGENT with one letter's case flipped: EIP-55 checksum no longer matches —
+  // the classic transposition/typo shape strict isAddress exists to catch.
+  const badChecksum = "0xcC8c44AD3dc2A58D841c3EB26131E49b22665EF8";
+  for (const to_address of [badChecksum, "0x1111", "vitalik.eth", "0x", "1111111111111111111111111111111111111111"]) {
+    const res = await withdrawFunds({ to_address, confirm: true });
+    assert.equal(res.isError, true, `${to_address} should be rejected`);
+    assert.match(res.text, /to_address/);
+    assert.match(res.text, /Nothing withdrawn/);
+    // confirm:true → the first network touch would be the bridge POST, which the
+    // axios mock fails loudly. Not seeing it proves we refused before any I/O.
+    assert.doesNotMatch(res.text, /bridge offline/);
+  }
+});
+
+test("an 'unknown' pendingWithdraw (lost submit response) blocks without asking the relayer", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n;
+  stateFile = { pendingWithdraw: { transactionID: "unknown", deadline: futureDeadline() } };
+  relayerState = "STATE_MINED"; // would clear a KNOWN id — must not be consulted for "unknown"
+  relayerStateCalls = 0;
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /double-send/);
+  assert.match(res.text, /submit response was lost/);
+  assert.equal(relayerStateCalls, 0, "there is no id to look up — the relayer must not be asked about 'unknown'");
+  assert.ok(stateFile.pendingWithdraw, "the guard stays armed until the deadline passes");
+});
+
+// --- Error routing (late audit finding) ---
+//
+// withdraw never talks to the CLOB, yet every error used to go through
+// mapClobError: a bridge 403 became "point POLYMARKET_CLOB_HOST + RELAYER_URL
+// at a permitted-region relay" (the relay does not even serve the bridge), and
+// any message containing "closed" became "market resolved, go redeem".
+
+test("a bridge 403 is reported as a BRIDGE failure, not CLOB geoblock advice", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n; stateFile = {};
+  bridgeError = Object.assign(new Error("Request failed with status code 403"), {
+    isAxiosError: true,
+    response: { status: 403, data: { error: "forbidden" } },
+  });
+  try {
+    const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /bridge/i);
+    assert.match(res.text, /POLYMARKET_BRIDGE_HOST/);
+    assert.match(res.text, /403/);
+    assert.doesNotMatch(res.text, /POLYMARKET_CLOB_HOST|POLYMARKET_RELAYER_URL|geoblock/);
+    assert.doesNotMatch(res.text, /Polymarket CLOB error/);
+  } finally {
+    bridgeError = BRIDGE_OFFLINE;
+  }
+});
+
+test("a transport error is passed through verbatim, not reinterpreted as a resolved market", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n; stateFile = {};
+  bridgeError = new Error("Connection closed before a response was received");
+  try {
+    const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /Connection closed before a response was received/);
+    assert.doesNotMatch(res.text, /not accepting orders|action:"redeem"/);
+    assert.doesNotMatch(res.text, /Polymarket CLOB error/);
+  } finally {
+    bridgeError = BRIDGE_OFFLINE;
+  }
+});
+
+test("relayer anti-retry guidance survives the error path untouched", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n; stateFile = {};
+  bridgeError = new Error(
+    "Withdraw: relayer batch did not confirm within the polling window (tx t1, relayer state: STATE_NEW). " +
+    "It may still land. Do NOT retry yet: wait for the deadline to pass, then check the pUSD balance.",
+  );
+  try {
+    const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+    assert.equal(res.isError, true);
+    assert.ok(res.text.startsWith("Withdraw: relayer batch did not confirm"), `got: ${res.text}`);
+    assert.match(res.text, /Do NOT retry/);
+  } finally {
+    bridgeError = BRIDGE_OFFLINE;
+  }
 });

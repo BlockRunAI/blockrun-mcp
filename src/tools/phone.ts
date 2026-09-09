@@ -88,6 +88,21 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
+        // Pin the namespace. Every sibling passthrough concatenates onto a fixed
+        // prefix (/v1/surf/, /v1/modal/, ...); this tool's prefix is /v1/ itself,
+        // so without this check no traversal was needed to reach another tool's
+        // route: `modal/sandbox/create` (up to $192) ran at the $0.012 unknown
+        // reserve above — past any budget cap, with a confirm dialog quoting the
+        // wrong number. Classify the route the gateway will serve (decoded,
+        // lowercased, query dropped), not the string the caller typed. Kept
+        // AFTER hasPathTraversal so `phone/../modal/...` is still named for what
+        // it is, and BEFORE reserveBudget so a refusal books nothing.
+        if (!/^(phone|voice)\//.test(normalizeClassifyPath(cleanPath))) {
+          return {
+            content: [{ type: "text", text: formatError(`Invalid path '${path}': blockrun_phone only serves phone/* and voice/* routes.`) }],
+            isError: true,
+          };
+        }
         const estimatedCost = estimatePhoneCost(cleanPath, body !== undefined);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {

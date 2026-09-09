@@ -9,9 +9,13 @@
 //
 // Two guards, because the failure mode is silence in both directions:
 //
-//  1. STATIC — every src/tools/*.ts that reserves budget must also call
-//     confirmSpend. A new paid tool that copies the reserve/record shape but
-//     forgets the confirm would otherwise ship un-gated forever.
+//  1. STATIC — every src/tools/*.ts that can PAY must reserve budget AND call
+//     confirmSpend. "Can pay" is read off the imports: a paid SDK client from
+//     utils/wallet.ts, or one of the hand-built rails (raw-call, api-key-call,
+//     solana-402). The guard used to key on reserveBudget alone and skip any
+//     file without it — so the worst possible offender, a tool that pays and
+//     never reserves, was the one it could not see. A file that reserves via
+//     some helper this list does not know is still held to the confirm.
 //  2. BEHAVIORAL — with confirmation on and a client that answers "decline",
 //     every paid tool must return a non-error "declined" result, release its
 //     reservation (budget.spent back to 0), and never reach the network.
@@ -34,21 +38,87 @@ const TOOLS_DIR = join(ROOT, "src", "tools");
 // ---------------------------------------------------------------------------
 // 1. Static guard
 // ---------------------------------------------------------------------------
-test("every tool that reserves budget also asks the user (confirmSpend)", () => {
+// The surfaces through which a tool file can move money. A file that imports
+// any of these is a paid tool, whether or not it remembered to reserve.
+const PAID_CLIENTS = /\b(getClient|getImageClient|buildClient|buildClientWithTimeout|getAnthropicClient|getPriceClient)\b/;
+const PAID_HELPERS = /from "\.\.\/utils\/(raw-call|api-key-call|solana-402)\.js"/;
+
+// Paid-surface importers that genuinely never charge. Each entry is a claim
+// that has to be re-made when the file changes; keep it short and say why.
+const FREE_BY_DESIGN: Record<string, string> = {
+  // getClient() only feeds loadModels()/listModels — the free catalogue GET.
+  "models.ts": "getClient feeds the free /v1/models catalogue read only",
+};
+
+/**
+ * What the static guard sees in one tool file. Exported shape, so the guard's
+ * own rules can be tested on fixtures below — a guard that cannot be shown to
+ * bite is only a comment.
+ */
+function classifyToolSource(file: string, src: string): { paid: boolean; reserves: number; confirms: number; imports: boolean; offence: string | null } {
+  const walletImport = /import\s*\{([^}]*)\}\s*from\s*"\.\.\/utils\/wallet\.js"/.exec(src)?.[1] ?? "";
+  const paidSurface = PAID_CLIENTS.test(walletImport) || PAID_HELPERS.test(src);
+  const reserves = (src.match(/reserveBudget\(budget/g) ?? []).length;
+  const confirms = (src.match(/confirmSpend\(server/g) ?? []).length;
+  const imports = /from "\.\.\/utils\/confirm-spend\.js"/.test(src);
+  const paid = paidSurface || reserves > 0;
+  if (!paid) return { paid, reserves, confirms, imports, offence: null };
+  if (paidSurface && reserves === 0 && file in FREE_BY_DESIGN) return { paid, reserves, confirms, imports, offence: null };
+  // No parity requirement between reserves and confirms: speech, video and
+  // image legitimately RE-reserve inside a 402 onQuote after the one confirm.
+  let offence: string | null = null;
+  if (reserves === 0) offence = "pays but never reserves budget";
+  else if (!imports || confirms === 0) offence = "reserves budget but never asks (confirmSpend)";
+  return { paid, reserves, confirms, imports, offence };
+}
+
+test("every tool that can pay reserves budget AND asks the user (confirmSpend)", () => {
   const offenders: string[] = [];
   for (const file of readdirSync(TOOLS_DIR).filter((f) => f.endsWith(".ts"))) {
-    const src = readFileSync(join(TOOLS_DIR, file), "utf8");
-    const reserves = (src.match(/reserveBudget\(budget/g) ?? []).length;
-    if (reserves === 0) continue;
-    const imports = /from "\.\.\/utils\/confirm-spend\.js"/.test(src);
-    const calls = (src.match(/confirmSpend\(server/g) ?? []).length;
-    if (!imports || calls === 0) offenders.push(`${file} (reserves=${reserves}, confirms=${calls})`);
+    const c = classifyToolSource(file, readFileSync(join(TOOLS_DIR, file), "utf8"));
+    if (c.offence) offenders.push(`${file}: ${c.offence} (reserves=${c.reserves}, confirms=${c.confirms})`);
   }
   assert.deepEqual(
     offenders,
     [],
-    `paid tools that charge without confirmSpend — they bypass BLOCKRUN_CONFIRM_SPEND:\n  ${offenders.join("\n  ")}`,
+    `paid tools that bypass the budget cap or BLOCKRUN_CONFIRM_SPEND:\n  ${offenders.join("\n  ")}`,
   );
+});
+
+test("the FREE_BY_DESIGN allowlist names only files that still exist and still import a paid surface", () => {
+  // A stale entry is a hole: rename models.ts, add a paid call to the new
+  // file, and the old name would keep excusing nothing while the new one is
+  // judged normally — fine. But an entry whose file no longer imports a paid
+  // surface is dead weight that invites copy-paste, so it must go.
+  for (const file of Object.keys(FREE_BY_DESIGN)) {
+    const src = readFileSync(join(TOOLS_DIR, file), "utf8");
+    const walletImport = /import\s*\{([^}]*)\}\s*from\s*"\.\.\/utils\/wallet\.js"/.exec(src)?.[1] ?? "";
+    assert.ok(PAID_CLIENTS.test(walletImport) || PAID_HELPERS.test(src), `${file} no longer imports a paid surface — drop it from FREE_BY_DESIGN`);
+    assert.equal((src.match(/reserveBudget\(budget/g) ?? []).length, 0, `${file} now reserves budget — it is a paid tool, drop it from FREE_BY_DESIGN`);
+  }
+});
+
+test("the static guard bites: a tool that pays without reserving, or reserves without asking, is an offender", () => {
+  const RESERVE = "const gate = reserveBudget(budget, agent_id, 0.01);";
+  const CONFIRM = 'import { confirmSpend } from "../utils/confirm-spend.js";\nconst c = await confirmSpend(server, { usd: 0.01, label: "x" });';
+  const client = 'import { getClient } from "../utils/wallet.js";';
+  const helper = 'import { apiKeyPost } from "../utils/api-key-call.js";';
+  const freeWallet = 'import { getWalletInfo, getChain } from "../utils/wallet.js";';
+
+  // The hole this test closes: pays via a client, never reserves → was skipped.
+  assert.equal(classifyToolSource("new.ts", `${client}\n${CONFIRM}`).offence, "pays but never reserves budget");
+  assert.equal(classifyToolSource("new.ts", `${helper}`).offence, "pays but never reserves budget");
+  // The original rule, still enforced.
+  assert.equal(classifyToolSource("new.ts", `${client}\n${RESERVE}`).offence, "reserves budget but never asks (confirmSpend)");
+  assert.equal(classifyToolSource("new.ts", `${RESERVE}`).offence, "reserves budget but never asks (confirmSpend)", "reserving via an unknown helper is still held to the confirm");
+  // Compliant, including the legitimate re-reserve pattern (2 reserves, 1 confirm).
+  assert.equal(classifyToolSource("new.ts", `${client}\n${RESERVE}\n${CONFIRM}`).offence, null);
+  assert.equal(classifyToolSource("new.ts", `${helper}\n${RESERVE}\n${RESERVE}\n${CONFIRM}`).offence, null);
+  // Free tools: wallet-status imports and no rail are not paid at all.
+  assert.deepEqual(classifyToolSource("free.ts", `${freeWallet}`), { paid: false, reserves: 0, confirms: 0, imports: false, offence: null });
+  // The allowlist excuses a paid-surface importer only under its own name.
+  assert.equal(classifyToolSource("models.ts", `${client}`).offence, null);
+  assert.equal(classifyToolSource("models-v2.ts", `${client}`).offence, "pays but never reserves budget");
 });
 
 // ---------------------------------------------------------------------------
@@ -71,6 +141,11 @@ mock.module("../src/utils/wallet.js", {
     buildClientWithTimeout: () => trap,
     getPriceClient: () => trap,
     getAnthropicClient: () => trap,
+    // blockrun_image: its Base rail is the SDK ImageClient, and image.ts
+    // statically imports utils/solana-402.ts, which resolves the Solana key
+    // through wallet.ts (image-cost.test.ts documents the same two exports).
+    getImageClient: () => trap,
+    resolveSolanaKey: () => undefined,
     baseOnlyMessage: () => null,
     getOrCreateWalletKey: () => TEST_KEY,
     getWalletInfo: async () => ({ address: "0xTEST" }),
@@ -107,12 +182,31 @@ const CASES: Array<{ tool: string; mod: string; register: string; args: Record<s
   { tool: "blockrun_defi", mod: "defi", register: "registerDefiTool", args: { path: "protocols" } },
   { tool: "blockrun_markets", mod: "markets", register: "registerMarketsTool", args: { path: "markets", params: { q: "fed" } } },
   { tool: "blockrun_chat", mod: "chat", register: "registerChatTool", args: { message: "hi", model: "openai/gpt-5.6-terra" } },
+  // The tool named on line 6 as the one that historically DID confirm — and
+  // then the only paid tool this table did not cover. zai/cogview-4 is in
+  // IMAGE_MODELS, so the request clears the z.enum pre-gate.
+  { tool: "blockrun_image", mod: "image", register: "registerImageTool", args: { prompt: "a cube", model: "zai/cogview-4" } },
   { tool: "blockrun_exa", mod: "exa", register: "registerExaTool", args: { path: "search", body: { query: "rag papers" } } },
   { tool: "blockrun_phone", mod: "phone", register: "registerPhoneTool", args: { path: "phone/lookup", body: { phone: "+14155550100" } } },
   { tool: "blockrun_modal", mod: "modal", register: "registerModalTool", args: { path: "sandbox/create", body: {} } },
   { tool: "blockrun_rpc", mod: "rpc", register: "registerRpcTool", args: { network: "ethereum", method: "eth_blockNumber" } },
-  { tool: "blockrun_price", mod: "price", register: "registerPriceTool", args: { action: "price", category: "stocks", symbol: "AAPL", market: "US" } },
-  { tool: "blockrun_surf", mod: "surf", register: "registerSurfTool", args: { path: "market/price", params: { symbol: "ETH" } } },
+  // blockrun_price has no reachable paid path while equity is withdrawn: since
+  // 2026-09-05 the gateway 501s stocks price/history before payment, and the
+  // tool says so before reserveBudget/confirmSpend. That ORDERING is proved at
+  // handler level in test/price-behaviour.test.ts (the wording in
+  // test/price-equity-preflight.test.ts), so this row's absence is not a gap.
+  // Do not substitute a crypto/fx row: those reserve $0, confirmSpend
+  // short-circuits at usd <= 0, and the handler would hit the trap — the
+  // decline assertions below cannot hold for a free call. The static guard
+  // above still holds price.ts to the reserve+confirm shape, so re-adding this
+  // row is all it takes when the equity route returns:
+  //   { tool: "blockrun_price", mod: "price", register: "registerPriceTool", args: { action: "price", category: "stocks", symbol: "AAPL", market: "us" } },
+  // blockrun_surf is not listed because the TOOL is gone: Surf was retired
+  // upstream on 2026-09-06 (every /v1/surf/* path answers 410 endpoint_retired,
+  // no 402 is ever issued), 0.48.1 made it answer with the notice, and 0.49.0
+  // dropped it — a tool that can only error is not worth the schema every agent
+  // carries on every turn. If the gateway ships a replacement vendor under a new
+  // tool, that tool gets a row here like any other paid surface.
   { tool: "blockrun_search", mod: "search", register: "registerSearchTool", args: { body: { query: "fed decision" } } },
   { tool: "blockrun_music", mod: "music", register: "registerMusicTool", args: { prompt: "lofi", instrumental: true, model: "minimax/music-2.5+" } },
   { tool: "blockrun_speech", mod: "speech", register: "registerSpeechTool", args: { action: "speak", input: "hello", model: "elevenlabs/flash-v2.5", response_format: "mp3" } },

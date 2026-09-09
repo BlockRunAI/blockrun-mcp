@@ -10,7 +10,7 @@ import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
-import { validateMarketRequest } from "../utils/markets-validation.js";
+import { describeDegradedSportsFailure, isDegradedSportsPath, validateMarketRequest } from "../utils/markets-validation.js";
 
 // What x402 CHARGES, which is not the 402's JSON `price` field. That field is the
 // BASE ($0.0075); the charge is base + a $0.002 flat transaction fee, and it lives
@@ -33,12 +33,7 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
   server.registerTool(
     "blockrun_markets",
     {
-      description: `Prediction market + derivatives data via Predexon aggregator. Flat $0.0095/call (every endpoint) — $0.0075 base + $0.002 tx fee.
-
-CANONICAL CROSS-VENUE (Tier 1) — Predexon v2 unified data layer:
-- markets — list canonical market/question containers with cross-venue Predexon IDs
-- outcomes/:predexon_id — resolve a canonical outcome ID to its market context + venue listings
-  Filter with ?venue=polymarket|kalshi|limitless|opinion|predictfun, ?status=, ?category=, ?league=, ?event_id=, ?pagination_key=
+      description: `Prediction market + derivatives data via Predexon aggregator. Flat $0.0075 base per call (every endpoint) plus the gateway's network fee — $0.001 on Base today, none quoted on Solana; the 402 header carries the exact charge (we reserve $0.0095).
 
 POLYMARKET (Tier 1):
 - polymarket/events, polymarket/markets — list events/markets (filter, sort, paginate)
@@ -67,19 +62,14 @@ WALLET IDENTITY & CLUSTERING (Tier 2) — cross-context labels + on-chain relati
 - polymarket/wallet/identities — POST { addresses: [...] } for bulk lookup (up to 200 wallets)
 - polymarket/wallet/:address/cluster — discover wallets connected via on-chain transfers + identity proofs
 
-SPORTS (Tier 1):
-- sports/categories — list available sports categories
-- sports/markets — list sports markets grouped by game (filter ?league=, ?sport_type=, ?status=, ?venue=)
-- sports/markets/:game_id — single sports game with all venue outcomes
-- sports/outcomes/:predexon_id — equivalent sports outcomes across venues for a Predexon ID
+SPORTS — sports/* (categories, markets, markets/:game_id, outcomes/:predexon_id) DEGRADED, do not call: Predexon 500 on every call since 2026-08-04; the gateway releases the payment on that upstream 500. Use markets/search { q: "NBA" } or polymarket/events { search: "NBA" } instead — no live route takes a "league" param.
 
 KALSHI: kalshi/markets, kalshi/trades, kalshi/orderbooks
 LIMITLESS / OPINION / PREDICT.FUN: {platform}/markets, {platform}/orderbooks
 BINANCE FUTURES: binance/candles/:symbol, binance/ticks/:symbol
 
 CROSS-PLATFORM:
-- matching-markets, matching-markets/pairs — equivalent markets across Polymarket+Kalshi
-- markets/search — search across all platforms in one call
+- markets/search — search every venue in one call (search term is "q"). The only canonical-layer route left: markets, markets/listings, outcomes/:id and matching-markets(/pairs) were removed upstream 2026-08-04 and 404 before payment.
 
 REQUEST CONTRACTS:
 - Discover current markets with markets/search (its search term is "q"), then resolve the chosen Polymarket market with polymarket/markets/keyset and condition_id.
@@ -121,7 +111,13 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
           // decline returns here — nothing is sent, and the finally releases the
           // reservation. No-ops when off, sub-threshold, or unsupported by the client.
-          const confirm = await confirmSpend(server, { usd: estimatedCost, label: `markets · ${path}` });
+          // sports/* is reserved and confirmed like any other route: if Predexon
+          // recovers, the call WILL settle $0.0095, and an un-reserved settle is the
+          // worse failure. The label says why the prompt will probably be moot.
+          const confirm = await confirmSpend(server, {
+            usd: estimatedCost,
+            label: isDegradedSportsPath(path) ? `markets · ${path} (degraded upstream — likely fails, usually uncharged)` : `markets · ${path}`,
+          });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           // rawGet/rawPost rather than the SDK's pm()/pmQuery(): those are one-line
           // wrappers over exactly `/v1/pm/${path}` on the same raw methods
@@ -143,8 +139,13 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           gate.release();
         }
       } catch (err) {
+        const message = extractErrorMessage(err);
+        // A sports/* 5xx is the known Predexon outage, not a blip, and the
+        // gateway released the payment — say so instead of "after payment …
+        // try again in a few minutes" (blockrun-mcp#132).
+        const degraded = describeDegradedSportsFailure(path, message);
         return {
-          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
+          content: [{ type: "text", text: degraded ?? formatError(message) }],
           isError: true,
         };
       }

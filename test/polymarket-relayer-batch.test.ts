@@ -10,11 +10,16 @@ import assert from "node:assert/strict";
 let waitResult: { transactionHash?: string } | undefined;
 let txnState: string | undefined;
 let getTransactionThrows = false;
+// When set, the submit itself throws with this message — the SDK's shape for a
+// lost response is `{"error":"connection error"}`, for a rejection
+// `{"error":"request error","status":4xx,...}` (http-helpers/index.js).
+let submitThrows: string | undefined;
 let stateFile: Record<string, unknown> = {};
 const saveStateCalls: Array<Record<string, unknown>> = [];
 
 class FakeRelayClient {
   async executeDepositWalletBatch() {
+    if (submitThrows) throw new Error(submitThrows);
     return {
       transactionID: "batch-1",
       wait: async () => waitResult,
@@ -66,6 +71,7 @@ function reset() {
   waitResult = undefined;
   txnState = undefined;
   getTransactionThrows = false;
+  submitThrows = undefined;
   stateFile = {};
   saveStateCalls.length = 0;
 }
@@ -121,4 +127,56 @@ test("an unreachable relayer after timeout is treated as pending — the conserv
       return true;
     },
   );
+});
+
+// --- Lost submit response (audit cluster F) ---
+//
+// executeDepositWalletBatch signs locally THEN posts. If the relayer accepts
+// the batch but the response is lost (proxy 502/504, reset → the SDK throws
+// `{"error":"connection error"}`), the signature is live for 300s yet nothing
+// was persisted and the error carried no anti-retry advice — the #72.1
+// double-send, still open on the submit-error side.
+
+test("a lost submit response leaves the signed withdrawal TRACKED and says do not retry", async () => {
+  reset();
+  submitThrows = '{"error":"connection error"}';
+  const before = Math.floor(Date.now() / 1000);
+  await assert.rejects(
+    sendWalletBatch(CALLS, DEPOSIT, "Withdraw", { trackPendingWithdraw: true, guidance: "custom guidance here" }),
+    (err: Error) => {
+      assert.match(err.message, /Do NOT retry/);
+      assert.match(err.message, /may still have ACCEPTED/);
+      assert.match(err.message, /connection error/, "the underlying SDK error is preserved");
+      assert.match(err.message, /custom guidance here/);
+      assert.doesNotMatch(err.message, /failed/, "not a revert — 'failed' would fire revert-hint regexes");
+      return true;
+    },
+  );
+  const pending = stateFile.pendingWithdraw as { transactionID: string; deadline: number } | undefined;
+  assert.ok(pending, "the possibly-accepted batch must be tracked");
+  assert.equal(pending.transactionID, "unknown");
+  assert.ok(pending.deadline >= before + 298 && pending.deadline <= before + 302, `deadline ${pending.deadline} ≈ now+300`);
+});
+
+test("a definite 4xx rejection proves nothing was accepted — rethrown raw, guard NOT armed", async () => {
+  reset();
+  submitThrows = '{"error":"request error","status":400,"statusText":"Bad Request","data":{"error":"invalid signature"}}';
+  await assert.rejects(
+    sendWalletBatch(CALLS, DEPOSIT, "Withdraw", { trackPendingWithdraw: true }),
+    (err: Error) => {
+      assert.match(err.message, /invalid signature/);
+      assert.doesNotMatch(err.message, /Do NOT retry/);
+      return true;
+    },
+  );
+  assert.equal(stateFile.pendingWithdraw, undefined, "a rejected batch cannot land — must not block for 5 minutes");
+  assert.equal(saveStateCalls.length, 0);
+});
+
+test("an untracked batch (approvals/wrap) that loses its submit response writes no state", async () => {
+  reset();
+  submitThrows = '{"error":"connection error"}';
+  await assert.rejects(sendWalletBatch(CALLS, DEPOSIT, "Approval batch"), /connection error/);
+  assert.equal(saveStateCalls.length, 0, "only withdrawals are double-send-tracked");
+  assert.equal(stateFile.pendingWithdraw, undefined);
 });

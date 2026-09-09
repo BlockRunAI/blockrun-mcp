@@ -14,7 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { promptCharSize, freeTierTruncationNote } from "../src/tools/chat.js";
-import { FREE_TIER_MAX_PROMPT_CHARS, MODEL_TIERS } from "../src/utils/constants.js";
+import { FREE_TIER_MAX_PROMPT_CHARS, MODEL_TIERS, FREE_CHAT_MODELS } from "../src/utils/constants.js";
 
 const OVER = FREE_TIER_MAX_PROMPT_CHARS + 50_000;
 const UNDER = FREE_TIER_MAX_PROMPT_CHARS - 1;
@@ -32,9 +32,22 @@ test("an oversized prompt on a free model warns, and says how much was lost", ()
   assert.match(note!, /2[0-9]%/); // ~28% discarded
 });
 
-test("every model in the free tier is covered by the warning", () => {
-  for (const m of MODEL_TIERS.free) {
+// The cap was measured on the NVIDIA free path (2026-07-21, both alphabets) and
+// nowhere else. Since 2026-09-08 free[] also routes two $0 models from other
+// vendors (cohere/north-mini-code, poolside/laguna-xs-2.1) whose input handling
+// is unmeasured. The warning stays NVIDIA-only on purpose: asserting "a third of
+// your prompt was dropped" on a path where it may not have been would push
+// agents off a working $0 model onto paid USDC on a false premise — the exact
+// harm the byte-vs-character fix below removed. Extend it only with a probe.
+test("every NVIDIA model in the free tier is covered by the warning; other vendors are unmeasured and silent", () => {
+  const nvidia = MODEL_TIERS.free.filter((m) => m.startsWith("nvidia/"));
+  assert.ok(nvidia.length > 0, "the free tier must still route the measured NVIDIA path");
+  for (const m of nvidia) {
     assert.ok(freeTierTruncationNote(OVER, m), `${m} must be covered`);
+  }
+  for (const m of MODEL_TIERS.free.filter((m) => !m.startsWith("nvidia/"))) {
+    assert.ok(FREE_CHAT_MODELS.has(m), `${m} is routed as free, so it must be in FREE_CHAT_MODELS`);
+    assert.equal(freeTierTruncationNote(OVER, m), null, `${m}: the cap is unmeasured there — do not assert it`);
   }
 });
 

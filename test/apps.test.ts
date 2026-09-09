@@ -86,3 +86,15 @@ test("the order card knows the tools it calls and the wallet panel its actions",
   assert.ok(wallet.includes("blockrun_wallet"), "wallet: tool");
   for (const action of ["status", "chain", "deposit"]) assert.ok(new RegExp(`["\`']${action}["\`']`).test(wallet), `wallet: action ${action}`);
 });
+
+// The card's two-step confirm used to read the notional from the LAST preview
+// while the submitted args read the amount field LIVE — type 50 over a $5
+// quote, skip Re-quote, and "Confirm — sign & submit $5.00" submitted $50. Now
+// an edited amount disables Place until re-quoted, and the card renders the
+// server's worst-fill bound. The bundle is minified but string literals and
+// property names survive verbatim.
+test("the order card refuses to place a stale amount and shows the worst fill", () => {
+  const order = readAppHtml("orderPreview");
+  assert.ok(order.includes("Re-quote first"), "order card: stale-amount guard text");
+  assert.ok(order.includes("worstFillPrice"), "order card: renders the server's worst-fill bound");
+});
