@@ -48,8 +48,22 @@ export function initializeMcpServer(
   // ledger starts unlimited; the cap is in-memory and resets when the (npx-spawned)
   // process restarts, so an operator who wants a hard ceiling should set the env.
   const env = profileArgs?.env ?? process.env;
+  const rawLimit = env.BLOCKRUN_BUDGET_LIMIT;
+  const limit = parseBudgetLimitEnv(rawLimit);
+  // parseBudgetLimitEnv maps anything that is not a finite positive number to
+  // null — and null here means UNLIMITED. That contract is shared with
+  // BLOCKRUN_CONFIRM_THRESHOLD and stays; what must not stay is the silence. An
+  // operator who wrote "5,00", "5 USD", "0" or "-3" believes the hard stop is
+  // on. Say so once, on stderr (the MCP stdio log channel — stdout is the
+  // protocol). Unset or blank is the default, not a misconfiguration.
+  if (rawLimit?.trim() && limit === null) {
+    console.error(
+      `[BlockRun] BLOCKRUN_BUDGET_LIMIT="${rawLimit}" is not a positive USD amount — the spend cap is OFF (unlimited). ` +
+        `Write it as a plain number, e.g. BLOCKRUN_BUDGET_LIMIT=5 or BLOCKRUN_BUDGET_LIMIT=$2.50`,
+    );
+  }
   const budget: BudgetState = {
-    limit: parseBudgetLimitEnv(env.BLOCKRUN_BUDGET_LIMIT),
+    limit,
     spent: 0,
     calls: 0,
     agents: new Map(),

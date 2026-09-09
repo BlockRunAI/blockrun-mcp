@@ -15,7 +15,7 @@ import { solanaPaidPost } from "../utils/solana-402.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -35,8 +35,28 @@ const IMAGE_EXT_MIME: Record<string, string> = {
   webp: "image/webp",
 };
 
+/** A source image or mask, normalized for the gateway. */
+export interface ResolvedImageRef {
+  /** What goes in the request body. */
+  dataUri: string;
+  /**
+   * The REAL filesystem path this data URI was read from — after
+   * fs.realpath, so a symlink is reported as its target — or undefined for a
+   * data: URI or an http(s) URL. Callers surface it wherever a human looks
+   * before the call leaves the machine (the confirmSpend label): the model
+   * names the file, and "edit ~/Pictures/IMG_1234.jpg" must not look exactly
+   * like any other $0.05 edit.
+   */
+  localPath?: string;
+}
+
+/** Data-URI form only; see resolveImageRef for the local path as well. */
 export async function toImageDataUri(ref: string): Promise<string> {
-  if (ref.startsWith("data:image/")) return ref;
+  return (await resolveImageRef(ref)).dataUri;
+}
+
+export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
+  if (ref.startsWith("data:image/")) return { dataUri: ref };
 
   if (/^https?:\/\//i.test(ref)) {
     const ctrl = new AbortController();
@@ -78,21 +98,26 @@ export async function toImageDataUri(ref: string): Promise<string> {
       if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
         throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
       }
-      return `data:${mime};base64,${buffer.toString("base64")}`;
+      return { dataUri: `data:${mime};base64,${buffer.toString("base64")}` };
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  // Treat as a local file path.
+  // Treat as a local file path. Deliberately NOT restricted to cwd or tmpdir —
+  // "edit ~/Downloads/photo.png" from a Desktop session whose cwd is `/` is the
+  // documented use. What we do owe the user is the truth about which file is
+  // about to leave: resolve through realpath so the label carries the target
+  // of a symlink, not whatever innocent name it was given.
   const ext = ref.split(".").pop()?.toLowerCase() ?? "";
   const mime = IMAGE_EXT_MIME[ext];
   if (!mime) throw new Error(`unsupported image extension ".${ext}"; use png/jpg/jpeg/gif/webp`);
-  const buffer = await readFile(ref);
+  const localPath = await realpath(ref);
+  const buffer = await readFile(localPath);
   if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
     throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap; resize or crop first`);
   }
-  return `data:${mime};base64,${buffer.toString("base64")}`;
+  return { dataUri: `data:${mime};base64,${buffer.toString("base64")}`, localPath };
 }
 
 // Base (1024x1024) prices, mirroring the live /v1/images/models catalog.
@@ -321,6 +346,9 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         // consumed at the shared charge site after the spend confirmation.
         let normalizedImage: string | string[] | undefined;
         let normalizedMask: string | undefined;
+        // Real paths of every local file read for this edit (sources, then the
+        // mask), for the confirm label — see resolveImageRef.
+        const localFiles: string[] = [];
 
         // Validate the edit action up front (before estimating/charging).
         if (action === "edit") {
@@ -359,9 +387,15 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             }
           }
           try {
-            const dataUris = await Promise.all(sourceImages.map(toImageDataUri));
+            const resolved = await Promise.all(sourceImages.map(resolveImageRef));
+            const dataUris = resolved.map((r) => r.dataUri);
             normalizedImage = dataUris.length === 1 ? dataUris[0] : dataUris;
-            if (mask) normalizedMask = await toImageDataUri(mask);
+            for (const r of resolved) if (r.localPath) localFiles.push(r.localPath);
+            if (mask) {
+              const m = await resolveImageRef(mask);
+              normalizedMask = m.dataUri;
+              if (m.localPath) localFiles.push(m.localPath);
+            }
           } catch (e) {
             return {
               content: [{ type: "text", text: formatError(`Could not load source image: ${e instanceof Error ? e.message : String(e)}`) }],
@@ -385,9 +419,13 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           // Confirm the spend before charging (elicitation; user can approve
           // once, approve all for the session, or decline to abort). No-ops on
           // clients without elicitation or when disabled via env.
+          // The label names every local file that is about to leave the
+          // machine in the request body — the dialog is the one moment a human
+          // sees the call before the bytes go, and a prompt-injected
+          // "edit ~/Pictures/IMG_1234.jpg" must not read like any other edit.
           const confirm = await confirmSpend(server, {
             usd: estimatedCost,
-            label: `${action === "edit" ? "image edit" : "image"} · ${selectedModel}`,
+            label: `${action === "edit" ? "image edit" : "image"} · ${selectedModel}${localFiles.length ? ` · reads ${localFiles.join(", ")}` : ""}`,
           });
           if (!confirm.ok) {
             return { content: [{ type: "text", text: confirm.reason || "Charge cancelled." }] };

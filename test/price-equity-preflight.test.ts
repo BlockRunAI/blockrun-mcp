@@ -5,6 +5,10 @@
 // says so itself, before the chain guard and before any network call — on the
 // default Solana chain the Base-only guard used to fire first and tell the user
 // to switch chains to pay for a route that cannot succeed.
+//
+// This file pins the WORDING of that answer. The ordering — that the handler
+// returns it before baseOnlyMessage, reserveBudget, confirmSpend and the
+// client — is a handler-level property and lives in test/price-behaviour.test.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { equityNotServedMessage } from "../src/tools/price.js";
