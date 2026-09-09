@@ -109,8 +109,12 @@ export interface SolanaPaidAsyncPostOptions {
   resignIntervalMs?: number;
   /** Maximum reactive re-signs after a completed poll rejects a stale signature. Defaults to SOLANA_ASYNC_MAX_REACTIVE_RESIGNS. */
   maxReactiveResigns?: number;
-  /** Called after the authoritative quote is parsed and before anything is signed. */
-  onQuote?: (quotedUsd: number | null) => void;
+  /**
+   * Called after the authoritative quote is parsed and before anything is
+   * signed. `details` is the decoded 402 (amount, recipient, resource
+   * description) so a caller can check WHAT was quoted, not just how much.
+   */
+  onQuote?: (quotedUsd: number | null, details: ReturnType<typeof extractPaymentDetails>) => void;
 }
 
 type SolanaPaymentContext = {
@@ -190,7 +194,7 @@ export async function solanaPaidPost(
      * without paying — e.g. to re-check the real price against a budget cap when
      * the Solana gateway's marked-up amount exceeds the caller's estimate.
      */
-    onQuote?: (quotedUsd: number | null) => void;
+    onQuote?: (quotedUsd: number | null, details: ReturnType<typeof extractPaymentDetails>) => void;
   },
 ): Promise<SolanaPaidPostResult> {
   // resolveSolanaKey, not the SDK's file-only loader: under
@@ -225,7 +229,7 @@ export async function solanaPaidPost(
   // Hand the caller the REAL quoted price before we sign/pay, so it can re-check
   // the marked-up Solana amount against its budget cap and abort (by throwing)
   // if it would overshoot — the amount is only known now, after the quote.
-  opts?.onQuote?.(context.paidUsd);
+  opts?.onQuote?.(context.paidUsd, context.details);
   const paymentPayload = await signSolanaChallenge(context, url, privateKey);
 
   // Step 2: paid request. The signed SPL transaction embeds a recent blockhash
@@ -308,7 +312,7 @@ export async function solanaPaidAsyncPost(
   if (original.paidUsd === null) {
     throw new PaymentError(`The gateway's Solana quote carried an unreadable amount (${JSON.stringify(original.details.amount)}); refusing to sign it. No charge was made.`);
   }
-  opts.onQuote?.(original.paidUsd);
+  opts.onQuote?.(original.paidUsd, original.details);
 
   // Stamp BEFORE signing: the blockhash is fetched inside the sign call, and a
   // slow submit afterwards must not make the tracked age lag the real one.

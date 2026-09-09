@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { reserveBudget, recordSpending, recordActualSpend, reReserveIfHigher, BudgetExceededError } from "../utils/budget.js";
+import { BudgetExceededError, assertQuoteNearEstimate, reReserveIfHigher, recordActualSpend, recordSpending, reserveBudget } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
@@ -457,7 +457,14 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               // table, so the real quote can exceed what we reserved. Re-reserve
               // the true amount against the cap BEFORE the transfer is signed
               // (mirrors blockrun_video); throwing here aborts before any payment.
-              onQuote: (quotedUsd) => {
+              onQuote: (quotedUsd, quoteDetails) => {
+                // WHAT was quoted before how much — a substituted or repriced
+                // model is refused unsigned (see assertQuoteNearEstimate).
+                assertQuoteNearEstimate(quotedUsd, estimatedCost, {
+                  what: `${selectedModel} image`,
+                  quotedFor: quoteDetails?.resource?.description,
+                  hint: `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`,
+                });
                 gate = reReserveIfHigher(budget, gate, agent_id, estimatedCost, quotedUsd);
                 if (!gate.allowed) {
                   throw new BudgetExceededError(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.`);

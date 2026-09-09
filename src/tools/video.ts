@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -274,6 +274,28 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
   return withTxFee(VIDEO_BASE_PRICE_PER_SECOND[model] * seconds * VIDEO_MARGIN);
 }
 
+/**
+ * Refuse a 402 whose price is far above what the estimator (and the description
+ * the model read) said this call costs. See assertQuoteNearEstimate for the
+ * rule; this adds the one hint that is video-specific today. Verified live
+ * 2026-09-08: sol.blockrun.ai quotes azure/sora-2 as "Seedance 2.0 Pro video
+ * generation (5s)" at $1.135480 against Base's $0.421001.
+ */
+export function assertVideoQuoteSane(
+  quotedUsd: number | null,
+  estimatedCost: number,
+  model: string,
+  chain: "base" | "solana",
+  quotedFor?: string,
+): void {
+  const hint = chain === "solana"
+    ? (model === "azure/sora-2"
+      ? `The Solana gateway is a separate deployment and does not serve azure/sora-2 yet — it quotes Seedance 2.0 in its place. Switch to Base for Sora (blockrun_wallet action:"chain" chain:"base") or pick a Seedance model explicitly.`
+      : `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`)
+    : `Retry on Solana (blockrun_wallet action:"chain" chain:"solana") or pick another model.`;
+  assertQuoteNearEstimate(quotedUsd, estimatedCost, { what: `${model} video`, quotedFor, hint });
+}
+
 export function registerVideoTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_video",
@@ -283,7 +305,7 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). Payment is settled only when upstream returns a finished video — if the job fails or we give up, you are not charged.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
-- azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace.
+- azure/sora-2 (~$0.105/sec, 720p + synced audio, text-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). No image_url / RealFace. Base only for now: the Solana gateway quotes it as Seedance 2.0 at $1.135 and the tool refuses that quote unsigned.
 - xai/grok-imagine-video ($0.05/sec at 480p default, $0.07/sec at 720p; 8s default -> $0.401/clip, 1-15s) — stylized, fast. 480p/720p only.
 - bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
 - bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace and first/last-frame
@@ -497,7 +519,10 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             body,
             {
               pollBudgetMs: SOLANA_VIDEO_TOTAL_BUDGET_MS,
-              onQuote: (quotedUsd) => {
+              onQuote: (quotedUsd, quoteDetails) => {
+                // WHAT was quoted, before how much: a substituted or repriced
+                // model is refused here, unsigned (QuoteMismatchError).
+                assertVideoQuoteSane(quotedUsd, estimatedCost, selectedModel, "solana", quoteDetails?.resource?.description);
                 if (quotedUsd === null || quotedUsd <= estimatedCost) return;
                 gate?.release();
                 gate = reserveBudget(budget, agent_id, quotedUsd);
@@ -577,6 +602,15 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             content: [{ type: "text", text: formatError(`The gateway's 402 quote carried an unreadable amount (${JSON.stringify(details.amount)}). Refusing to sign a payment for an amount that could not be validated — no charge was made. This is a gateway fault; retry, and report it if it persists.`) }],
             isError: true,
           };
+        }
+
+        // WHAT was quoted, before how much. The estimator tracks the live 402 to
+        // within a cent (verify:prices), so a quote far above it is a reprice or
+        // a substituted model — refuse it unsigned rather than re-reserve it.
+        try {
+          assertVideoQuoteSane(settledUsd, estimatedCost, selectedModel, "base", details.resource?.description);
+        } catch (err) {
+          return { content: [{ type: "text", text: formatError(err instanceof Error ? err.message : String(err)) }], isError: true };
         }
 
         // The 402 carries the REAL price; Seedance/Sora are token-priced, so a
