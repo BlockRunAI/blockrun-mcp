@@ -1,12 +1,15 @@
 ---
 name: blockrun-setup
-description: "Use when asked to install, add, configure, or set up the BlockRun MCP server (@blockrun/mcp) in Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI or another MCP client — including first-run wallet creation, funding with USDC, choosing a tool profile, and proving the install works. Also use when a fresh install 'doesn't show up' or a user asks how to pay for calls."
+description: "Use when asked to install, add, configure, or set up the BlockRun MCP server (@blockrun/mcp) in Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, Grok or another MCP client — including first-run wallet creation, funding with USDC, choosing a tool profile, and proving the install works. Also use when a fresh install 'doesn't show up' or a user asks how to pay for calls."
 triggers:
   - "install blockrun"
   - "add blockrun mcp"
   - "set up blockrun"
   - "blockrun setup"
   - "claude mcp add blockrun"
+  - "grok mcp add blockrun"
+  - "blockrun unavailable"
+  - "mcp server timed out"
   - "@blockrun/mcp"
   - "fund my blockrun wallet"
   - "how do I pay for blockrun"
@@ -61,6 +64,24 @@ codex mcp add blockrun --env PATH="$PATH" -- npx -y @blockrun/mcp@latest
 
 For a JSON client with nvm/Homebrew Node, put the absolute `npx` path (`which npx`) in
 `command` — there is no `-e PATH` equivalent there.
+
+**Grok** — raise the startup timeout BEFORE the first run. Grok waits
+`startup_timeout_sec` (default **30**) for the server to answer, and a cold `npx -y` has
+to download this package and its dependencies first: measured 17s on a fast connection,
+42-46s on a slower box. Lose that race and the UI says `blockrun [unavailable]` for an
+install that is merely still downloading. In `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.blockrun]
+command = "npx"
+args = ["-y", "@blockrun/mcp@latest"]
+enabled = true
+startup_timeout_sec = 120
+```
+
+Or sidestep it: `npm install -g @blockrun/mcp@latest` then
+`grok mcp add blockrun -- blockrun-mcp`, which launches an already-installed binary.
+Only the first run is slow either way — npx caches by exact spec.
 
 **Optional flags** (append after `@latest`): `--profile trading|research|media|chat`
 exposes a smaller tool set so the client loads fewer schemas. Omit for all <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools.

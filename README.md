@@ -153,9 +153,42 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 | **Cursor** | 📝 Documented | ✅ | `~/.cursor/mcp.json` — JSON below |
 | **VS Code (Copilot)** | 📝 Documented | ✅ | `code --add-mcp '{"name":"blockrun","command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
 | **Gemini CLI** | 📝 Documented | ❌ | `gemini mcp add -s user blockrun npx -y @blockrun/mcp@latest` |
+| **Grok** | 📝 Documented · see the timeout note | ❌ | `grok mcp add blockrun -- npx -y @blockrun/mcp@latest` — **raise `startup_timeout_sec` first**, below |
 | **Windsurf** | 📝 Documented | ❌ | `~/.codeium/windsurf/mcp_config.json` — JSON below |
 
 Any other MCP client that can spawn a stdio server works the same way: `command: npx`, `args: ["-y", "@blockrun/mcp@latest"]`. With nvm/Homebrew Node on a JSON-configured client, put the absolute path from `which npx` in `command`. Spend-dialog sources and what "proceeds without asking" means: [`docs/spend-confirmation.md`](docs/spend-confirmation.md).
+
+**Grok — raise the startup timeout before you install, or the first run looks broken.**
+Grok waits `startup_timeout_sec` for an MCP server to answer, and it defaults to **30**
+([xAI's MCP docs](https://docs.x.ai/build/features/mcp-servers)). A first `npx -y` run has
+to download this package and its dependency tree before the server can say anything, and
+that is a race: measured cold, with an empty npm cache, it took **17s on a fast connection
+and 42-46s on a slower shared box**. Lose the race and `grok mcp doctor blockrun` says
+`server timed out (no response within 30s)` and the UI shows `blockrun [unavailable]` — an
+install that is working, timing out, and indistinguishable from broken.
+
+Give it room in `~/.grok/config.toml` (or `.grok/config.toml` for one project):
+
+```toml
+[mcp_servers.blockrun]
+command = "npx"
+args = ["-y", "@blockrun/mcp@latest"]
+enabled = true
+startup_timeout_sec = 120
+```
+
+Or skip the cold download entirely, which is faster every run after the first:
+
+```bash
+npm install -g @blockrun/mcp@latest
+grok mcp add blockrun -- blockrun-mcp
+```
+
+Only the FIRST run pays this: npx caches by exact spec, so the next start is warm (~9s
+here). The same trap exists on any client with a startup timeout — if a fresh install
+shows as unavailable and `npx -y @blockrun/mcp@latest` runs fine in a terminal, raise the
+client's timeout or install globally before looking for anything else. Thanks to
+[@0xCheetah1](https://github.com/BlockRunAI/blockrun-mcp/issues/144) for the report.
 
 **OpenClaw:** the published `npx` package was verified end-to-end on 2026.8.2: all 20 tools were projected (19 since the Surf delisting), free calls worked, and paid x402 calls settled. Add a hard session cap while installing:
 
