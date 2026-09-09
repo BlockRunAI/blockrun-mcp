@@ -14,7 +14,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { initializeMcpServer } from "./mcp-handler.js";
 import { warnOnLeakedKeys } from "./utils/key-leak-scanner.js";
 import { installBlockrunMcpUserAgent } from "./utils/user-agent.js";
-import { PROFILES } from "./profiles.js";
+import { PROFILES, knownProfileNames, resolveProfileName } from "./profiles.js";
 import { runSkillsCli } from "./cli/skills.js";
 
 // Read version from package.json so it can never drift from the published version.
@@ -75,8 +75,14 @@ async function checkForUpdate() {
     });
     const data = await resp.json() as { version?: string };
     if (data.version && data.version !== VERSION) {
+      // Everyone who sees this already has the server registered, and
+      // `claude mcp add` refuses a name that exists — so never print that.
+      // Registered with @latest (the documented install) a restart is the whole
+      // upgrade: npx re-resolves the tag on every cold start. Only a pinned
+      // version needs re-registering, and that is remove-then-add.
       console.error(`[BlockRun] Update available: v${VERSION} → v${data.version}`);
-      console.error(`[BlockRun] Run: claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest`);
+      console.error(`[BlockRun] Registered with @latest? Restart your MCP client — npx re-resolves on cold start (stale cache: rm -rf ~/.npm/_npx).`);
+      console.error(`[BlockRun] Pinned to a version? claude mcp remove blockrun -s user, then re-add with @blockrun/mcp@latest. Details: the blockrun-upgrade skill.`);
     }
   } catch {
     // Don't block startup on network issues
@@ -98,6 +104,15 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // resolveTools falls back to "full" for a name it does not know. Say so:
+  // a user who typed `--profile tradng` wanted 9 tools and got 20, and the
+  // "20 tools" startup line alone reads as if the flag was honoured.
+  const requestedProfile = resolveProfileName();
+  if (requestedProfile !== profile) {
+    console.error(
+      `[BlockRun] Unknown profile "${requestedProfile}" — exposing the full tool set instead. Known profiles: ${knownProfileNames().join(", ")}`,
+    );
+  }
   const profileNote = profile === "full"
     ? `${tools.length} tools`
     : `profile "${profile}" — ${tools.length} tools: ${tools.join(", ")}`;

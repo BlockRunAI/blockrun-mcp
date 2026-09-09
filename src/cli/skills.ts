@@ -127,18 +127,27 @@ export function installSkills(opts: InstallOptions): InstallResult {
 
 export interface SkillsArgs {
   cmd: "list" | "install" | "help";
+  /**
+   * True when the user ASKED for help (`skills`, `skills --help`, `skills
+   * install -h`); false when `cmd` is "help" only because the subcommand was
+   * not recognised. Same usage text either way, different exit code.
+   */
+  help: boolean;
   to?: string;
   global: boolean;
   force: boolean;
   only?: string[];
 }
 
-/** Parse everything after the `skills` word. Unknown subcommand → help. */
+/** Parse everything after the `skills` word. Unknown subcommand → help (not requested). */
 export function parseSkillsArgs(argv: string[]): SkillsArgs {
-  const out: SkillsArgs = { cmd: "help", global: false, force: false, only: undefined, to: undefined };
+  const out: SkillsArgs = { cmd: "help", help: false, global: false, force: false, only: undefined, to: undefined };
   const [first, ...rest] = argv;
   if (first === "list" || first === "install") out.cmd = first;
-  else return out;
+  else {
+    out.help = first === undefined || first === "--help" || first === "-h";
+    return out;
+  }
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -154,7 +163,7 @@ export function parseSkillsArgs(argv: string[]): SkillsArgs {
       if (!v || v.startsWith("--")) throw new Error("--only requires a comma-separated list of skill names");
       out.only = splitList(v);
     } else if (a.startsWith("--only=")) out.only = splitList(a.slice("--only=".length));
-    else if (a === "--help" || a === "-h") out.cmd = "help";
+    else if (a === "--help" || a === "-h") { out.cmd = "help"; out.help = true; }
     else throw new Error(`Unknown option for "skills ${first}": ${a}`);
   }
   return out;
@@ -221,8 +230,15 @@ export function runSkillsCli(argv: string[], io: { out: (s: string) => void; err
   }
 
   if (args.cmd === "help") {
-    io.out(skillsUsage());
-    return argv.length === 0 || argv[0] === "--help" || argv[0] === "-h" ? 0 : 2;
+    // Asked for: usage on stdout, exit 0 — `skills install --help && …` in a
+    // setup script must not abort. Not asked for (unknown subcommand): name
+    // the problem on stderr, exit 2.
+    if (args.help) {
+      io.out(skillsUsage());
+      return 0;
+    }
+    io.err(`Unknown skills subcommand: ${argv[0]}\n\n${skillsUsage()}`);
+    return 2;
   }
 
   const skills = listSkills(SKILLS_SOURCE_DIR);

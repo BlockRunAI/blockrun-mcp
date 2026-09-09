@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installSkills, listSkills, parseSkillsArgs, resolveSkillsTarget, SKILLS_SOURCE_DIR } from "../src/cli/skills.js";
+import { installSkills, listSkills, parseSkillsArgs, resolveSkillsTarget, runSkillsCli, SKILLS_SOURCE_DIR } from "../src/cli/skills.js";
 
 function fixture(): { from: string; to: string } {
   const root = mkdtempSync(join(tmpdir(), "br-skills-"));
@@ -79,9 +79,9 @@ test("installSkills refuses a destination inside the source tree", () => {
 });
 
 test("parseSkillsArgs: subcommands, --to, --global, --force, --only", () => {
-  assert.deepEqual(parseSkillsArgs(["list"]), { cmd: "list", force: false, global: false, only: undefined, to: undefined });
-  assert.deepEqual(parseSkillsArgs(["install"]), { cmd: "install", force: false, global: false, only: undefined, to: undefined });
-  assert.deepEqual(parseSkillsArgs(["install", "--global", "--force"]), { cmd: "install", force: true, global: true, only: undefined, to: undefined });
+  assert.deepEqual(parseSkillsArgs(["list"]), { cmd: "list", help: false, force: false, global: false, only: undefined, to: undefined });
+  assert.deepEqual(parseSkillsArgs(["install"]), { cmd: "install", help: false, force: false, global: false, only: undefined, to: undefined });
+  assert.deepEqual(parseSkillsArgs(["install", "--global", "--force"]), { cmd: "install", help: false, force: true, global: true, only: undefined, to: undefined });
   assert.deepEqual(parseSkillsArgs(["install", "--to", "/x/y"]).to, "/x/y");
   assert.deepEqual(parseSkillsArgs(["install", "--to=/x/y"]).to, "/x/y");
   assert.deepEqual(parseSkillsArgs(["install", "--only", "a,b"]).only, ["a", "b"]);
@@ -89,6 +89,72 @@ test("parseSkillsArgs: subcommands, --to, --global, --force, --only", () => {
   assert.equal(parseSkillsArgs([]).cmd, "help");
   assert.equal(parseSkillsArgs(["bogus"]).cmd, "help");
   assert.throws(() => parseSkillsArgs(["install", "--to"]), /--to requires/);
+});
+
+test("parseSkillsArgs tells a help REQUEST apart from an unknown subcommand", () => {
+  // Same cmd ("help", same usage text); different intent, and runSkillsCli
+  // turns that into exit 0 vs exit 2.
+  for (const argv of [[], ["--help"], ["-h"], ["install", "--help"], ["install", "-h"], ["list", "--help"], ["install", "--global", "-h"]]) {
+    const a = parseSkillsArgs(argv);
+    assert.equal(a.cmd, "help", `${argv.join(" ")}: cmd`);
+    assert.equal(a.help, true, `${argv.join(" ")}: is an explicit help request`);
+  }
+  const bogus = parseSkillsArgs(["bogus"]);
+  assert.equal(bogus.cmd, "help");
+  assert.equal(bogus.help, false, "an unknown subcommand is NOT a help request");
+});
+
+// runSkillsCli is the exact function index.ts hands `process.exit`, so these
+// are the exit codes a shell sees. `skills install --help` used to print the
+// usage and exit 2 — the form index.ts's own comment promises works — which
+// aborts any `&&`-chained setup script that probes the command first.
+function capture() {
+  const out: string[] = [];
+  const err: string[] = [];
+  return { io: { out: (s: string) => { out.push(s); }, err: (s: string) => { err.push(s); } }, out, err };
+}
+
+test("runSkillsCli: an explicit help request exits 0 with the usage on stdout, wherever the flag sits", () => {
+  for (const argv of [[], ["--help"], ["-h"], ["install", "--help"], ["list", "-h"], ["install", "--global", "--help"]]) {
+    const c = capture();
+    const code = runSkillsCli(argv, c.io);
+    assert.equal(code, 0, `skills ${argv.join(" ")}: exit code`);
+    assert.match(c.out.join(""), /Usage:/, `skills ${argv.join(" ")}: usage on stdout`);
+    assert.equal(c.err.join(""), "", `skills ${argv.join(" ")}: nothing on stderr`);
+  }
+});
+
+test("runSkillsCli: an unknown subcommand exits 2 and names it on stderr", () => {
+  const c = capture();
+  const code = runSkillsCli(["bogus"], c.io);
+  assert.equal(code, 2);
+  assert.match(c.err.join(""), /Unknown skills subcommand: bogus/);
+  assert.match(c.err.join(""), /Usage:/, "the usage follows the complaint");
+  assert.equal(c.out.join(""), "", "nothing on stdout for an error");
+});
+
+test("runSkillsCli: a bad option still exits 2 via the parse error", () => {
+  const c = capture();
+  assert.equal(runSkillsCli(["install", "--to"], c.io), 2);
+  assert.match(c.err.join(""), /--to requires/);
+});
+
+test("runSkillsCli: `list` exits 0 and prints the shipped skills", () => {
+  const c = capture();
+  assert.equal(runSkillsCli(["list"], c.io), 0);
+  assert.match(c.out.join(""), /blockrun-setup/);
+});
+
+test("runSkillsCli: `install --to <tmp>` exits 0 and copies the skills", () => {
+  const to = mkdtempSync(join(tmpdir(), "br-skills-cli-"));
+  try {
+    const c = capture();
+    assert.equal(runSkillsCli(["install", "--to", to], c.io), 0);
+    assert.ok(existsSync(join(to, "blockrun", "SKILL.md")));
+    assert.match(c.out.join(""), /installed/);
+  } finally {
+    rmSync(to, { recursive: true, force: true });
+  }
 });
 
 test("resolveSkillsTarget: project .claude/skills by default, ~/.claude/skills with --global, --to wins", () => {
