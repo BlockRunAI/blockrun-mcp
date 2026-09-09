@@ -358,6 +358,7 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
   }
 
   const geo = await geoblockLine();
+  const boundedApprovalUsd = getBoundedApprovalsUsd();
   const ready = deployed && balance > 0 && !approvalsPending && credsReady;
 
   const lines = [
@@ -383,7 +384,26 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
           ``,
           `   ${missing.length} approval(s) needed. This authorizes Polymarket's exchange`,
           `   contracts to settle YOUR signed orders from the deposit wallet (gasless`,
-          `   batch via the relayer). Re-run action:"setup" with confirm:true to sign.`,
+          `   batch via the relayer).`,
+          // Say the SIZE of the grant, not only its purpose. The default is an
+          // unlimited pUSD allowance to four spenders plus all-or-nothing
+          // ERC-1155 operator rights to five — standard for Polymarket, and
+          // exactly the kind of thing to state BEFORE the signature rather than
+          // after. POLYMARKET_BOUNDED_APPROVALS has existed all along; nothing
+          // surfaced it at the moment of consent.
+          ...(boundedApprovalUsd === null
+            ? [
+                `   Amount: UNLIMITED pUSD allowance (the Polymarket default) to the four`,
+                `   collateral spenders, plus operator rights on your outcome tokens to five`,
+                `   contracts. Set POLYMARKET_BOUNDED_APPROVALS=<usd> to cap the pUSD side`,
+                `   instead (the ERC-1155 operator grant is all-or-nothing either way).`,
+              ]
+            : [
+                `   Amount: pUSD allowance capped at $${boundedApprovalUsd.toFixed(2)} per spender`,
+                `   (POLYMARKET_BOUNDED_APPROVALS), plus operator rights on your outcome`,
+                `   tokens, which are all-or-nothing.`,
+              ]),
+          `   Re-run action:"setup" with confirm:true to sign.`,
         ]
       : []),
     ...(approvalsUnverified
