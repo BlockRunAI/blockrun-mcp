@@ -67,7 +67,7 @@ blockrun_wallet(action="status")
 
 Crypto, FX and commodity quotes cost **nothing** — `blockrun_price` is free for those
 categories (`stocks`/`usstock` quotes are not served since 2026-09-05 — the gateway 501s before payment; only the ticker catalog works). Use them liberally.
-(`blockrun_surf`, which used to charge $0.0085 for the same quote, is retired — the gateway 410s every Surf path since 2026-09-06 and the tool returns a free notice.)
+(`blockrun_surf`, which used to charge $0.0085 for the same quote, was removed in 0.49.0 — the gateway 410s every Surf path since 2026-09-06.)
 
 ```python
 # Single price
@@ -209,7 +209,6 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |
 | `blockrun_exa` (search) | $0.0110 | deep research (`contents`: $0.002/URL + $0.001) |
-| `blockrun_surf` | FREE (retired) | returns a retirement notice — gateway 410 on every Surf path since 2026-09-06; use price / defi / markets / dex instead |
 | `blockrun_speech` | $0.0535/1k chars | TTS |
 | `blockrun_image` | $0.01675–0.106 | image generation |
 | `blockrun_music` | $0.1585 | music tracks |

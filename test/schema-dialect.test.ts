@@ -27,7 +27,7 @@ async function listTools(argv: string[]) {
 
 test("no tool advertises a $schema dialect header", async () => {
   const tools = await listTools([]);
-  assert.equal(tools.length, 20);
+  assert.equal(tools.length, 19);
   const offenders = tools
     .filter((t) => "$schema" in (t.inputSchema as Record<string, unknown>))
     .map((t) => t.name);

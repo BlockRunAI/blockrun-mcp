@@ -1,11 +1,11 @@
 // src/utils/path-safety.ts
 //
-// Guards for the path-based passthrough tools (rpc, surf, modal, phone, exa,
+// Guards for the path-based passthrough tools (rpc, modal, phone, exa,
 // search, defi, markets). They build a gateway endpoint by concatenating a
 // caller-supplied slug/path onto a fixed namespace prefix, then hand the string
 // to fetch(). The WHATWG URL parser collapses dot-segments BEFORE the request is
 // sent, so a `..` segment escapes the namespace — e.g.
-//   `/v1/surf/` + `../../v1/modal/sandbox/create` -> `/v1/modal/sandbox/create`
+//   `/v1/exa/` + `../../v1/modal/sandbox/create` -> `/v1/modal/sandbox/create`
 // which defeats the per-tool budget pre-check and profile scoping. These helpers
 // reject the traversal shapes while still allowing unknown-but-wellformed slugs.
 
@@ -26,10 +26,11 @@
  * parsing — so `..<TAB>` is not a `..` segment to a naive equality check, but IS
  * one by the time fetch() resolves it. That gap was exploitable:
  *
- *   blockrun_surf({ path: "..\t/phone/numbers/buy" })
+ *   blockrun_exa({ path: "..\t/phone/numbers/buy" })   (found on blockrun_surf,
+ *                                                       retired 2026-09-06)
  *     -> guard sees the segment "..\t", not "..", and passes
  *     -> parser strips the tab -> /api/v1/phone/numbers/buy
- *     -> reserved $0.0095 (surf's price), charged $5.00
+ *     -> reserved the tool's own price, charged $5.00
  *
  * A 526x under-reserve that also escapes profile scoping (a research-profile
  * install could buy phone numbers). Verified: all of `..\t/`, `.\t./`, `..\n/`,
@@ -45,8 +46,8 @@ export function hasPathTraversal(path: string): boolean {
   // makes decodeURIComponent throw, the catch falls back to the raw string, and
   // the later strip leaves the literal segment "%2e%2e" — which is not ".." to
   // this check, but IS to the parser once it has deleted the same tab. Probed
-  // live: blockrun_surf path:"%<TAB>2e%<TAB>2e/phone/numbers/buy" resolves to
-  // /api/v1/phone/numbers/buy and quotes $5.001 against surf's $0.0095 reserve,
+  // live: blockrun_surf (retired 2026-09-06) path:"%<TAB>2e%<TAB>2e/phone/numbers/buy" resolved to
+  // /api/v1/phone/numbers/buy and quoted $5.001 against its $0.0095 reserve,
   // and escapes profile scoping on the way. Each transformation was tested
   // alone and passed; only the composition was broken.
   const asSent = path.replace(/[\t\n\r]/g, "");
@@ -65,10 +66,10 @@ export function hasPathTraversal(path: string): boolean {
  * per-endpoint price tables key on the bare route, but the gateway router
  * ignores a trailing `?query`, a trailing slash, or casing when matching — so
  * classifying the raw slug lets an expensive route (e.g. the $5
- * `phone/numbers/buy`, or a $0.02 surf tier) be mispriced as the cheap default
+ * `phone/numbers/buy`, or a $0.02 tier) be mispriced as the cheap default
  * while the gateway still charges full price, defeating the budget pre-check and
  * under-recording spend. Callers still send the original slug, so a legitimate
- * query string (e.g. surf GET params in the path) is preserved.
+ * query string (e.g. GET params in the path) is preserved.
  *
  * CLASSIFY THE ROUTE THAT WILL BE SERVED, NOT THE STRING THE CALLER TYPED. Two
  * transformations sit between them, and this helper shipped doing neither while

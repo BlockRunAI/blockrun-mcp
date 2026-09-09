@@ -7,7 +7,7 @@ description: |
   question, how the wallet works, or how to make a first call for free.
   TOOLS: blockrun_chat, blockrun_image, blockrun_video, blockrun_music, blockrun_speech,
   blockrun_search, blockrun_exa, blockrun_markets, blockrun_polymarket_read, blockrun_polymarket,
-  blockrun_surf, blockrun_price, blockrun_dex, blockrun_defi, blockrun_rpc, blockrun_phone,
+  blockrun_price, blockrun_dex, blockrun_defi, blockrun_rpc, blockrun_phone,
   blockrun_realface, blockrun_modal, blockrun_models, blockrun_wallet.
   TRIGGERS: blockrun, x402, use grok, use gpt, use deepseek, compare models, generate image,
   generate video, generate music, text to speech, web search, news search, prediction market,
@@ -68,7 +68,7 @@ digits — an unmarked number is invisible to that check, which is exactly how t
 
 ## Getting a first call working
 
-**Free, no wallet, no key.** <!-- br:models.free -->7<!-- /br:models.free --> open-weight
+**Free, no wallet, no key.** <!-- br:models.free -->6<!-- /br:models.free --> open-weight
 chat models cost nothing. Use `blockrun_chat` with `mode: "free"` — the parameter is `mode`,
 not `routing`, and an unrecognised key is silently dropped, which lands you on the paid
 `balanced` tier instead. Calling the HTTP API directly, a free model needs no wallet and no
@@ -111,7 +111,6 @@ Deeper wallet, budget and x402 mechanics — including calling the HTTP API dire
 | Token / FX / commodity price | `blockrun_price` | Crypto, FX and commodities are free |
 | DEX pairs and liquidity | `blockrun_dex` | Free |
 | DeFi TVL, yields | `blockrun_defi` | |
-| On-chain SQL, wallet labels, social mindshare | `blockrun_surf` | The deep crypto tool |
 | Raw JSON-RPC against a chain | `blockrun_rpc` | <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, one gateway |
 | Phone lookup, buy a number, make an AI call | `blockrun_phone` | Buy the number first |
 | Run code in a remote container / on a GPU | `blockrun_modal` | Prefer local for normal repo work |
@@ -119,7 +118,9 @@ Deeper wallet, budget and x402 mechanics — including calling the HTTP API dire
 | Balance, funding, spend caps | `blockrun_wallet` | |
 
 The crypto tools overlap heavily. Prefer the free ones (`blockrun_price`, `blockrun_dex`) when
-they already answer the question, and reach for `blockrun_surf` only when they do not.
+they already answer the question, and reach for `blockrun_defi` or `blockrun_markets` only when
+they do not. On-chain SQL, wallet labels and social mindshare came from `blockrun_surf`, which
+was removed in 0.49.0 — the gateway retired Surf on 2026-09-06 and there is no replacement yet.
 
 ## Picking a chat model
 

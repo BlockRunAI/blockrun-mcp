@@ -24,7 +24,6 @@ export type ToolName =
   | "dex"
   | "modal"
   | "phone"
-  | "surf"
   | "rpc"
   | "defi"
   | "polymarket_read"
@@ -35,7 +34,7 @@ export type ToolName =
 // real ToolName (catches typos).
 export const ALL_TOOLS = [
   "wallet", "chat", "models", "image", "music", "speech", "video", "realface",
-  "search", "exa", "markets", "price", "dex", "modal", "phone", "surf", "rpc", "defi",
+  "search", "exa", "markets", "price", "dex", "modal", "phone", "rpc", "defi",
   "polymarket_read", "polymarket",
 ] as const satisfies readonly ToolName[];
 
@@ -57,10 +56,10 @@ export const PROFILES: Record<string, ToolName[] | "all"> = {
   // Markets & on-chain data: prediction markets (data + Polymarket trading),
   // realtime prices, DEX/CEX data, DeFi metrics, and raw RPC, plus the wallet
   // for balance/funding.
-  trading: ["wallet", "price", "dex", "markets", "surf", "defi", "rpc", "polymarket_read", "polymarket"],
+  trading: ["wallet", "price", "dex", "markets", "defi", "rpc", "polymarket_read", "polymarket"],
   // Web research & analysis: live search, neural search, Surf's news/SQL,
   // and chat for synthesis, plus wallet and the model catalogue.
-  research: ["wallet", "models", "chat", "search", "exa", "surf"],
+  research: ["wallet", "models", "chat", "search", "exa"],
   // Minimal LLM gateway: just chat + model discovery + wallet.
   chat: ["wallet", "models", "chat"],
 };

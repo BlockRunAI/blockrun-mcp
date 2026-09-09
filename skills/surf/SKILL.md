@@ -1,6 +1,6 @@
 ---
 name: surf
-description: "Surf (asksurf.ai) is RETIRED on BlockRun — the gateway has answered every /v1/surf/* path with HTTP 410 endpoint_retired since 2026-09-06, and blockrun_surf returns that notice free of charge. Use this skill when the user asks for Surf, asksurf, or the crypto data Surf used to serve — token prices, on-chain SQL, CEX order books, wallet labels/net worth, social mindshare, news, unified search — so the request is routed to the tool that serves it now (blockrun_price, blockrun_dex, blockrun_defi, blockrun_markets, blockrun_rpc) or told honestly that nothing on BlockRun serves it yet."
+description: "Surf (asksurf.ai) is RETIRED on BlockRun and the blockrun_surf tool was REMOVED in 0.49.0 — the gateway has answered every /v1/surf/* path with HTTP 410 endpoint_retired since 2026-09-06. Use this skill to route a former Surf question (on-chain SQL, wallet labels and net worth, CEX order books, social mindshare, news) to the tool that still serves it, and to say plainly what has no replacement yet."
 triggers:
   - "surf"
   - "asksurf"
@@ -50,11 +50,12 @@ Verified live 2026-09-08 with an unauthenticated GET (a 410 is free to fetch).
 `sol.blockrun.ai` answers 404 on the same paths, and `/api/openapi` no longer
 lists any Surf route. **No 402 is ever issued, so no payment can be made.**
 
-`blockrun_surf` stays registered so existing configs and the `trading` /
-`research` profiles keep working, but every call returns the retirement notice
-**before** any budget is reserved or a spend-confirmation dialog is shown.
-Nothing is charged. Do not retry it, and do not tell the user it is a temporary
-outage — it is not.
+`blockrun_surf` was **removed from the server in 0.49.0** and is no longer one of
+the <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools: a tool that can only
+return an error is not worth the schema every agent carries on every turn. An
+MCP client will answer an unknown-tool error if a config still names it. Nothing
+can be charged either way. Do not describe this as a temporary outage — it is
+not; route the question with the table below.
 
 ## Where each former Surf capability lives now
 
@@ -107,7 +108,7 @@ blockrun_rpc({ network: "ethereum", method: "eth_getBalance", params: ["0xWHALE"
 ```
 
 Cross-chain labels (CEX / MEV / bridge) and a net-worth time series are not
-available on BlockRun right now — tell the user that, do not call `blockrun_surf`.
+available on BlockRun right now — tell the user that. `blockrun_surf` no longer exists.
 
 ## Reference
 

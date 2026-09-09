@@ -53,22 +53,24 @@ sports failure comes from the release branch, so the wording changes for nobody;
 it would have been wrong on exactly the day Predexon recovers and a settle-side
 error follows.
 
-**Surf is retired, and the tool says so before the wallet hears about it.** The
-gateway has answered every `/v1/surf/*` path with HTTP 410 `endpoint_retired`
-since 2026-09-06 (`retired_on` in the body; `sol.blockrun.ai` 404s; `/api/openapi`
-lists no Surf route). No 402 is ever issued, so no payment could have been made,
-but the tool still reserved $0.0095 and — with `BLOCKRUN_CONFIRM_SPEND=on` —
-asked the user to approve a charge for a route that cannot succeed, then let the
-SDK reduce the gateway's dated, reasoned notice to `API error: 410 — API request
-failed`. `blockrun_surf` now returns the retirement, the date, that nothing was
-charged, and the gateway's own alternatives mapped to tools (`blockrun_price`,
-`blockrun_defi`, `blockrun_markets`, `blockrun_dex`, `blockrun_rpc`) before any
-budget is reserved. It stays registered so the tool count and the `trading` /
-`research` profiles are stable, with a description a quarter the size of the
-catalog pitch it replaces. README, the surf skill (now a map from each former
-Surf capability to where it lives — and an honest list of what has no BlockRun
-source yet: on-chain SQL, cross-chain wallet labels, CEX books, social), the
-crypto-data, gentech and debug skills stop selling 83 endpoints at $0.0095.
+**Surf is gone, and so is `blockrun_surf`.** The gateway has answered every
+`/v1/surf/*` path with HTTP 410 `endpoint_retired` since 2026-09-06 (`retired_on`
+in the body; `sol.blockrun.ai` 404s; `/api/openapi` lists no Surf route). No 402
+is ever issued, so no payment could have been made — but the tool still reserved
+$0.0095 and, with `BLOCKRUN_CONFIRM_SPEND=on`, asked the user to approve a charge
+for a route that cannot succeed, while the SDK reduced the gateway's dated,
+reasoned notice to `API error: 410 — API request failed`. This release first made
+the tool answer with the retirement before any reservation, and then removed it:
+a tool that can only return an error is not worth the schema every agent carries
+on every turn, and the published brand artifact has said 19 tools since the
+delisting. The server now ships **19 tools**, the `trading` profile 8 and
+`research` 5. Former Surf questions route to `blockrun_price`, `blockrun_defi`,
+`blockrun_markets`, `blockrun_dex` and `blockrun_rpc`; the `surf` skill is now a
+map from each former endpoint to its replacement, and says plainly what has none
+yet (on-chain SQL, cross-chain wallet labels, CEX books, social mindshare).
+README, the crypto-data, gentech, rpc, blockrun and debug skills stop selling 83
+endpoints at $0.0095. A config that still names the tool gets an unknown-tool
+error from its MCP client; nothing can be charged either way.
 
 **Prices say base plus fee, once, everywhere.** `blockrun_markets`, `blockrun_exa`
 and `blockrun_defi` hand-typed a "charged" figure in their descriptions that was

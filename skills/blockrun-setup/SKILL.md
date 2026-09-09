@@ -63,7 +63,7 @@ For a JSON client with nvm/Homebrew Node, put the absolute `npx` path (`which np
 `command` — there is no `-e PATH` equivalent there.
 
 **Optional flags** (append after `@latest`): `--profile trading|research|media|chat`
-exposes a smaller tool set so the client loads fewer schemas. Omit for all 20 tools.
+exposes a smaller tool set so the client loads fewer schemas. Omit for all <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools.
 
 **Optional env** (`-e KEY=value` on Claude Code, `"env": {}` in JSON):
 `BLOCKRUN_CONFIRM_SPEND=on` asks before each paid call on clients that support MCP

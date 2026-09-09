@@ -26,7 +26,7 @@ triggers:
 |---|---|
 | "What's ETH trading at?" | `blockrun_price` (free) |
 | "PEPE/WETH pool liquidity?" | `blockrun_dex` (free) |
-| "What's this wallet labeled as / holding?" | `blockrun_surf` |
+| "What's this wallet holding?" | `blockrun_rpc` (labels: no tool since Surf was retired 2026-09-06) |
 | "Call `balanceOf(0x...)` on this ERC-20" | **`blockrun_rpc`** |
 | "Latest block / tx receipt / event logs / gas price" | **`blockrun_rpc`** |
 | "Solana account info / slot / signatures" | **`blockrun_rpc`** |

@@ -201,15 +201,12 @@ const CASES: Array<{ tool: string; mod: string; register: string; args: Record<s
   // above still holds price.ts to the reserve+confirm shape, so re-adding this
   // row is all it takes when the equity route returns:
   //   { tool: "blockrun_price", mod: "price", register: "registerPriceTool", args: { action: "price", category: "stocks", symbol: "AAPL", market: "us" } },
-  // blockrun_surf has no reachable paid path either: Surf was retired upstream on
-  // 2026-09-06 (every /v1/surf/* path answers 410 endpoint_retired, no 402 is
-  // ever issued), and the tool returns the retirement notice BEFORE
-  // reserveBudget/confirmSpend. That ordering — no reservation, no dialog, no
-  // network — is proved at handler level in test/surf-retired.test.ts. The
-  // static guard above still holds surf.ts to the reserve+confirm shape, so
-  // re-adding this row is all it takes if the gateway revives the namespace (or
-  // ships its replacement vendor under the same tool):
-  //   { tool: "blockrun_surf", mod: "surf", register: "registerSurfTool", args: { path: "market/price", params: { symbol: "ETH" } } },
+  // blockrun_surf is not listed because the TOOL is gone: Surf was retired
+  // upstream on 2026-09-06 (every /v1/surf/* path answers 410 endpoint_retired,
+  // no 402 is ever issued), 0.48.1 made it answer with the notice, and 0.49.0
+  // dropped it — a tool that can only error is not worth the schema every agent
+  // carries on every turn. If the gateway ships a replacement vendor under a new
+  // tool, that tool gets a row here like any other paid surface.
   { tool: "blockrun_search", mod: "search", register: "registerSearchTool", args: { body: { query: "fed decision" } } },
   { tool: "blockrun_music", mod: "music", register: "registerMusicTool", args: { prompt: "lofi", instrumental: true, model: "minimax/music-2.5+" } },
   { tool: "blockrun_speech", mod: "speech", register: "registerSpeechTool", args: { action: "speak", input: "hello", model: "elevenlabs/flash-v2.5", response_format: "mp3" } },

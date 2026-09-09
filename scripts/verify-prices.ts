@@ -11,7 +11,8 @@
 // silent, and by construction it appears in production, not in CI.
 //
 // This has already gone wrong three times in the same direction:
-//   1. stale Surf tiers after the gateway went flat,
+//   1. stale Surf tiers after the gateway went flat (Surf itself is gone since
+//      2026-09-06 — kept in this list because the defect class is not),
 //   2. the 402 body's `price` (the BASE) mistaken for what x402 charges,
 //   3. round() instead of the gateway's ceil(), one micro short wherever a
 //      x1.05 margin drifts in float.
@@ -25,7 +26,6 @@
 // as "free" rather than raising. Hence the explicit check below.
 import { estimateModalCost } from "../src/tools/modal.js";
 import { estimatePhoneCost } from "../src/tools/phone.js";
-import { estimateSurfCost, SURF_PRICE_USD } from "../src/tools/surf.js";
 import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateCost as estimateImageCost } from "../src/tools/image.js";
 import { estimateExaCost } from "../src/tools/exa.js";
@@ -97,10 +97,6 @@ function product(description: string | undefined): string | undefined {
 
 const PROBES: Probe[] = [
   // Flat-rate routes.
-  { label: "surf/market/price", path: "surf/market/price?symbol=BTC", expected: estimateSurfCost("market/price") },
-  { label: "surf/wallet/detail", path: "surf/wallet/detail?address=0x0000000000000000000000000000000000000000", expected: estimateSurfCost("wallet/detail") },
-  // The former T3: on-chain SQL used to cost more. It must stay flat.
-  { label: "surf/onchain/sql", path: "surf/onchain/sql", body: { sql: "SELECT 1" }, expected: SURF_PRICE_USD },
   { label: "pm/polymarket/markets", path: "pm/polymarket/markets", expected: MARKETS_PRICE_USD },
   { label: "pm/kalshi/markets", path: "pm/kalshi/markets", expected: MARKETS_PRICE_USD },
   { label: "pm/markets/search", path: "pm/markets/search?q=election", expected: MARKETS_PRICE_USD },

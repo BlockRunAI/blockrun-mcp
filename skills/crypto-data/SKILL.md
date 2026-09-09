@@ -51,7 +51,7 @@ triggers:
 
 Four live tools cover crypto data and they overlap. **Pick by cost first** — two of them are free, and paying for a quote you could get for nothing is the most common mistake here.
 
-A fifth, `blockrun_surf`, is **retired**: the gateway has answered every Surf path with HTTP 410 since 2026-09-06, and the tool returns that notice without reserving budget or asking the wallet to sign. Do not call it for data; the [`surf` skill](../surf/SKILL.md) maps each former Surf capability to where it lives now — and lists the ones (on-chain SQL, cross-chain wallet labels, social mindshare, CEX order books) that have no BlockRun source yet.
+A fifth tool, `blockrun_surf`, was **removed in 0.49.0**: the gateway has answered every Surf path with HTTP 410 since 2026-09-06. Do not name it; the [`surf` skill](../surf/SKILL.md) maps each former Surf capability to where it lives now — and lists the ones (on-chain SQL, cross-chain wallet labels, social mindshare, CEX order books) that have no BlockRun source yet.
 
 ## Route by cost — check this before calling anything
 
@@ -71,7 +71,7 @@ A fifth, `blockrun_surf`, is **retired**: the gateway has answered every Surf pa
 
 Every price below is what x402 actually **charges on Base** (the base plus the gateway's $0.001 flat fee), verified against live `payment-required` headers — not the base you may see in a 402 body. The Solana gateway quotes the base alone; the account rail charges no fee.
 
-**The rule:** a plain crypto price or a DEX pair is free. When the question needs something the four live tools do not have — labels, SQL, social, news, unlocks — tell the user BlockRun does not serve it right now rather than calling `blockrun_surf`, which only returns the retirement notice.
+**The rule:** a plain crypto price or a DEX pair is free. When the question needs something the four live tools do not have — labels, SQL, social, news, unlocks — tell the user BlockRun does not serve it right now. The tool that used to (`blockrun_surf`) was removed in 0.49.0.
 
 **Prediction markets go to `blockrun_markets`** (Predexon): Polymarket, Kalshi, Limitless, Opinion and Predict.Fun, plus wallet clustering, smart money and UMA. For sports odds use `markets/search` with `{ q: "NBA" }` or `polymarket/events` with `{ search: "NBA" }` — the dedicated `sports/*` routes are degraded upstream, and the bare `markets` route with a `league` filter was removed on 2026-08-04 and 404s. Route odds, positions and market history to [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md).
 
@@ -124,13 +124,9 @@ blockrun_defi({ path: "yields" })                   // big payload — filter af
 blockrun_defi({ path: "prices/coingecko:ethereum" })
 ```
 
-## blockrun_surf — retired 2026-09-06
+## blockrun_surf — removed 2026-09-06 (tool dropped in 0.49.0)
 
-The gateway answers every `/v1/surf/*` path with `410 endpoint_retired` (verified live 2026-09-08; `sol.blockrun.ai` 404s; `/api/openapi` lists no Surf route). No 402 is issued, so nothing can be charged, and the tool says so before any budget is reserved. What Surf used to carry — on-chain SQL, 100M+ wallet labels, social/CT intelligence, news, tokenomics, liquidations, ETF flows, VC portfolios — has **no BlockRun source yet**; the gateway says a replacement vendor is pending under `/api/v1/`. The [`surf` skill](../surf/SKILL.md) maps each former capability to the live tool that covers it, where one exists.
-
-```ts
-blockrun_surf({ path: "anything" })   // → "Error: blockrun_surf is retired … 410 … nothing was charged" — do not call it
-```
+The gateway answers every `/v1/surf/*` path with `410 endpoint_retired` (verified live 2026-09-08; `sol.blockrun.ai` 404s; `/api/openapi` lists no Surf route), so the tool was removed from the server rather than left to return an error. It is not one of the <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools. Route former Surf questions to `blockrun_price`, `blockrun_dex`, `blockrun_defi`, `blockrun_markets` or `blockrun_rpc`; see [`skills/surf/SKILL.md`](../surf/SKILL.md) for the endpoint-by-endpoint map and for what has no replacement.
 
 ## blockrun_rpc — raw chain access
 
@@ -148,7 +144,7 @@ blockrun_rpc({ network: "base", method: "eth_blockNumber", params: [] })
 blockrun_price({ action: "price", category: "crypto", symbol: "BTC-USD" })   // FREE
 ```
 
-Not `blockrun_surf` — it is retired and only returns a notice; and before 2026-09-06 it charged $0.0085 for an answer you could get free.
+Not `blockrun_surf` — it no longer exists (removed in 0.49.0); before 2026-09-06 it charged $0.0085 for an answer you can get free.
 
 ### 2. "Is this token legit?" ← compound, mostly free
 
