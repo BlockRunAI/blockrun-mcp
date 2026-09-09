@@ -61,7 +61,8 @@ export const BASE_RPC_URLS = [
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
 //   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro, gemini-2.5-flash,
 //   gemini-2.5-flash-lite — all 1M context
-// DeepSeek (3): deepseek-v4-pro ($0.435/$0.87, 1M, reasoning + coding),
+// DeepSeek (3): deepseek-v4-pro ($1.32/$3.96, 1M, reasoning + coding;
+//   repriced by the gateway and re-probed 2026-09-02),
 //   deepseek-chat, deepseek-reasoner ($0.14/$0.28 on Base since DeepSeek's
 //   2026-08-07 cut; sol still quotes $0.2/$0.4 — see the drift note above)
 // Moonshot (1): kimi-k3 ($3/$15, 1M, vision + reasoning + coding)
@@ -213,7 +214,7 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "zai/glm-5.1": { input: 1.4, output: 4.4 },
   "zai/glm-5-turbo": { input: 1.2, output: 4 },
   "zai/glm-5": { input: 1, output: 3.2 },
-  "deepseek/deepseek-v4-pro": { input: 0.435, output: 0.87 },
+  "deepseek/deepseek-v4-pro": { input: 1.32, output: 3.96 },
   "deepseek/deepseek-chat": { input: 0.14, output: 0.28 },
   "deepseek/deepseek-reasoner": { input: 0.14, output: 0.28 },
   "minimax/minimax-m3": { input: 0.3, output: 1.2 },
@@ -381,4 +382,3 @@ export const BASE_TOKENS: Record<string, string> = {
   DAI: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
   cbETH: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
 };
-

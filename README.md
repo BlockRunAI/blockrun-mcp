@@ -52,7 +52,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->20<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
 
 You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana or Base. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai) and bills prepaid credit at exact usage — for teams that can't hand a wallet to an agent. Same 20 tools either way. MIT licensed.
 
@@ -148,7 +148,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 |---|---|---|---|
 | **Claude Code** | ✅ Verified · 2.1.251 · 2026-08-30 | ✅ | `claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest` |
 | **Codex CLI** | ✅ Verified · 0.142.5 · 2026-08-30 | ❌ | `codex mcp add blockrun -- npx -y @blockrun/mcp@latest` |
-| **OpenClaw** | 🟡 In use · 2026.5.2 (from a local build; the `npx` form below is not yet verified) | — not documented | `openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
+| **OpenClaw** | ✅ Verified · 2026.8.2 · 2026-09-02 | ⚠️ surface-dependent; see below | `openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
 | **Claude Desktop** | 📝 Documented | ⚠️ renders; OK reports *cancel* → proceeds | `claude_desktop_config.json` — JSON below |
 | **Cursor** | 📝 Documented | ✅ | `~/.cursor/mcp.json` — JSON below |
 | **VS Code (Copilot)** | 📝 Documented | ✅ | `code --add-mcp '{"name":"blockrun","command":"npx","args":["-y","@blockrun/mcp@latest"]}'` |
@@ -156,6 +156,15 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 | **Windsurf** | 📝 Documented | ❌ | `~/.codeium/windsurf/mcp_config.json` — JSON below |
 
 Any other MCP client that can spawn a stdio server works the same way: `command: npx`, `args: ["-y", "@blockrun/mcp@latest"]`. With nvm/Homebrew Node on a JSON-configured client, put the absolute path from `which npx` in `command`. Spend-dialog sources and what "proceeds without asking" means: [`docs/spend-confirmation.md`](docs/spend-confirmation.md).
+
+**OpenClaw:** the published `npx` package was verified end-to-end on 2026.8.2: all 20 tools were projected, free calls worked, and paid x402 calls settled. Add a hard session cap while installing:
+
+```bash
+openclaw mcp set blockrun '{"command":"npx","args":["-y","@blockrun/mcp@latest"],"env":{"BLOCKRUN_BUDGET_LIMIT":"2"}}'
+openclaw mcp doctor blockrun --probe
+```
+
+Spend confirmation depends on the OpenClaw runtime and chat surface. Its Codex harness supports MCP form elicitation, but an unmappable prompt is returned as an explicit decline; in the WebChat → Codex route tested here, `BLOCKRUN_CONFIRM_SPEND=on` declined paid calls without presenting an actionable dialog. Keep confirmation off on that route and rely on `BLOCKRUN_BUDGET_LIMIT` plus OpenClaw's own tool-approval mode.
 
 <details>
 <summary><strong>JSON for Claude Desktop, Cursor, Windsurf</strong></summary>
@@ -325,7 +334,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 
 | Tool | Data source | Cost |
 |------|-------------|------|
-| `blockrun_chat` | <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
+| `blockrun_chat` | <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
 | `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.15 |
 | `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0-mini/2.0-fast/2.0/2.5 (720p + audio; 4K on 2.0, up to 30s on 2.5); RealFace asset → real-person video | $0.053–0.32/sec charged |
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 / 2.0-fast / 2.0-mini video (not 2.5) | free; $0.01 to enroll |
@@ -657,7 +666,7 @@ Both. Switch instantly with `blockrun_wallet action:"chain"`. A few media/paid t
 
 BlockRun is agent-native AI infrastructure — one wallet, x402 USDC micropayments, across every surface:
 
-- **⚡ [ClawRouter](https://github.com/BlockRunAI/ClawRouter)** — the agent-native LLM router for OpenClaw. <!-- br:models.chatVisible -->71<!-- /br:models.chatVisible --> models, <1ms local routing, USDC on Base & Solana.
+- **⚡ [ClawRouter](https://github.com/BlockRunAI/ClawRouter)** — the agent-native LLM router for OpenClaw. <!-- br:models.chatVisible -->76<!-- /br:models.chatVisible --> models, <1ms local routing, USDC on Base & Solana.
 - **🤖 [BRCC](https://blockrun.ai/brcc.md)** — BlockRun for Claude Code: smart routing + x402 payments, purpose-built for Claude Code.
 - **🐍 [ClawRouter-Hermes](https://github.com/BlockRunAI/ClawRouter-Hermes)** — Python plugin wiring NousResearch Hermes into the ClawRouter proxy.
 - **📚 [Docs](https://blockrun.ai/docs)** · **[Models & pricing](https://blockrun.ai/models)** — full SDKs, APIs, and the model catalogue.
