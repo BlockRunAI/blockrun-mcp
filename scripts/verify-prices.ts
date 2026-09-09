@@ -61,14 +61,16 @@ type Probe = {
   allowOver?: boolean;
 };
 
-async function quote(host: string, path: string, body?: unknown): Promise<number | string> {
+type Quote = { usd: number; description?: string };
+
+async function quote(host: string, path: string, body?: unknown): Promise<Quote | string> {
   const res = await fetch(host + path, {
     method: body === undefined ? "GET" : "POST",
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
   const header = res.headers.get("payment-required");
   if (!header) return `no 402 (HTTP ${res.status})`;
-  let parsed: { accepts?: Array<{ amount?: string }> };
+  let parsed: { accepts?: Array<{ amount?: string; extra?: { description?: string } }>; resource?: { description?: string } };
   try {
     parsed = JSON.parse(Buffer.from(header.trim(), "base64").toString("utf8"));
   } catch {
@@ -78,7 +80,16 @@ async function quote(host: string, path: string, body?: unknown): Promise<number
   if (raw === undefined) return "no `amount` in accepts[0] (x402 version changed?)";
   const micro = Number(raw);
   if (!Number.isFinite(micro)) return `unparseable amount: ${String(raw)}`;
-  return micro / 1e6;
+  // The 402 also says WHAT is being sold ("Sora 2 video generation (4s)"). Both
+  // gateways carry it — Base under `resource`, Solana under accepts[0].extra —
+  // and it is how a quote for a substituted model is told apart from a reprice.
+  const description = parsed.resource?.description ?? parsed.accepts?.[0]?.extra?.description;
+  return { usd: micro / 1e6, description };
+}
+
+/** Strip the duration suffix so "Sora 2 video generation (4s)" and "(8s)" compare equal. */
+function product(description: string | undefined): string | undefined {
+  return description?.replace(/\s*\(\d+s\)\s*$/i, "").trim().toLowerCase() || undefined;
 }
 
 const PROBES: Probe[] = [
@@ -273,16 +284,22 @@ let solShort = 0; // reserve < what SOLANA charges -> genuine under-reserve, blo
 let solDearer = 0; // Solana dearer than Base but still covered -> policy note only
 let solCheaper = 0; // Solana charges LESS than Base -> safe, but the docs quote one number
 let solMissing = 0; // route not served on Solana at all
+let solSubstituted = 0; // Solana quotes a DIFFERENT product than Base for the same request
 const solNotes: string[] = [];
+const solSubstitutions: string[] = [];
 
 console.log(`Verifying ${PROBES.length} routes against live 402 quotes on BOTH gateways (free — no payment attached)\n`);
 
 for (const probe of PROBES) {
   // Both chains at once so adding the second gateway costs no wall-clock.
-  const [live, solLive] = await Promise.all([
+  const [liveQ, solQ] = await Promise.all([
     quote(BASE, probe.path, probe.body),
     quote(SOL, probe.path, probe.body),
   ]);
+  const live = typeof liveQ === "string" ? liveQ : liveQ.usd;
+  const solLive = typeof solQ === "string" ? solQ : solQ.usd;
+  const liveProduct = typeof liveQ === "string" ? undefined : product(liveQ.description);
+  const solProduct = typeof solQ === "string" ? undefined : product(solQ.description);
 
   // Compare the chains before judging the estimator, so a Solana-only problem is
   // still reported when the Base probe itself is unreachable.
@@ -291,6 +308,18 @@ for (const probe of PROBES) {
     solMissing++;
     solTag = "  [sol: not served]";
     solNotes.push(`${probe.label}: Solana ${solLive}`);
+  } else if (typeof live === "number" && liveProduct && solProduct && liveProduct !== solProduct) {
+    // Not a price for the same thing. Found 2026-09-08: sol.blockrun.ai (a
+    // separate deployment that can lag Base) did not know azure/sora-2 and
+    // quoted "Seedance 2.0 Pro video generation (5s)" at $1.135480 in its
+    // place. That is a gateway bug to report, not an estimator gap to paper
+    // over by reserving the substitute's price — and since 0.48.1 every
+    // manual-402 tool refuses a quote this far off the published rate before
+    // signing (assertQuoteNearEstimate), nothing can be charged for it. Loud,
+    // but not a release blocker for this repo.
+    solSubstituted++;
+    solTag = `  [sol: quotes a DIFFERENT product — "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}; blockrun refuses it unsigned]`;
+    solSubstitutions.push(`${probe.label}: Base sells "${typeof liveQ === "string" ? "" : liveQ.description}" at $${live.toFixed(6)}, Solana sells "${typeof solQ === "string" ? "" : solQ.description}" at $${solLive.toFixed(6)}`);
   } else if (typeof live === "number") {
     const chainDelta = solLive - live;
     if (chainDelta > EPSILON) {
@@ -346,8 +375,13 @@ console.log(
 if (unreachable) console.log("Unreachable routes were NOT verified — treat them as unknown, not as passing.");
 
 console.log(
-  `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served`,
+  `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served, ${solSubstituted} substituted`,
 );
+if (solSubstituted) {
+  console.log("  GATEWAY BUG — Solana quotes a different product than Base for the same request. The tools refuse");
+  console.log("  such a quote before signing (assertQuoteNearEstimate), so no money moves; report it to the gateway owner:");
+  for (const n of solSubstitutions) console.log(`    ${n}`);
+}
 if (solCheaper) {
   console.log(
     "  Solana charges no transaction fee — DELIBERATE pricing (owner decision,\n" +
