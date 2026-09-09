@@ -12,7 +12,7 @@ import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budge
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { baseOnlyMessage, getClient } from "../utils/wallet.js";
-import { type RawClient, rawGet } from "../utils/raw-call.js";
+import { ledgerFallback, rawGet, type RawClient } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -85,7 +85,7 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const { data: result, paidUsd } = await rawGet(client, `/v1/defillama/${cleanPath}`);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)

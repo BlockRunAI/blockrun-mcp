@@ -13,7 +13,7 @@ import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost, rawGet } from "../utils/raw-call.js";
+import { ledgerFallback, rawGet, rawPost, type RawClient } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -125,7 +125,7 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
           // Free phone reads estimate $0 and must stay free; a settled figure
           // from the account rail is authoritative for everything else.
           if (estimatedCost > 0 || (paidUsd ?? 0) > 0) {
-            recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+            recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           }
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

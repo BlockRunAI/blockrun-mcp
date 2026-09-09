@@ -15,6 +15,14 @@ import { test, mock, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 let apiKeyMode = false;
+let chain: "base" | "solana" = "base";
+mock.module("../src/utils/wallet.js", {
+  namedExports: {
+    getChain: () => chain,
+    getApiBase: () => "https://blockrun.ai/api",
+    resolveGatewayUrl: (u: string) => u,
+  },
+});
 mock.module("../src/utils/auth.js", {
   namedExports: {
     isApiKeyMode: () => apiKeyMode,
@@ -67,6 +75,7 @@ beforeEach(() => {
   accountThrows = null;
   walletThrows = null;
   accountResult = { data: { ok: "account" }, paidUsd: 0.0085 };
+  chain = "base";
 });
 
 test("wallet mode goes through the SDK and NEVER touches the account API", async () => {
@@ -157,4 +166,59 @@ test("the rail is decided per call, so switching mid-process routes the next cal
   await rawGet(walletClient, "/v1/defillama/protocols");
   assert.equal(walletCalls.length, 1);
   assert.equal(accountCalls.length, 1);
+});
+
+// --- the ledger books the observed charge, not the reserve (round 2) ---
+//
+// tx-fee.ts states the rule at length and one file honoured it. Every path tool
+// passed its RESERVE (base + $0.002, rounded against us on purpose) as
+// recordActualSpend's fallback, and on the wallet rail there is never a settled
+// figure to override it — so the ledger booked the reserve. On Solana, where
+// the gateway charges no fee at all, that is $0.002 of invented spend per call.
+
+test("a Solana wallet call books the BASE, not the reserve", async () => {
+  const { ledgerFallback } = await import("../src/utils/raw-call.js");
+  apiKeyMode = false;
+  chain = "solana";
+  // rpc single: reserve $0.004, Solana charges $0.002.
+  assert.ok(Math.abs(ledgerFallback(0.004) - 0.002) < 1e-9);
+  // pm/*: reserve $0.0095, Solana charges $0.0075.
+  assert.ok(Math.abs(ledgerFallback(0.0095) - 0.0075) < 1e-9);
+});
+
+test("a Base wallet call books the base plus the fee the gateway actually charges", async () => {
+  const { ledgerFallback } = await import("../src/utils/raw-call.js");
+  apiKeyMode = false;
+  chain = "base";
+  assert.ok(Math.abs(ledgerFallback(0.004) - 0.003) < 1e-9, "rpc single: $0.003 on Base");
+  assert.ok(Math.abs(ledgerFallback(0.0095) - 0.0085) < 1e-9, "pm/*: $0.0085 on Base");
+});
+
+test("the account rail books the base — it charges no transaction fee", async () => {
+  const { ledgerFallback } = await import("../src/utils/raw-call.js");
+  apiKeyMode = true;
+  assert.ok(Math.abs(ledgerFallback(0.012) - 0.010) < 1e-9, "phone/lookup: $0.010 on the account rail");
+});
+
+test("free stays free, and the reserve is never converted into a negative", async () => {
+  const { ledgerFallback } = await import("../src/utils/raw-call.js");
+  assert.equal(ledgerFallback(0), 0);
+  assert.equal(ledgerFallback(-1), 0);
+  // A reserve smaller than one fee has no base under it; the result floors at
+  // zero and is clamped to the reserve, never below zero and never above it.
+  chain = "solana";
+  assert.equal(ledgerFallback(0.001), 0);
+  chain = "base";
+  assert.equal(ledgerFallback(0.001), 0.001);
+});
+
+test("the ledger figure is never ABOVE the reserve — the gate stays the conservative one", async () => {
+  const { ledgerFallback } = await import("../src/utils/raw-call.js");
+  for (const chainUnderTest of ["base", "solana"] as const) {
+    chain = chainUnderTest;
+    apiKeyMode = false;
+    for (const reserve of [0.003, 0.004, 0.0095, 0.012, 0.2645, 192.002]) {
+      assert.ok(ledgerFallback(reserve) <= reserve, `${chainUnderTest} ${reserve}`);
+    }
+  }
 });

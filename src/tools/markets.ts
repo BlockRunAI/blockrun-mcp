@@ -5,7 +5,7 @@ import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawGet, rawPost } from "../utils/raw-call.js";
+import { ledgerFallback, rawGet, rawPost, type RawClient } from "../utils/raw-call.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -129,7 +129,7 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           const { data: result, paidUsd } = body !== undefined
             ? await rawPost(llm, endpoint, body)
             : await rawGet(llm, endpoint, params);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
 
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
