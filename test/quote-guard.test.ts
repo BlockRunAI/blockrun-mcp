@@ -58,3 +58,35 @@ test("the video wrapper adds the Sora/Solana explanation only where it applies",
   assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "base"), /Retry on Solana/);
   assert.doesNotThrow(() => assertVideoQuoteSane(0.421001, 0.422001, "azure/sora-2", "base"));
 });
+
+// --- blockrun_image's quote guard, which nothing exercised (round 2) ---
+//
+// The guard was added to image.ts in 0.49.0 and deleting it left every test
+// green. These pin the two things the Solana onQuote hook must do — refuse a
+// quote far above the published rate, and let a real one through — using the
+// same figures the gateway quotes.
+test("the image quote guard refuses a substituted product and passes a real one", async () => {
+  const { assertQuoteNearEstimate, QuoteMismatchError } = await import("../src/utils/budget.js");
+  // nano-banana at 1024: $0.01675 estimate. A 2.7x substitution is refused.
+  assert.throws(
+    () => assertQuoteNearEstimate(0.0452, 0.01675, { what: "google/nano-banana image", quotedFor: "Seedance 2.0 Pro video generation (5s)" }),
+    (err: unknown) => {
+      assert.ok(err instanceof QuoteMismatchError);
+      assert.match((err as Error).message, /google\/nano-banana image/);
+      assert.match((err as Error).message, /no charge was made/);
+      return true;
+    },
+  );
+  // A real size-tier difference stays inside the tolerance.
+  assert.doesNotThrow(() => assertQuoteNearEstimate(0.0177, 0.01675, { what: "google/nano-banana image" }));
+  // And the floor keeps a cheap image from reading as a multiple.
+  assert.doesNotThrow(() => assertQuoteNearEstimate(0.03, 0.01675, { what: "x" }));
+});
+
+test("image.ts actually calls the guard on the rail that has a quote", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/tools/image.ts", import.meta.url), "utf8");
+  // The Solana helper is the only image rail that surfaces a 402 amount.
+  assert.match(src, /solanaPaidPost\([\s\S]{0,400}onQuote:/, "image must guard the Solana quote");
+  assert.match(src, /assertQuoteNearEstimate\(/, "image must call the shared guard");
+});

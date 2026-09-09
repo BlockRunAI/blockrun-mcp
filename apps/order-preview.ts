@@ -120,7 +120,11 @@ function renderPreview(p: Preview): void {
     // Market orders are SIGNED at this bound (the server walks the book), so
     // the fill can never be worse than the number shown here.
     ...(!isLimit && typeof p.worstFillPrice === "number"
-      ? [kv(isBuy ? "Worst fill (signed max)" : "Worst fill (signed min)", `${(p.worstFillPrice * 100).toFixed(1)}¢  ·  ${p.worstFillPrice.toFixed(3)}`)]
+      // "signed max/min" read as a guarantee about the order about to be
+      // placed. It is the bound from THIS quote; Place re-walks a fresh book on
+      // the server and signs that one, so the figure can move if the book does.
+      // Say "at this quote" and let the server's own result be the record.
+      ? [kv(isBuy ? "Worst fill at this quote (max)" : "Worst fill at this quote (min)", `${(p.worstFillPrice * 100).toFixed(1)}¢  ·  ${p.worstFillPrice.toFixed(3)}`)]
       : []),
     kv("Shares", shares !== undefined ? `${isLimit ? "" : "≈ "}${shares.toFixed(4)}` : "—"),
     kv("Max payout if right", isBuy && shares !== undefined ? usd(shares) : "—"),

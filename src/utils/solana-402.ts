@@ -249,7 +249,14 @@ export async function solanaPaidPost(
     throw new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`);
   }
 
-  const data = await resp.json() as Record<string, unknown>;
+  // The 200 IS the settlement — the money moved before this body was read. An
+  // unguarded .json() on a truncated or aborted response threw here, and the
+  // caller's catch then reported a failure with nothing booked, which is the
+  // one direction that must never happen. Hand back what we know instead: the
+  // charge is real whether or not the payload parsed.
+  const data = await resp.json().catch(() => ({
+    error: "The paid response could not be parsed. The 200 means the payment settled — the charge stands.",
+  })) as Record<string, unknown>;
   return { data, paidUsd: context.paidUsd };
 }
 
