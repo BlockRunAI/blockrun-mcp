@@ -115,6 +115,38 @@ function hasKeychainEvmKey(): boolean {
 }
 
 /**
+ * Does this key file actually HOLD a key?
+ *
+ * `existsSync` alone is the wrong question at a keychain gate. The loaders on
+ * the far side of that gate — the SDK's resolveFromFiles() and
+ * loadSolanaWallet() — both `.trim()` the file and treat whitespace as NO KEY.
+ * So a zero-byte session file reads as "present" to the gate and "absent" to
+ * the loader, and the two disagree in the one direction that costs money:
+ * the gate skips the keychain, the loader mints a BRAND NEW wallet, and the
+ * persistKey() call right after it overwrites the keychain entry that still
+ * held the funded key. Silent, unrecoverable, and reachable without anyone
+ * calling a delete — saveWallet() is a plain non-atomic writeFileSync, so an
+ * interrupted write, a full disk, a restore tool's placeholder or a stray
+ * shell redirect all leave exactly this file behind.
+ *
+ * getChain() already asks the question this way (twice, with comments saying
+ * why). These are the two callers that did not.
+ *
+ * A file we cannot READ counts as present. We have no idea whether it holds a
+ * key, and consulting the keychain on that guess is how a stale entry shadows
+ * a live wallet; the loader then hits the same unreadable file and fails
+ * loudly, which is the outcome we want.
+ */
+function keyFileHasKey(file: string): boolean {
+  try {
+    if (!fs.existsSync(file)) return false;
+    return fs.readFileSync(file, "utf-8").trim() !== "";
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Does this machine already hold a BASE wallet the user may have funded?
  *
  * Only consulted by getChain()'s final fallback, and only to stop the
@@ -410,7 +442,7 @@ function ensureEvmWallet() {
   if (
     !process.env.BLOCKRUN_WALLET_KEY &&
     getKeychainMode() !== "off" &&
-    !fs.existsSync(WALLET_FILE_PATH)
+    !keyFileHasKey(WALLET_FILE_PATH)
   ) {
     const read = keychainRead(EVM_KEY_ACCOUNT);
 
@@ -498,9 +530,10 @@ function resolveSolanaKeyDetailed(): SolanaKeyResolution {
   if (_solanaKey) return { key: _solanaKey };
 
   let keychainError: string | undefined;
-  // Same precedence correction as the EVM path: an existing .solana-session is
-  // the user's current intent, so it outranks whatever the keychain remembers.
-  if (getKeychainMode() !== "off" && !fs.existsSync(SOLANA_WALLET_FILE_PATH)) {
+  // Same precedence correction as the EVM path: a .solana-session that HOLDS a
+  // key is the user's current intent, so it outranks whatever the keychain
+  // remembers. An empty one holds no intent — see keyFileHasKey.
+  if (getKeychainMode() !== "off" && !keyFileHasKey(SOLANA_WALLET_FILE_PATH)) {
     const read = keychainRead(SOLANA_KEY_ACCOUNT);
     if (read.status === "found") {
       _solanaKey = read.value;

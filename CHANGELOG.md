@@ -51,6 +51,15 @@ first run.
   before anything is signed, and the card carries its own displayed figure.
 - **A chat call the account rail billed and then dropped booked $0** and read as
   a free failure, whose obvious next step is to pay for it again.
+- **An empty `~/.blockrun/.session` overwrote a funded key in the keychain.**
+  The gate that decides whether to consult the keychain asked `existsSync`; the
+  loaders on the far side of it trim the file and treat whitespace as no key.
+  A zero-byte session file therefore read as present to the gate and absent to
+  the loader, so the keychain was skipped, a new wallet was minted, and the
+  mirror-back overwrote the entry that still held the funded key. `saveWallet`
+  is a plain non-atomic write, so an interrupted one is enough to produce that
+  file. Both rails now ask whether the file HOLDS a key, which is what
+  `getChain()` already asked, twice, with comments saying why.
 - **`blockrun_music`, `blockrun_speech` and `blockrun_realface` signed whatever
   the 402 quoted**, with no sanity check and no re-reservation. **Giving up on
   Solana booked nothing** in video and music, and **speech, image and realface
@@ -96,7 +105,10 @@ because it does, the video poll timeout matches the gateway route's own 60s
 limit, `SOLANA_RPC_HEADERS` is honoured again so a private RPC works, a settled
 Solana response whose body will not parse still books the charge, and the MCP
 registry publisher is pinned and checksum-verified instead of curled from
-`releases/latest` into the job that holds the npm token.
+`releases/latest` into the job that holds the npm token. `keychainDelete` now
+answers the same on both backends: it documents "gone, including was never
+there", and only macOS honoured that, so a Linux miss reported the key as still
+in the keychain when it was not.
 
 ## 0.49.0
 
