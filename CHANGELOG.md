@@ -2,6 +2,102 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.50.0
+
+**A second audit round, aimed at the first one.** 0.49.0's thirty-seven fixes
+were written by six agents working in parallel, and this round went looking for
+what that costs. It found the shape immediately: each agent had hardened the
+rail it was looking at. The quote guard landed on video and image but not music
+and speech. The in-flight booking landed on Base and the account rail but not
+Solana, the default chain. Music's Solana call passed no `onQuote` at all, so
+the guard hook fired against nobody while the transfer was signed. Every one of
+those was a money path and every one passed CI.
+
+Thirty findings survived adversarial verification, and **not one was a P0 or a
+P1** — 0.49.0's own list had one of each. That is the honest headline: the
+general search is spent. What is not spent is the class above, so the last
+change here is not a fix but a table.
+
+**The rail-parity matrix.** `test/rail-parity.test.ts` states, per paid tool and
+per rail, which treatments a paid call needs: a quote checked before signing, a
+re-reservation at the real price, in-flight booking, honest give-up wording, and
+the right ledger figure. A cell is a claim about the source, so adding a
+rail-specific guard without filling in its siblings turns the file red. It also
+pins the division that is deliberate — the seven tools whose 402 the SDK owns
+must NOT grow a quote guard, because they cannot see the quote — and fails when
+a paid tool is missing from the table altogether. It found four more gaps on its
+first run.
+
+### The money paths
+
+- **A strict-keychain wallet could be moved off its funded chain by reading its
+  own status.** 0.49.0's own P0 fix stored the new Solana key and deleted the
+  session file, which is exactly what `getChain()` keys on — so the continuity
+  pin was never written and the next start moved a funded Base user onto an
+  empty Solana wallet. The pin is now written off the provisioning fact rather
+  than re-derived from caches the mint just invalidated.
+- **Two concurrent callers minted two Solana wallets.** The cache was assigned
+  after the await, and 0.49.0 made that reachable from two entry points at once,
+  so one caller could be handed a funding QR for an address whose key was thrown
+  away. Single-flighted — and the rejection is deliberately not cached, or
+  unlocking a keychain and retrying would stay broken until restart.
+- **The order card could submit the same order twice.** The stale-amount guard
+  re-enabled an armed Place button mid-submit, and its catch treated every
+  transport failure as "nothing happened". Both now distinguish "we know nothing
+  was signed" from "we do not know", which is the difference between a retry and
+  a duplicate bet.
+- **The previewed worst fill is now enforced across the confirm**, not just
+  inside one call: `max_fill_price` refuses a book that moved against the quote
+  before anything is signed, and the card carries its own displayed figure.
+- **A chat call the account rail billed and then dropped booked $0** and read as
+  a free failure, whose obvious next step is to pay for it again.
+- **`blockrun_music`, `blockrun_speech` and `blockrun_realface` signed whatever
+  the 402 quoted**, with no sanity check and no re-reservation. **Giving up on
+  Solana booked nothing** in video and music, and **speech, image and realface
+  had no in-flight tracking at all**, so an abort after the gateway settled left
+  a real charge unbooked.
+- **The ledger booked the reserve, not the charge.** `tx-fee.ts` has said since
+  0.40.1 that the gate and the ledger are different numbers, and one file
+  honoured it. On Solana, where the gateway charges no transaction fee, an agent
+  capped at $1.00 making only `blockrun_rpc` calls was cut off after 250 of them
+  having actually spent $0.50 — and `action:"report"` said $1.00.
+- **A per-agent cap could refill itself.** `delegate` wrote `spent: 0`
+  unconditionally, and `delegate` is a tool the model can call. A limit is the
+  operator's to raise; spend already happened and is not theirs to erase.
+- **The Polymarket approval prompt never said what it was worth**: the default
+  grants an unlimited pUSD allowance to four spenders. It says so now, before
+  the signature, and names `POLYMARKET_BOUNDED_APPROVALS`.
+- **The relayer's double-send guard armed on failures that signed nothing** —
+  credential derivation happens before the batch exists — and its 4xx detector
+  never saw a CLOB `ApiError`'s status, so definite refusals looked ambiguous
+  and wedged the user behind a deadline for a transfer that was never made.
+
+### Saying the true thing
+
+- **"Your wallet needs funding" no longer appears on messages that say nothing
+  was charged.** The uncharged markers gated one keyword clause, so a bare 402
+  or the word "balance" still earned the footer — including on this repo's own
+  unreadable-quote refusal, which told a wallet holding $1,000 to top up.
+- **Account-rail errors are classified at all.** The status boundary excluded a
+  following dot, which is what keeps `$402.50` from reading as a status — and
+  also what made every `BlockRun account API error: 502.` fall through silently
+  while the identical wallet-rail message got guidance.
+- **A locked keychain is not a missing wallet**, and telling that user to run
+  setup invites a second one.
+- **`blockrun_video` and `blockrun_realface`** stopped offering a card top-up
+  for a wallet that is not paying on the account rail, and the wallet card
+  stopped offering card top-up on Solana, where it is not available.
+
+### Around the edges
+
+The model catalogue cache is keyed by rail and chain (the two gateways do not
+serve the same one), `blockrun_models` is annotated as reaching the network
+because it does, the video poll timeout matches the gateway route's own 60s
+limit, `SOLANA_RPC_HEADERS` is honoured again so a private RPC works, a settled
+Solana response whose body will not parse still books the charge, and the MCP
+registry publisher is pinned and checksum-verified instead of curled from
+`releases/latest` into the job that holds the npm token.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`
