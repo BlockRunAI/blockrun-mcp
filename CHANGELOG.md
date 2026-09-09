@@ -144,6 +144,41 @@ static test holds the line for the next script like it: the check is
 deliberately not behavioural, since a test that proved the gate by running the
 script would charge the wallet on the day the gate broke.
 
+**The release automation could publish wrong numbers without failing.** Four
+scripts nobody had audited, each able to produce confident output from a
+failure. `measure-tool-schema.mjs` ignored JSON-RPC errors, so a server that
+answered `tools/list` with an error was measured as zero tokens across zero
+tools and printed as a real figure at exit 0 — with `--svg` that reached the
+context-cost cards as "0.0K tokens" and a literal "NaN% less". It also decoded
+the child's stdout per chunk, so an em dash split across a 16KB pipe boundary
+became a replacement character and quietly changed the count, which the
+in-process test could never catch because it measures through
+`InMemoryTransport`. `stamp-server-json.mjs` stamped nothing when no package
+entry matched, left the template's `0.0.0-template` in place (valid semver, so
+validation passes) and printed a success line claiming it had stamped —
+pointing every registry consumer at an npm version that does not exist. And
+`changelog-section.mjs` compared a realpath'd module URL against a
+non-realpath'd `argv[1]`, so from any checkout reached through a symlink it
+exited 0 with empty stdout, which in `publish.yml` skips the fallback and
+publishes a release with an empty body. All four now fail instead.
+
+**The brand-number sync wrote unvalidated remote JSON into the README.** Values
+fetched from blockrun.ai were rendered with `String(value)` and interpolated
+into `src="…"` and `alt="…"` with no escaping, then committed and pushed to the
+default branch weekly by an unattended bot with `contents: write`. A value
+carrying a quote or an angle bracket closed the attribute and injected markup
+into every consuming repo. Rendered values are now checked at the point of use
+— a number or a short plain label, nothing else — and escaped on top of that.
+Its `--check` also no longer prints the stale markers it found and then
+declares everything up to date.
+
+Two documentation claims that nothing was watching: the README said "same 20
+tools either way" two lines below a marker rendering 19, and
+`docs/mcp-schema-overhead.md` kept a second copy of the profile-cost table that
+no test pinned. Both are now covered, along with the profile list itself, which
+was hardcoded in two places and would have left a newly added profile measured
+by neither.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`
