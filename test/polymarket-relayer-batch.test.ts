@@ -14,11 +14,13 @@ let getTransactionThrows = false;
 // lost response is `{"error":"connection error"}`, for a rejection
 // `{"error":"request error","status":4xx,...}` (http-helpers/index.js).
 let submitThrows: string | undefined;
+let submitThrowsError: Error | undefined;
 let stateFile: Record<string, unknown> = {};
 const saveStateCalls: Array<Record<string, unknown>> = [];
 
 class FakeRelayClient {
   async executeDepositWalletBatch() {
+    if (submitThrowsError) throw submitThrowsError;
     if (submitThrows) throw new Error(submitThrows);
     return {
       transactionID: "batch-1",
@@ -72,6 +74,7 @@ function reset() {
   txnState = undefined;
   getTransactionThrows = false;
   submitThrows = undefined;
+  submitThrowsError = undefined;
   stateFile = {};
   saveStateCalls.length = 0;
 }
@@ -178,5 +181,37 @@ test("an untracked batch (approvals/wrap) that loses its submit response writes 
   submitThrows = '{"error":"connection error"}';
   await assert.rejects(sendWalletBatch(CALLS, DEPOSIT, "Approval batch"), /connection error/);
   assert.equal(saveStateCalls.length, 0, "only withdrawals are double-send-tracked");
+  assert.equal(stateFile.pendingWithdraw, undefined);
+});
+
+// --- the double-send guard must arm ONLY when the outcome is unknown (round 2) ---
+
+test("a CLOB ApiError carries its 4xx on a PROPERTY — that is still a definite rejection", async () => {
+  // The SDK sets `.status` and leaves the message bare, so a matcher that only
+  // read the JSON shape armed the lock on an unambiguous refusal and wedged the
+  // user behind a 5-minute deadline for a transfer nothing had signed.
+  reset();
+  submitThrowsError = Object.assign(new Error("request rejected"), { status: 403 });
+  await assert.rejects(
+    sendWalletBatch(CALLS, DEPOSIT, "Withdraw", { trackPendingWithdraw: true }),
+    (err: Error) => {
+      assert.match(err.message, /request rejected/);
+      assert.doesNotMatch(err.message, /Do NOT retry/);
+      return true;
+    },
+  );
+  assert.equal(stateFile.pendingWithdraw, undefined, "a definite 4xx signed nothing");
+});
+
+test("a bare HTTP 403 in the message is a definite rejection too", async () => {
+  reset();
+  submitThrows = "CLOB credential derivation failed: HTTP 403 (forbidden)";
+  await assert.rejects(
+    sendWalletBatch(CALLS, DEPOSIT, "Withdraw", { trackPendingWithdraw: true }),
+    (err: Error) => {
+      assert.doesNotMatch(err.message, /Do NOT retry/);
+      return true;
+    },
+  );
   assert.equal(stateFile.pendingWithdraw, undefined);
 });

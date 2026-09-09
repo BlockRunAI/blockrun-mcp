@@ -189,7 +189,16 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  * The dangerous direction is the other one: a member that STARTS costing money
  * gets a $0 reserve for a paid call, which is the total gate bypass this file
  * spends so many words preventing. So `npm run verify:prices` checks every
- * member against the live catalogue and fails if one is priced. A Set needs no
+ * member the CATALOGUE REPORTS against its live price and fails if one is
+ * priced — including one marked unavailable, since "retired today" does not
+ * promise "still free when it returns".
+ *
+ * What that check cannot cover, and does not pretend to: a member the catalogue
+ * does not list at all. Six of these are in that state on both gateways today,
+ * and delisting is not death — gpt-oss-120b is the gateway's own free fallback
+ * and answers for itself while absent from GET /v1/models. The sweep names each
+ * one as UNVERIFIED rather than counting it as checked; the only way to settle
+ * one is a realistic POST, which costs a call and so is a human's decision. A Set needs no
  * hasOwn guard — there are no prototype keys to leak through `.has`.
  *
  * Not every member is routed: MODEL_TIERS.free wants a both-chain, latency-
