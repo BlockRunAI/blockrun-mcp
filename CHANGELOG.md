@@ -4,7 +4,7 @@ All notable changes to BlockRun MCP will be documented in this file.
 
 ## 0.50.0
 
-**A second audit round, aimed at the first one.** 0.49.0's thirty-seven fixes
+**Three audit rounds, each aimed at the one before it.** 0.49.0's thirty-seven fixes
 were written by six agents working in parallel, and this round went looking for
 what that costs. It found the shape immediately: each agent had hardened the
 rail it was looking at. The quote guard landed on video and image but not music
@@ -14,9 +14,24 @@ the guard hook fired against nobody while the transfer was signed. Every one of
 those was a money path and every one passed CI.
 
 Thirty findings survived adversarial verification, and **not one was a P0 or a
-P1** — 0.49.0's own list had one of each. That is the honest headline: the
-general search is spent. What is not spent is the class above, so the last
-change here is not a fix but a table.
+P1** — 0.49.0's own list had one of each. The read at the time was that the
+general search was spent, so the next change was not a fix but a table.
+
+That read was half right, and the half it got wrong is worth stating plainly.
+The general SWEEP was spent: another pass over the same files would have
+returned docs and cosmetics. What was not spent was the surfaces no sweep had
+opened. Round 3 went at the four the critic named and found a path that
+destroys a funded wallet key: an empty `~/.blockrun/.session` made the keychain
+gate and the loader behind it disagree, and the disagreement minted a new
+wallet over the funded one. Round 4 went at the surfaces still unread — the CI
+and publish workflows, `verify-prices`, the Apps UI, the protocol entry — and
+at the class that produced four of round 3's five findings: a comment stating a
+contract the code does not honour on some branch, platform or early return.
+Comments cannot fail a test, so nothing had ever checked them.
+
+The durable output of all three rounds is the same shape: where an assumption
+was load-bearing and lived only in prose, it is now a test. `rail-parity`,
+`axios-scope`, `scripts-redaction`, `scripts-spend-gate`, `doc-file-refs`.
 
 **The rail-parity matrix.** `test/rail-parity.test.ts` states, per paid tool and
 per rail, which treatments a paid call needs: a quote checked before signing, a
