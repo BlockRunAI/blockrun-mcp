@@ -218,11 +218,11 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 12,657 |
-| `trading` | 8 | 5,160 |
-| `media` | 7 | 5,603 |
-| `research` | 5 | 2,635 |
-| `chat` | 3 | 1,976 |
+| `full` *(default)* | 19 | 12,686 |
+| `trading` | 8 | 5,189 |
+| `media` | 7 | 5,632 |
+| `research` | 5 | 2,664 |
+| `chat` | 3 | 2,005 |
 
 Running `--profile trading` instead of the default costs **59% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
@@ -660,7 +660,7 @@ Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated c
 Yes. `blockrun_polymarket` places real, USDC-settled orders on Polymarket's CLOB — confirm-gated and capped. Read the odds with `blockrun_markets`, place with `blockrun_polymarket`.
 
 **Base or Solana?**
-Both. Switch instantly with `blockrun_wallet action:"chain"`. A few media/paid tools settle on Base only (noted above).
+Both. Switch instantly with `blockrun_wallet action:"chain"`. Three things are Base-only, and each says so when you call them on Solana: `blockrun_defi` (DefiLlama) and `blockrun_modal`, which the Solana gateway does not serve, and native Anthropic `claude-*` chat. Media generation, markets, search and Polymarket all settle on either chain.
 
 ---
 

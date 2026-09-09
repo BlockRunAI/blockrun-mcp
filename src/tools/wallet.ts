@@ -46,6 +46,7 @@ Actions:
 
 Budget controls:
 - budget + budget_action:"set" + budget_amount:1.00 → Set global spend cap
+- budget + budget_action:"check" (the default) → Report the cap, spend and remaining
 - budget + budget_action:"clear" → Remove global spend cap
 
 Multi-agent orchestration:
@@ -65,7 +66,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       inputSchema: {
         action: z.enum(["status", "deposit", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
         chain: z.enum(["base", "solana"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),
-        budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget')"),
+        budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget'). Defaults to 'check', which only reports."),
         budget_amount: z.number().optional().describe("Budget limit in USD (for budget_action='set')"),
         agent_id: z.string().optional().describe("Agent identifier for delegate/revoke/report actions"),
         agent_limit: z.number().optional().describe("Budget limit in USD for this agent (required for delegate action)"),

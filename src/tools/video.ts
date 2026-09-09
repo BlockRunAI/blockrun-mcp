@@ -37,8 +37,13 @@ import {
 // Without that clamp the true worst case is budget + interval + poll timeout,
 // which at 540s/5s/90s lands 35s PAST a 600s authorization.
 export const VIDEO_TOTAL_BUDGET_MS = 540_000;
-const POLL_INTERVAL_MS = 5_000;
-export const VIDEO_POLL_TIMEOUT_MS = 90_000;
+export const POLL_INTERVAL_MS = 5_000;
+// The gateway's poll route declares `export const maxDuration = 60` (blockrun
+// src/app/api/v1/videos/generations/[id]/route.ts), so a poll that has not
+// answered in 60s never will — waiting 90 was 30s of the signed authorization's
+// window spent on a request the server had already abandoned. The Solana helper
+// already capped its poll at the route's own limit; this matches it.
+export const VIDEO_POLL_TIMEOUT_MS = 60_000;
 // Lifetime of the signed payment authorization, in seconds. Exported so the
 // margin above is asserted against the value the request actually sends,
 // rather than a literal restated in the test.

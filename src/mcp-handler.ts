@@ -1,8 +1,9 @@
 // src/mcp-handler.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BudgetState } from "./types.js";
-import { getClient, getWalletInfo } from "./utils/wallet.js";
-import { loadModels, type ModelCache } from "./utils/model-cache.js";
+import { getChain, getClient, getWalletInfo } from "./utils/wallet.js";
+import { loadModels, modelCacheKey, type ModelCache } from "./utils/model-cache.js";
+import { getAuthMode } from "./utils/auth.js";
 import { parseBudgetLimitEnv } from "./utils/budget.js";
 
 import { registerWalletTool } from "./tools/wallet.js";
@@ -125,7 +126,7 @@ export function initializeMcpServer(
       "blockrun://models",
       { description: "Available AI models with pricing", mimeType: "application/json" },
       async () => {
-        const models = await loadModels(getClient(), modelCache);
+        const models = await loadModels(getClient(), modelCache, modelCacheKey(getAuthMode(), getChain()));
         return {
           contents: [{
             uri: "blockrun://models",
