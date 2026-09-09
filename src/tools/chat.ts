@@ -223,10 +223,22 @@ export function estimateChatCost(
 async function withSettledCost<T>(
   client: ApiClient,
   run: () => Promise<T>,
-  onSettledThrow?: (settledUsd: number) => void,
+  onSettledThrow?: (settledUsd: number | null) => void,
 ): Promise<{ result: T; settledUsd: number }> {
   if (isApiKeyMode()) {
-    return { result: await run(), settledUsd: 0 };
+    // The account rail has no spending delta to read — but it bills the request
+    // when the gateway ACCEPTS it, so a failure after that point is a billed
+    // call whose amount this process cannot see. 0.49.0 wired onSettledThrow
+    // into all three chat paths and then short-circuited here with no
+    // try/catch, so on the rail where the money is least visible the note never
+    // fired: a billed-then-dropped stream booked $0 and read as a free failure,
+    // whose obvious next step is to pay for it again (audit round 2).
+    try {
+      return { result: await run(), settledUsd: 0 };
+    } catch (error) {
+      onSettledThrow?.(null);
+      throw error;
+    }
   }
   const before = client.getSpending().totalUsd;
   try {
@@ -257,11 +269,15 @@ async function withSettledCost<T>(
  * text, the routing loop's version ended in "your wallet needs funding" — the
  * exact wrong advice for a call that just paid.
  */
-function settledThenFailedText(error: unknown, settledUsd: number, tail: string): string {
-  return (
-    `${formatError(extractErrorMessage(error))}\n\nNote: payment had already settled when this failed, ` +
-    `so the charge stands ($${settledUsd.toFixed(6)}) and it has been recorded against your budget. ${tail}`
-  );
+function settledThenFailedText(error: unknown, settledUsd: number | null, tail: string): string {
+  // null = the account rail: billed, amount not visible to this process.
+  const what = settledUsd === null
+    ? `Note: the gateway had already accepted and billed this request when it failed, so the charge stands — ` +
+      `this rail does not report the amount to the client, so the estimate has been recorded against your budget ` +
+      `and https://user.blockrun.ai/dashboard/activity has the exact figure.`
+    : `Note: payment had already settled when this failed, ` +
+      `so the charge stands ($${settledUsd.toFixed(6)}) and it has been recorded against your budget.`;
+  return `${formatError(extractErrorMessage(error))}\n\n${what} ${tail}`;
 }
 const RETRY_CHARGES_AGAIN = 'Retrying will incur a second charge — check blockrun_wallet action:"report" first.';
 
@@ -397,7 +413,7 @@ Run blockrun_models to see all available models with pricing.`,
           { role: "user" as const, content: message },
         ];
         // USDC that left the wallet before the failure, if any (see settledThenFailedText).
-        let settledOnFailure = 0;
+        let settledOnFailure: number | null = 0;
         try {
           // The SDK types ChatMessage.content as string-only, but the gateway
           // forwards `messages` verbatim and accepts image_url content arrays
@@ -428,6 +444,8 @@ Run blockrun_models to see all available models with pricing.`,
             });
             return r.choices?.[0]?.message?.content || "";
           }, (usd) => {
+            // usd === null: the account rail billed it and does not tell us how
+            // much. recordActualSpend already books the estimate for null.
             recordActualSpend(budget, usd, estimatedCost, agent_id);
             settledOnFailure = usd;
           });
@@ -441,7 +459,7 @@ Run blockrun_models to see all available models with pricing.`,
           return {
             content: [{
               type: "text",
-              text: settledOnFailure > 0
+              text: settledOnFailure === null || settledOnFailure > 0
                 ? settledThenFailedText(error, settledOnFailure, RETRY_CHARGES_AGAIN)
                 : formatError(extractErrorMessage(error)),
             }],
@@ -453,7 +471,7 @@ Run blockrun_models to see all available models with pricing.`,
       // If specific model provided, use it directly — streamed when the client
       // supports it (same 524 rationale as the multi-turn path above).
       if (model) {
-        let settledOnFailure = 0;
+        let settledOnFailure: number | null = 0;
         try {
           const { result: response, settledUsd } = await withSettledCost(llm(), async () => {
             const client = llm();
@@ -471,6 +489,8 @@ Run blockrun_models to see all available models with pricing.`,
               stop,
             });
           }, (usd) => {
+            // usd === null: the account rail billed it and does not tell us how
+            // much. recordActualSpend already books the estimate for null.
             recordActualSpend(budget, usd, estimatedCost, agent_id);
             settledOnFailure = usd;
           });
@@ -480,7 +500,7 @@ Run blockrun_models to see all available models with pricing.`,
           return {
             content: [{
               type: "text",
-              text: settledOnFailure > 0
+              text: settledOnFailure === null || settledOnFailure > 0
                 ? settledThenFailedText(error, settledOnFailure, RETRY_CHARGES_AGAIN)
                 : formatError(extractErrorMessage(error)),
             }],
@@ -504,7 +524,7 @@ Run blockrun_models to see all available models with pricing.`,
       let lastError: unknown = null;
       let deadlineHit = false;
       // USDC that already left the wallet on a failed attempt in this loop.
-      let settledOnFailure = 0;
+      let settledOnFailure: number | null = 0;
       for (const m of models) {
         // Stop starting NEW attempts once the loop has burned its whole budget —
         // otherwise the bound would be per-model only and would grow with the list.
@@ -533,7 +553,9 @@ Run blockrun_models to see all available models with pricing.`,
             });
           }, (usd) => {
             // Settled, then failed. Book it and remember that this tool call has
-            // already cost the caller money — see the break below.
+            // already cost the caller money — see the break below. usd === null
+            // is the account rail: billed, amount not visible to this process,
+            // and recordActualSpend books the estimate for null.
             recordActualSpend(budget, usd, estimatedCost, agent_id);
             settledOnFailure = usd;
           });
@@ -552,7 +574,7 @@ Run blockrun_models to see all available models with pricing.`,
           // caller, and continuing would settle a second payment for the same
           // tool call under the same reserved amount, unbounded by the gate.
           // Free models settle $0, so mode:"free" still falls through as designed.
-          if (settledOnFailure > 0) break;
+          if (settledOnFailure === null || settledOnFailure > 0) break;
           continue;
         }
       }
@@ -561,7 +583,7 @@ Run blockrun_models to see all available models with pricing.`,
       // stands and no fallback was attempted. An agent that reads "failed" as
       // "free" would retry in a loop and pay each time. (Free models settle $0,
       // so the deadline case below can never also be a settled one.)
-      if (settledOnFailure > 0) {
+      if (settledOnFailure === null || settledOnFailure > 0) {
         return {
           content: [{
             type: "text",

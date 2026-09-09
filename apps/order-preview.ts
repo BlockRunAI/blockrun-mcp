@@ -7,6 +7,7 @@
 // prompt and the server's caps (POLYMARKET_MAX_BET_USD, session cap) are
 // unchanged; this card only replaces the model typing the call.
 import { $, autoSize, bootApp, el, resultText, setBusy, structured, usd, type ToolResult } from "./shared";
+import { declinedByUser, outcomeIsUnknown } from "./order-safety.js";
 
 interface Preview {
   dryRun: true;
@@ -184,16 +185,27 @@ function renderPreview(p: Preview): void {
   // allowed while the field still equals the quoted amount; a change disarms
   // and disables Place until Re-quote renders a fresh card.
   const quotedAmount = parseFloat(amountField.value);
+  // Submitting, or submitted-with-unknown-outcome. Either way this card must
+  // not offer Place again: the first is a duplicate in flight, the second is a
+  // duplicate bet on an order that may already be live at the CLOB.
+  let submitting = false;
+  let outcomeUnknown = false;
   const syncPlace = () => {
     const stale = parseFloat(amountField.value) !== quotedAmount;
     if (stale && armed) disarm();
-    place.disabled = stale;
-    place.title = stale ? "Amount changed — Re-quote first" : "";
+    // Never re-enable during or after a submit. The stale guard wrote
+    // `place.disabled = stale` unconditionally on every input event, so
+    // nudging the amount up and back down while the CLOB round-trip was
+    // outstanding re-enabled an ARMED button reading "Submitting…" — one more
+    // click placed a second identical real-money order with no confirmation.
+    place.disabled = stale || submitting || outcomeUnknown;
+    place.title = stale ? "Amount changed — Re-quote first" : outcomeUnknown ? "Outcome unknown — check your positions before retrying" : "";
     if (stale) { note.className = "note"; note.textContent = "Amount changed — Re-quote first to refresh the price and notional before placing."; }
   };
   amountField.addEventListener("input", syncPlace);
 
   place.addEventListener("click", async () => {
+    if (submitting || outcomeUnknown) return;
     if (parseFloat(amountField.value) !== quotedAmount) { syncPlace(); return; }
     if (!armed) {
       armed = true;
@@ -204,12 +216,20 @@ function renderPreview(p: Preview): void {
     }
     const args = { action: p.action, ...currentArgs(), confirm: true };
     delete (args as Record<string, unknown>).side;
+    submitting = true;
     setBusy(place, true, "Submitting…"); setBusy(requote, true); cancel.hidden = true;
+    amountField.disabled = true;
     try {
       const r = (await app.callServerTool({ name: "blockrun_polymarket", arguments: args })) as ToolResult;
+      submitting = false; amountField.disabled = false;
       if (r.isError) {
-        note.className = "note err"; note.textContent = resultText(r);
-        disarm(); setBusy(place, false); setBusy(requote, false);
+        // A tool-level error is the server's own report, so it knows whether
+        // anything was signed — and it says so. Only re-arm when it tells us
+        // nothing landed; otherwise this card must not invite a second bet.
+        const text = resultText(r);
+        note.className = "note err"; note.textContent = text;
+        if (outcomeIsUnknown(text)) { outcomeUnknown = true; setBusy(place, false); setBusy(requote, false); syncPlace(); }
+        else { disarm(); setBusy(place, false); setBusy(requote, false); }
         return;
       }
       renderPlaced(p, structured<Placed>(r) ?? {}, resultText(r));
@@ -218,8 +238,22 @@ function renderPreview(p: Preview): void {
         structuredContent: (r.structuredContent ?? {}) as Record<string, unknown>,
       }).catch(() => {});
     } catch (e) {
-      note.className = "note err"; note.textContent = String((e as Error).message ?? e);
-      disarm(); setBusy(place, false); setBusy(requote, false);
+      submitting = false; amountField.disabled = false;
+      const msg = String((e as Error).message ?? e);
+      note.className = "note err";
+      // A THROW is transport-level — a host/SDK timeout, a dropped connection,
+      // a torn-down sandbox — which is exactly when the order may already be
+      // live at the CLOB. Re-arming here reads as "nothing happened, try
+      // again" and places a duplicate. A refusal at the consent prompt is the
+      // one case where nothing was signed, and it says so.
+      if (declinedByUser(msg)) {
+        note.textContent = msg;
+        disarm(); setBusy(place, false); setBusy(requote, false);
+      } else {
+        outcomeUnknown = true;
+        note.textContent = `${msg}\n\nThe request did not complete, so this order MAY already be live at the exchange. Check your positions before placing it again — this card will not re-submit it.`;
+        setBusy(place, false); setBusy(requote, false); syncPlace();
+      }
     }
   });
 }

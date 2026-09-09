@@ -32,6 +32,16 @@ const ENROLLMENT_PRICE_USD = withTxFee(0.01);
 // 402 (payment), 422 (image rejected, NOT charged) and 2xx apart, and collapsing
 // those into an exception loses the distinction that decides whether a refund
 // message is warranted.
+/**
+ * Set for the whole window in which a request carrying a payment (a signature,
+ * or the account Bearer) is outstanding. The gateway does not stop settling
+ * because this client disconnected — the property video.ts and music.ts both
+ * guard with paidPollInFlight / paidRequestInFlight — so an abort here is not
+ * "no charge", and 0.49.0 gave realface neither the flag nor the wording
+ * (audit round 2).
+ */
+let paidRequestInFlight = false;
+
 async function payAndPostJson(
   path: string,
   reqBody: string,
@@ -39,11 +49,12 @@ async function payAndPostJson(
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
   // ---- Rail 1: account API key. ----
   if (isApiKeyMode()) {
+    paidRequestInFlight = true;
     const resp = await fetchWithTimeout(`${getApiBase()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
       body: reqBody,
-    }, 90_000);
+    }, 90_000).finally(() => { paidRequestInFlight = false; });
     const data = await resp.json().catch(() => ({})) as Record<string, any>;
     // settledUsd null: the account API returns no per-call cost, so callers fall
     // back to ENROLLMENT_PRICE_USD as an estimate.
@@ -54,8 +65,10 @@ async function payAndPostJson(
   // (probed 2026-09-05: 400 on a missing `name`, i.e. the route is live). ----
   if (getChain() === "solana") {
     const { solanaPaidPost } = await import("../utils/solana-402.js");
+    paidRequestInFlight = true;
     try {
-      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000);
+      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000)
+        .finally(() => { paidRequestInFlight = false; });
       return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
     } catch (err) {
       // solanaPaidPost throws on a non-2xx terminal response. Recover the status
@@ -104,6 +117,7 @@ async function payAndPostJson(
     }
   );
 
+  paidRequestInFlight = true;
   const resp = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
@@ -111,7 +125,7 @@ async function payAndPostJson(
       "PAYMENT-SIGNATURE": paymentPayload,
     },
     body: reqBody,
-  }, 90_000);
+  }, 90_000).finally(() => { paidRequestInFlight = false; });
 
   const data = await resp.json().catch(() => ({})) as Record<string, any>;
   return { status: resp.status, data, settledUsd: amountToUsd(details.amount) };
@@ -446,6 +460,19 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         if (isPaymentRejectionError(errMsg)) {
           return {
             content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            isError: true,
+          };
+        }
+        if (paidRequestInFlight) {
+          // The request carrying the payment never answered. The gateway
+          // settles on its own clock, so this is not "no charge" — book the
+          // charge conservatively and say what we do and do not know. Same
+          // trade-off video and music already make: over-counting a request
+          // that settled nothing is recoverable, under-counting a real charge
+          // is not.
+          recordActualSpend(budget, null, ENROLLMENT_PRICE_USD, agent_id);
+          return {
+            content: [{ type: "text", text: `RealFace ${action} did not answer while a request carrying the payment was still in flight, so the gateway MAY have settled the charge after this client gave up — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.\nError: ${errMsg}` }],
             isError: true,
           };
         }

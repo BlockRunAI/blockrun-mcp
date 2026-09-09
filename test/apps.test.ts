@@ -98,3 +98,51 @@ test("the order card refuses to place a stale amount and shows the worst fill", 
   assert.ok(order.includes("Re-quote first"), "order card: stale-amount guard text");
   assert.ok(order.includes("worstFillPrice"), "order card: renders the server's worst-fill bound");
 });
+
+// --- the card's post-failure logic, as logic (round 2) ---
+//
+// These two predicates decide whether the card may offer Place again. Grepping
+// a minified bundle cannot test that, and getting it wrong costs a duplicate
+// real-money order, so they live outside the DOM.
+test("a failure the server says signed nothing may re-arm; anything else may not", async () => {
+  const { outcomeIsUnknown } = await import("../apps/order-safety.js");
+
+  // The server knows, and says so, in the wording this repo standardised on.
+  for (const known of [
+    "Insufficient balance. No charge was made.",
+    "to_address must be a valid 0x… Base address. Nothing withdrawn.",
+    "The gateway quoted $1.14 … Refusing to sign it — no charge was made.",
+    "Predexon 500 … (payment NOT charged)",
+  ]) assert.equal(outcomeIsUnknown(known), false, known);
+
+  // Everything else is ambiguous: the order may be live at the CLOB.
+  for (const unknown of [
+    "MCP error -32001: Request timed out",
+    "fetch failed",
+    "socket hang up",
+    "Order submission failed",
+    "",
+  ]) assert.equal(outcomeIsUnknown(unknown), true, unknown);
+});
+
+test("only a declined consent prompt restores the card to its pre-click state", async () => {
+  const { declinedByUser } = await import("../apps/order-safety.js");
+  for (const declined of [
+    "User declined the request",
+    "Permission denied by the user",
+    "Request cancelled",
+    "rejected by user",
+  ]) assert.equal(declinedByUser(declined), true, declined);
+
+  for (const notDeclined of [
+    "MCP error -32001: Request timed out",
+    "fetch failed",
+    "CLOB rejected the order: insufficient allowance",
+  ]) assert.equal(declinedByUser(notDeclined), false, notDeclined);
+});
+
+test("the built card carries the duplicate-submit guards, not just the stale-amount one", () => {
+  const order = readAppHtml("orderPreview");
+  assert.ok(order.includes("MAY already be live at the exchange"), "ambiguous failure must warn, not re-arm");
+  assert.ok(order.includes("Outcome unknown"), "the disabled Place button explains itself");
+});
