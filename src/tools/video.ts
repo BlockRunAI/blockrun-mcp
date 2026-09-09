@@ -11,7 +11,7 @@ import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
-import { isApiKeyMode } from "../utils/auth.js";
+import { PORTAL_CREDITS_URL, isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -862,7 +862,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         }
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `Video generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: isApiKeyMode()
+              ? `Video generation was refused for lack of credit on your BlockRun account — top it up at ${PORTAL_CREDITS_URL}.\nError: ${errMsg}`
+              : `Video generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
           };
         }

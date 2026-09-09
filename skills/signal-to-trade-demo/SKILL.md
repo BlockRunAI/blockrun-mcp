@@ -33,8 +33,10 @@ or preparing a fallback.
 
 ## 1. Private operator preflight
 
-- Confirm the Trading profile exposes nine tools and no image/video/media tool:
-  wallet, price, dex, markets, surf, defi, rpc, polymarket_read, polymarket.
+- Confirm the Trading profile exposes eight tools and no image/video/media tool:
+  wallet, price, dex, markets, defi, rpc, polymarket_read, polymarket.
+  (It was nine until 2026-09-06, when the gateway retired Surf and
+  `blockrun_surf` went with it — a preflight that still counts nine fails.)
 - Before screen sharing, the human operator may check `blockrun_wallet`, run
   setup, and inspect positions/orders. Never include those raw calls in the
   presentation conversation.

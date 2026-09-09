@@ -522,6 +522,23 @@ export function resolveSolanaKey(): string | undefined {
   return resolveSolanaKeyDetailed().key;
 }
 
+/**
+ * Why there is no key, when there is no key.
+ *
+ * resolveSolanaKey() collapses "absent" and "the keychain would not open" into
+ * undefined, and every caller then says "no Solana wallet yet — run setup",
+ * which for a locked keychain is both wrong and destructive advice: the wallet
+ * exists and is funded. ensureSolanaWallet already refuses to mint on that
+ * distinction; this exposes it so the sync callers can say the same thing.
+ */
+export function solanaKeyUnavailableReason(): string | undefined {
+  const { key, keychainError } = resolveSolanaKeyDetailed();
+  if (key) return undefined;
+  return keychainError === undefined
+    ? undefined
+    : `the OS keychain could not be read (${keychainError})`;
+}
+
 let _solanaWalletInfo: { address: string; privateKey: string; isNew: boolean } | null = null;
 let _solanaWalletPromise: Promise<{ address: string; privateKey: string; isNew: boolean }> | null = null;
 
@@ -620,6 +637,15 @@ function buildSolanaClient(timeout?: number): SolanaLLMClient {
   }
   const privateKey = resolveSolanaKey();
   if (!privateKey) {
+    const locked = solanaKeyUnavailableReason();
+    if (locked) {
+      // NOT "no wallet yet": the wallet may well exist and be funded, and
+      // telling this user to run setup invites a second one.
+      throw new Error(
+        `Cannot reach your Solana wallet key — ${locked}. Your existing wallet is most likely still in the keychain: ` +
+          `unlock it and retry, or set SOLANA_WALLET_KEY. Nothing was charged.`,
+      );
+    }
     // The SDK constructor would throw "Private key required. Pass privateKey in
     // options or set SOLANA_WALLET_KEY" — true, and useless to someone on a
     // fresh install where Solana is the default chain and nothing has minted a
@@ -795,10 +821,23 @@ const DEFAULT_SOLANA_RPC_URL = "https://sol.blockrun.ai/api/v1/solana/rpc";
  */
 async function getSolanaUsdcBalance(address: string): Promise<number | null> {
   const rpcUrl = process.env.SOLANA_RPC_URL || DEFAULT_SOLANA_RPC_URL;
+  // The SDK reads SOLANA_RPC_HEADERS alongside SOLANA_RPC_URL (resolveRpcConfig
+  // in @blockrun/llm), and taking the balance query off the SDK dropped it —
+  // so a private RPC that authenticates by header answered 401 and the balance
+  // read as "unavailable". Same parse, same failure mode on bad JSON: ignore it.
+  let rpcHeaders: Record<string, string> | undefined;
+  if (process.env.SOLANA_RPC_HEADERS) {
+    try {
+      const parsed = JSON.parse(process.env.SOLANA_RPC_HEADERS) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        rpcHeaders = Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]));
+      }
+    } catch { /* malformed: fall through unauthenticated, as the SDK does */ }
+  }
   try {
     const response = await fetch(rpcUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(rpcHeaders ?? {}) },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,

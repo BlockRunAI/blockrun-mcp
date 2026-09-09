@@ -9,7 +9,7 @@ import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
-import { apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
+import { PORTAL_CREDITS_URL, apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -499,7 +499,9 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         const errMsg = err instanceof Error ? err.message : String(err);
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: isApiKeyMode()
+              ? `RealFace enrollment was refused for lack of credit on your BlockRun account — top it up at ${PORTAL_CREDITS_URL}.\nError: ${errMsg}`
+              : `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
           };
         }

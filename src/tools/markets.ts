@@ -54,7 +54,7 @@ POLYMARKET (Tier 2 — wallet/smart-money analytics):
 - polymarket/wallet/:wallet — full smart-wallet profile
 - polymarket/wallet/:wallet/markets, .../similar
 - polymarket/wallet/pnl/:wallet, .../positions/:wallet, .../volume-chart/:wallet
-- polymarket/wallets/profiles, polymarket/wallets/filter — batch + AND/OR filter
+- polymarket/wallets/profiles — batch profiles, GET with ?addresses= (POST 404s); polymarket/wallets/filter — AND/OR filter
 - polymarket/market/:condition_id/smart-money, polymarket/markets/smart-activity
 
 WALLET IDENTITY & CLUSTERING (Tier 2) — cross-context labels + on-chain relationship graph:
