@@ -97,3 +97,61 @@ test("a failed keychain read refuses to mint a new wallet instead of orphaning t
   mode = "auto";
   readAnswer = { status: "found", value: KEYCHAIN_KEY };
 });
+
+// --- the Solana twin (audit 2026-09-08, P0) ---
+//
+// ensureBothWallets used the SDK's file-only getOrCreateSolanaWallet(). Under
+// strict mode the file is retired once the key is in the keychain, so a plain
+// blockrun_wallet status call minted keypair B, and the next resolveSolanaKey()
+// mirrored B over the funded key A with -U and deleted the file. A was gone.
+
+test("Solana: a failed keychain read with no session file refuses to mint (does not orphan the funded key)", async () => {
+  const { ensureSolanaWallet, ensureBothWallets, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  resetSolanaKeyCache();
+  fs.rmSync(path.join(home, ".blockrun", ".solana-session"), { force: true });
+  mode = "strict";
+  readAnswer = { status: "error", detail: "security exit 51" };
+
+  await assert.rejects(ensureSolanaWallet(), /Refusing to create a new Solana wallet/);
+  await assert.rejects(ensureBothWallets(), /Refusing to create a new/);
+  assert.ok(!fs.existsSync(path.join(home, ".blockrun", ".solana-session")), "nothing may be minted on a failed read");
+
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+});
+
+test("Solana: every store absent -> mint once, and the new key is visible without a cache reset", async () => {
+  const { ensureSolanaWallet, resolveSolanaKey, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  resetSolanaKeyCache();
+  fs.rmSync(path.join(home, ".blockrun", ".solana-session"), { force: true });
+  mode = "auto";
+  readAnswer = { status: "absent" };
+
+  assert.equal(resolveSolanaKey(), undefined, "a miss before provisioning");
+  const info = await ensureSolanaWallet();
+  assert.equal(info.isNew, true);
+  assert.equal(fs.readFileSync(path.join(home, ".blockrun", ".solana-session"), "utf-8"), info.privateKey);
+  assert.equal(resolveSolanaKey(), info.privateKey, "the miss was not memoised");
+  const again = await ensureSolanaWallet();
+  assert.equal(again.address, info.address, "second call returns the same wallet, no second mint");
+
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+});
+
+test("Solana: an existing session file outranks a stale keychain entry", async () => {
+  const { createSolanaWallet, saveSolanaWallet, solanaPublicKey } = await import("@blockrun/llm");
+  const { ensureSolanaWallet, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  const onDisk = await createSolanaWallet();
+  const stale = await createSolanaWallet();
+  saveSolanaWallet(onDisk.privateKey);
+  resetSolanaKeyCache();
+  mode = "auto";
+  readAnswer = { status: "found", value: stale.privateKey };
+
+  const info = await ensureSolanaWallet();
+  assert.equal(info.isNew, false);
+  assert.equal(info.privateKey, onDisk.privateKey);
+  assert.equal(info.address, await solanaPublicKey(onDisk.privateKey));
+
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+});

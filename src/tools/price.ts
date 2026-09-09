@@ -32,7 +32,7 @@ import { reserveBudget, recordSpending } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import type { BudgetState } from "../types.js";
-import { baseOnlyMessage, getPriceClient } from "../utils/wallet.js";
+import { getPriceClient } from "../utils/wallet.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 
@@ -101,10 +101,9 @@ Examples:
     },
     async ({ action, category, symbol, market, session, resolution, from, to, query, limit, agent_id }) => {
       try {
-        if (category === "stocks" && !market) {
-          throw new Error("market is required when category='stocks'");
-        }
-
+        // Equity price/history first — before the market-required throw, so the
+        // most natural stocks call (no market) gets the real answer in one round
+        // trip instead of a validation error for a route that is not served.
         const paid = isPaidPriceCall(action, category);
         if (paid) {
           return {
@@ -112,9 +111,11 @@ Examples:
             isError: true,
           };
         }
-        const chainBlock = paid ? baseOnlyMessage("Paid stock price/history calls") : null;
-        if (chainBlock) {
-          return { content: [{ type: "text", text: formatError(chainBlock) }], isError: true };
+        // Re-enable when the equity route returns (see the header): the paid
+        // path is Base-only, so restore `baseOnlyMessage("Paid stock price/history calls")`
+        // here ahead of the reservation.
+        if (category === "stocks" && !market) {
+          throw new Error("market is required when category='stocks'");
         }
 
         // withTxFee: the gateway charges base + $0.002 (src/utils/tx-fee.ts), so a
