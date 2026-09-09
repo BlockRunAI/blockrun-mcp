@@ -123,6 +123,19 @@ lived only in a comment, which cannot fail; `test/axios-scope.test.ts` now
 fails the day a non-Polymarket module imports axios and would start routing
 through an operator's `POLYMARKET_CLOB_PROXY` unasked.
 
+**The live e2e scripts printed the wallet address they promised to hide.** Three
+of the four say in their own header that wallet addresses and transaction ids
+are never printed, and each implemented it with a different regex. The one in
+the two scripts that actually move money matched 64-hex only, which is a
+transaction hash; a 40-hex address went through untouched, and the withdrawal
+path really does interpolate a bridge response carrying an address into its
+error text. Worse, only the `isError` branch was ever redacted — a thrown
+exception printed the raw message and stack. There is now one redaction,
+covering every exit path, and a test that fails if a script grows its own regex
+again. `scripts/` is also in the typecheck now: these files import from `src`
+and were checked by nothing, so a signature change surfaced when someone ran
+them against a funded wallet.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`

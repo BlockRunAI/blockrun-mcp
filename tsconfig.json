@@ -13,7 +13,8 @@
   "include": [
     "src/**/*",
     "test/**/*",
-    "apps/**/*"
+    "apps/**/*",
+    "scripts/**/*"
   ],
   "exclude": [
     "node_modules",

@@ -5,6 +5,7 @@
  * transaction id. From @KillerQueen-Z's #66.
  */
 import { runSetup } from "../src/utils/polymarket/setup.js";
+import { failRedacted } from "./redact.js";
 
 try {
   const submitted = await runSetup({ confirm: true });
@@ -16,7 +17,5 @@ try {
     approvalsPending: verified.structured.approvalsPending,
   }, null, 2));
 } catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(JSON.stringify({ failed: true, error: message.replace(/0x[a-fA-F0-9]{40,}/g, "<redacted>") }));
-  process.exitCode = 1;
+  failRedacted("", error);
 }
