@@ -248,3 +248,42 @@ test("hasLabelledServerStatus agrees with formatError on the dotted shape", () =
   assert.equal(hasLabelledServerStatus("charged $500.25"), false);
   assert.equal(hasLabelledServerStatus("batch of 501 items"), false);
 });
+
+// --- "nothing was charged" must never carry "fund your wallet" (round 2) ---
+//
+// explicitlyUncharged gated only the `payment` keyword sub-clause, so a bare
+// 402, "balance" or "insufficient" still earned the funding footer. Two of this
+// repo's own messages did exactly that.
+
+test("the video tool's unreadable-quote refusal does not tell a funded wallet to top up", () => {
+  const out = formatError(
+    "The gateway's 402 quote carried an unreadable amount (\"garbage\"). Refusing to sign a payment " +
+    "for an amount that could not be validated — no charge was made. This is a gateway fault; retry, " +
+    "and report it if it persists.",
+  );
+  assert.doesNotMatch(out, /needs funding/);
+  assert.doesNotMatch(out, /Send USDC/);
+});
+
+test("RealFace's 'No payment taken' is recognised as uncharged", () => {
+  const out = formatError("Portrait rejected — the image did not pass the liveness check. No payment taken.");
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("the quote guard's own refusal does not read as a funding problem", () => {
+  const out = formatError(
+    "The gateway quoted $1.1355 for azure/sora-2 video, but this tool expected about $0.4220 " +
+    "(2.7x the published rate). Refusing to sign it — no charge was made.",
+  );
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("a genuine empty wallet STILL gets funding advice", () => {
+  for (const msg of [
+    "API error: 402 Payment Required",
+    "Payment rejected: insufficient balance",
+    "insufficient funds for this call",
+  ]) {
+    assert.match(formatError(msg), /needs funding|Send USDC/, msg);
+  }
+});

@@ -13,7 +13,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -268,6 +268,24 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         // Prefer the exact 402-quoted price (handles sound-effect duration and any
         // server-side price change) over the local estimate for billing + display.
         billedUsd = amountToUsd(details.amount) ?? cost;
+
+        // WHAT was quoted, before how much. 0.49.0 added this to video (both
+        // rails) and image (Solana) and left the identical hand-rolled flows
+        // here unguarded — so a gateway that quotes a different product, the
+        // way sol.blockrun.ai quoted azure/sora-2 as Seedance at 2.7x, was
+        // signed unseen. Refusing costs nothing: nothing is signed yet.
+        assertQuoteNearEstimate(billedUsd, cost, {
+          what: `${model} speech`,
+          quotedFor: details.resource?.description,
+          hint: `Retry on Solana (blockrun_wallet action:"chain" chain:"solana"), or report the quote.`,
+        });
+        // And the cap, against the REAL price rather than the estimate.
+        const quotedUsd = amountToUsd(details.amount);
+        if (quotedUsd !== null && quotedUsd > cost) {
+          gate?.release();
+          gate = reserveBudget(budget, agent_id, quotedUsd);
+          if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+        }
 
         const paymentPayload = await createPaymentPayload(
           privateKey,

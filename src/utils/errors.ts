@@ -108,15 +108,33 @@ export function formatError(message: string, opts?: { altModels?: string }): str
 
   const isPostPaymentClientError = msgLower.includes("api error after payment") &&
     /(^|[^0-9.])4[0-9]{2}($|[^0-9.])/.test(msgLower);
+  // Every way this repo and the gateway say "the money did not move". The list
+  // is longer than it looks because the sentence is written in five places by
+  // four authors: the gateway ("payment NOT charged"), the SDK, the manual-402
+  // tools ("No payment taken", "no charge was made"), and the quote guard
+  // ("Refusing to sign it — no charge was made").
   const explicitlyUncharged =
     msgLower.includes("no payment was made") ||
+    msgLower.includes("no payment was taken") ||
+    msgLower.includes("no payment taken") ||
     msgLower.includes("no charge was made") ||
+    msgLower.includes("nothing was charged") ||
     msgLower.includes("not charged");
-  const isPaymentError = !isPostPaymentClientError && (
+  // …and it gates the WHOLE funding branch, not just the "payment" keyword.
+  // It used to gate only that sub-clause, so a message carrying a bare 402, the
+  // word "balance", or "insufficient" still earned "your wallet needs funding"
+  // while saying in the same breath that nothing was charged. Two of this
+  // repo's own messages did exactly that: the video tool's unreadable-quote
+  // refusal ("Refusing to sign a payment for an amount that could not be
+  // validated — no charge was made") matched the bare 402 and told a wallet
+  // holding $1,000 to top up, and RealFace's "No payment taken" was not even in
+  // the marker list. Telling someone to fund a wallet that was never debited is
+  // the same class of wrong as #132, pointed the other way.
+  const isPaymentError = !isPostPaymentClientError && !explicitlyUncharged && (
     hasStatus("402") ||
     msgLower.includes("balance") ||
     msgLower.includes("insufficient") ||
-    (msgLower.includes("payment") && !hasStatus("500") && !explicitlyUncharged)
+    (msgLower.includes("payment") && !hasStatus("500"))
   );
 
   // Upstream model/provider availability, e.g. token360 returns
