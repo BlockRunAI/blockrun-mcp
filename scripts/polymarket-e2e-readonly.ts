@@ -5,6 +5,7 @@
  */
 import { listPositions } from "../src/utils/polymarket/positions.js";
 import { withdrawFunds } from "../src/utils/polymarket/withdraw.js";
+import { redactChainValues } from "./redact.js";
 
 const [positionsResult, withdrawalResult] = await Promise.all([
   listPositions(),
@@ -34,7 +35,7 @@ const positions = ((positionsResult.structured as {
 console.log(JSON.stringify({
   positions,
   withdrawalPreview: withdrawalResult.isError
-    ? withdrawalResult.text.replace(/0x[a-fA-F0-9]{40}/g, "<wallet>")
+    ? redactChainValues(withdrawalResult.text)
     : {
       dryRun: withdrawalResult.structured?.dryRun,
       amountUsd: withdrawalResult.structured?.amountUsd,

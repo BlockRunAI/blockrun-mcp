@@ -5,7 +5,7 @@ import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawGet, rawPost } from "../utils/raw-call.js";
+import { ledgerFallback, rawGet, rawPost, type RawClient } from "../utils/raw-call.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -54,7 +54,7 @@ POLYMARKET (Tier 2 — wallet/smart-money analytics):
 - polymarket/wallet/:wallet — full smart-wallet profile
 - polymarket/wallet/:wallet/markets, .../similar
 - polymarket/wallet/pnl/:wallet, .../positions/:wallet, .../volume-chart/:wallet
-- polymarket/wallets/profiles, polymarket/wallets/filter — batch + AND/OR filter
+- polymarket/wallets/profiles — batch profiles, GET with ?addresses= (POST 404s); polymarket/wallets/filter — AND/OR filter
 - polymarket/market/:condition_id/smart-money, polymarket/markets/smart-activity
 
 WALLET IDENTITY & CLUSTERING (Tier 2) — cross-context labels + on-chain relationship graph:
@@ -129,7 +129,7 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           const { data: result, paidUsd } = body !== undefined
             ? await rawPost(llm, endpoint, body)
             : await rawGet(llm, endpoint, params);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
 
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

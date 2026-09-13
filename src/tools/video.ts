@@ -11,7 +11,7 @@ import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { pollTimeoutFor } from "../utils/poll.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
-import { isApiKeyMode } from "../utils/auth.js";
+import { PORTAL_CREDITS_URL, isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -37,8 +37,13 @@ import {
 // Without that clamp the true worst case is budget + interval + poll timeout,
 // which at 540s/5s/90s lands 35s PAST a 600s authorization.
 export const VIDEO_TOTAL_BUDGET_MS = 540_000;
-const POLL_INTERVAL_MS = 5_000;
-export const VIDEO_POLL_TIMEOUT_MS = 90_000;
+export const POLL_INTERVAL_MS = 5_000;
+// The gateway's poll route declares `export const maxDuration = 60` (blockrun
+// src/app/api/v1/videos/generations/[id]/route.ts), so a poll that has not
+// answered in 60s never will — waiting 90 was 30s of the signed authorization's
+// window spent on a request the server had already abandoned. The Solana helper
+// already capped its poll at the route's own limit; this matches it.
+export const VIDEO_POLL_TIMEOUT_MS = 60_000;
 // Lifetime of the signed payment authorization, in seconds. Exported so the
 // margin above is asserted against the value the request actually sends,
 // rather than a literal restated in the test.
@@ -529,13 +534,17 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             body,
             {
               pollBudgetMs: SOLANA_VIDEO_TOTAL_BUDGET_MS,
-              onQuote: (quotedUsd, quoteDetails) => {
+              onQuote: (solQuotedUsd, quoteDetails) => {
+                // Capture for the give-up path below: on Solana the quote is
+                // only ever seen inside the helper, and the catch needs it to
+                // book conservatively.
+                quotedUsd = solQuotedUsd;
                 // WHAT was quoted, before how much: a substituted or repriced
                 // model is refused here, unsigned (QuoteMismatchError).
-                assertVideoQuoteSane(quotedUsd, estimatedCost, selectedModel, "solana", quoteDetails?.resource?.description);
-                if (quotedUsd === null || quotedUsd <= estimatedCost) return;
+                assertVideoQuoteSane(solQuotedUsd, estimatedCost, selectedModel, "solana", quoteDetails?.resource?.description);
+                if (solQuotedUsd === null || solQuotedUsd <= estimatedCost) return;
                 gate?.release();
-                gate = reserveBudget(budget, agent_id, quotedUsd);
+                gate = reserveBudget(budget, agent_id, solQuotedUsd);
                 // Phrased so formatError's uncharged guard suppresses its
                 // "fund your wallet" footer — the remedy is the budget, not USDC.
                 if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
@@ -853,7 +862,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         }
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `Video generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: isApiKeyMode()
+              ? `Video generation was refused for lack of credit on your BlockRun account — top it up at ${PORTAL_CREDITS_URL}.\nError: ${errMsg}`
+              : `Video generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
           };
         }
@@ -871,10 +882,21 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               isError: true,
             };
           }
+          // Solana gives up the same way Base does with a poll in flight: the
+          // helper's own message says "a poll still in flight at the deadline
+          // can settle server-side". 0.49.0 booked that case on Base and on the
+          // account rail and left the DEFAULT chain booking nothing — a settled
+          // Solana render then moved no budget at all (audit round 2).
+          if (!isApiKeyMode() && getChain() === "solana") {
+            recordActualSpend(budget, quotedUsd, estimatedCost, agent_id);
+            return {
+              content: [{ type: "text", text: `Video generation timed out on Solana. A poll still in flight at the deadline can settle server-side, so the charge MAY have gone through — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.${reclaim}\nError: ${errMsg}` }],
+              isError: true,
+            };
+          }
           // On Base, settlement happens only on a poll the gateway answers
           // "completed"; the last one answered otherwise, so nothing settled.
-          // The Solana helper describes its own money state in errMsg.
-          const base = !isApiKeyMode() && getChain() !== "solana";
+          const base = !isApiKeyMode();
           return {
             content: [{ type: "text", text: `Video generation timed out.${base ? ` No payment was taken.${reclaim}` : ""}\nError: ${errMsg}` }],
             isError: true,

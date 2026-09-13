@@ -28,6 +28,13 @@ import { initializeMcpServer } from "../src/mcp-handler.js";
 import { measure, asK, listTools } from "../scripts/measure-tool-schema.mjs";
 
 const README = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+// docs/mcp-schema-overhead.md carries a SECOND copy of the profile-cost table.
+// Only the README copy was pinned, so the doc could sit at a stale number
+// indefinitely while the README stayed correct.
+const OVERHEAD_DOC = readFileSync(
+  new URL("../docs/mcp-schema-overhead.md", import.meta.url),
+  "utf8",
+);
 const PREFIX = "mcp__blockrun__";
 
 /** Same projection the CLI harness measures, over an in-process handshake. */
@@ -80,7 +87,22 @@ test("the profile table states each profile's measured cost", async () => {
     );
     assert.match(README, row,
       `README row for ${profile} should read ${tools} tools / ${total.toLocaleString()} tokens`);
+    assert.match(OVERHEAD_DOC, row,
+      `docs/mcp-schema-overhead.md row for ${profile} should read ${tools} tools / ${total.toLocaleString()} tokens`);
   }
+});
+
+test("every profile in src/profiles.ts is measured, not just the five in the table", async () => {
+  // measure-tool-schema.mjs hardcodes its profile list and this file hardcodes
+  // the same one. A profile added to src/profiles.ts would be measured by
+  // neither and pinned by neither, so it could ship advertising nothing.
+  const { PROFILES } = await import("../src/profiles.js");
+  assert.deepEqual(
+    Object.keys(PROFILES).sort(),
+    ["chat", "full", "media", "research", "trading"],
+    "a new profile needs a row in the README table, in docs/mcp-schema-overhead.md, " +
+      "and in PROFILES in scripts/measure-tool-schema.mjs",
+  );
 });
 
 test("the advertised profile saving is the one measured", async () => {

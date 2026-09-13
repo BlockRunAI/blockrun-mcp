@@ -15,7 +15,7 @@ import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost } from "../utils/raw-call.js";
+import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
 import { formatError, extractErrorMessage } from "../utils/errors.js";
 import { isValidNetworkSlug } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -96,7 +96,7 @@ Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they co
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const { data: result, paidUsd } = await rawPost(client, `/v1/rpc/${cleanNetwork}`, body);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)

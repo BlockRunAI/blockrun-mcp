@@ -4,10 +4,17 @@
  * moving more than $2.00. Wallet addresses and transaction IDs are never
  * printed. From @KillerQueen-Z's #66; success check updated for the tri-state
  * redeem statuses main ships (only status:"redeemed" counts).
+ *
+ * The redaction covers every exit path, thrown errors included — see
+ * ./redact.ts for why that is not the same regex it used to be.
  */
 import { fetchPositions, getFundsAddress } from "../src/utils/polymarket/positions.js";
 import { redeemPosition } from "../src/utils/polymarket/redeem.js";
 import { withdrawFunds } from "../src/utils/polymarket/withdraw.js";
+import { failRedacted, redactChainValues } from "./redact.js";
+
+process.on("uncaughtException", (error) => failRedacted("", error));
+process.on("unhandledRejection", (error) => failRedacted("", error));
 
 const owner = getFundsAddress();
 const positions = await fetchPositions(owner);
@@ -23,12 +30,12 @@ if (!target?.conditionId) {
 
 const redeem = await redeemPosition({ condition_id: target.conditionId, confirm: true });
 if (redeem.isError || redeem.structured?.status !== "redeemed") {
-  throw new Error(`Redeem verification did not complete cleanly: ${redeem.text.replace(/0x[a-fA-F0-9]{64}/g, "<tx>")}`);
+  failRedacted("Redeem verification did not complete cleanly: ", redactChainValues(redeem.text));
 }
 
 const withdrawal = await withdrawFunds({ amount_usd: 2, confirm: true });
 if (withdrawal.isError) {
-  throw new Error(`Withdrawal submission failed: ${withdrawal.text.replace(/0x[a-fA-F0-9]{64}/g, "<tx>")}`);
+  failRedacted("Withdrawal submission failed: ", redactChainValues(withdrawal.text));
 }
 
 console.log(JSON.stringify({

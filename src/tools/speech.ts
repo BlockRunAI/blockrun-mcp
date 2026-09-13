@@ -13,7 +13,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -145,6 +145,14 @@ Returns a hosted audio URL — download immediately if you need to keep the file
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
+      // Hoisted for the catch: a timeout after the signature was sent has to be
+      // booked, and it needs both the reserve and whatever the 402 quoted.
+      let reservedCost = 0;
+      let quotedCost: number | null = null;
+      // Set only while a request carrying the payment is outstanding. A timeout
+      // on the unpaid 402 probe charges nothing, and booking it would invent
+      // spend; a timeout after the signature went out may well have settled.
+      let paidRequestInFlight = false;
       try {
         if (action === "voices") {
           return await listVoices();
@@ -197,6 +205,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           cost = speechCost(model, input);
         }
 
+        reservedCost = cost;
         gate = reserveBudget(budget, agent_id, cost);
         if (!gate.allowed) {
           return {
@@ -268,6 +277,26 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         // Prefer the exact 402-quoted price (handles sound-effect duration and any
         // server-side price change) over the local estimate for billing + display.
         billedUsd = amountToUsd(details.amount) ?? cost;
+        quotedCost = amountToUsd(details.amount);
+        paidRequestInFlight = true;
+
+        // WHAT was quoted, before how much. 0.49.0 added this to video (both
+        // rails) and image (Solana) and left the identical hand-rolled flows
+        // here unguarded — so a gateway that quotes a different product, the
+        // way sol.blockrun.ai quoted azure/sora-2 as Seedance at 2.7x, was
+        // signed unseen. Refusing costs nothing: nothing is signed yet.
+        assertQuoteNearEstimate(billedUsd, cost, {
+          what: `${model} speech`,
+          quotedFor: details.resource?.description,
+          hint: `Retry on Solana (blockrun_wallet action:"chain" chain:"solana"), or report the quote.`,
+        });
+        // And the cap, against the REAL price rather than the estimate.
+        const quotedUsd = amountToUsd(details.amount);
+        if (quotedUsd !== null && quotedUsd > cost) {
+          gate?.release();
+          gate = reserveBudget(budget, agent_id, quotedUsd);
+          if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+        }
 
         const paymentPayload = await createPaymentPayload(
           privateKey,
@@ -291,7 +320,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             "PAYMENT-SIGNATURE": paymentPayload,
           },
           body: JSON.stringify(body),
-        }, SPEECH_TIMEOUT);
+        }, SPEECH_TIMEOUT).finally(() => { paidRequestInFlight = false; });
 
         if (resp.status === 402) {
           throw new Error("Payment rejected. Check your wallet balance.");
@@ -355,9 +384,14 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             isError: true,
           };
         }
-        if (isTimeoutError(err)) {
+        if (paidRequestInFlight && isTimeoutError(err)) {
+          // The wording was already right and the LEDGER entry was missing: a
+          // charge the message says MAY have settled was booked nowhere, and
+          // the finally released the reservation. Book it conservatively, the
+          // way video, music and realface do (audit round 2, rail-parity).
+          recordActualSpend(budget, quotedCost, reservedCost, agent_id);
           return {
-            content: [{ type: "text", text: `Speech generation timed out after ${SPEECH_TIMEOUT / 1000}s. The payment signature had already been sent, so a charge MAY have settled without returning audio — check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Speech generation timed out after ${SPEECH_TIMEOUT / 1000}s. The payment signature had already been sent, so a charge MAY have settled without returning audio — it has been booked against your budget; check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
             isError: true,
           };
         }

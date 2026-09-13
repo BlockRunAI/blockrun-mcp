@@ -355,6 +355,18 @@ export interface TradeInput {
   post_only?: boolean;
   confirm?: boolean;
   agent_id?: string;
+  /**
+   * The worst fill the CALLER was shown, carried from a dry-run preview into
+   * the confirm. Market orders are signed at the worst level this call's own
+   * book walk consumes, so "signed at the worst fill you saw" holds within one
+   * call — and the preview and the confirm are two calls. The book can move in
+   * between, and it moves against you exactly when it matters.
+   *
+   * When present, a walk that comes out worse than this is REFUSED before
+   * anything is signed, rather than silently signed at the new number. Absent,
+   * behaviour is unchanged: the walk stands on its own.
+   */
+  max_fill_price?: number;
 }
 
 export interface ToolResult {
@@ -437,6 +449,25 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
       const worstFillPrice = walk
         ? roundToTick(walk.worstPrice ?? (quote as number), tickSize, input.action)
         : undefined;
+
+      // The preview's bound, enforced. Buy: a worse fill is a HIGHER price;
+      // sell: a worse fill is a LOWER one.
+      if (!isLimit && input.max_fill_price !== undefined && worstFillPrice !== undefined) {
+        const worse = input.action === "buy"
+          ? worstFillPrice > input.max_fill_price
+          : worstFillPrice < input.max_fill_price;
+        if (worse) {
+          const dir = input.action === "buy" ? "above" : "below";
+          return {
+            text:
+              `The book moved since that quote: this order would fill at ${worstFillPrice} (${(worstFillPrice * 100).toFixed(1)}¢), ` +
+              `${dir} the ${input.max_fill_price} (${(input.max_fill_price * 100).toFixed(1)}¢) you were shown. Nothing was signed and nothing was charged. ` +
+              `Re-quote to see the current price, or pass max_fill_price yourself to set the bound you will accept.`,
+            isError: true,
+            structured: { refused: "worse_than_quoted", worstFillPrice, maxFillPrice: input.max_fill_price, action: input.action },
+          };
+        }
+      }
 
       const notional = isLimit
         ? (price as number) * (size as number)

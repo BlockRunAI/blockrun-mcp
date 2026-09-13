@@ -334,3 +334,72 @@ test("a FOK market sell the bid book cannot absorb is refused pre-sign, like the
     mock.restoreAll();
   }
 });
+
+// --- the previewed bound, enforced across the preview→confirm boundary ---
+//
+// "Signed at the worst fill you saw" held within ONE call: the walk that
+// produced the preview also set the signed limit. The preview and the confirm
+// are two calls, and the confirm re-walks a fresh book — so a book that moved
+// in between was signed at a price the card never displayed. It moves against
+// you exactly when it matters.
+
+test("a book that moved against the quote is refused, unsigned, when the bound is carried", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.40", size: "25" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  const preview = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5 });
+  const quoted = (preview.structured as { worstFillPrice: number }).worstFillPrice;
+  assert.equal(quoted, 0.4);
+
+  // The cheap level is gone by the time the user clicks Confirm.
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.55", size: "25" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  const before = calls.length;
+  const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true, max_fill_price: quoted });
+  assert.equal(res.isError, true, res.text);
+  assert.match(res.text, /book moved/);
+  assert.match(res.text, /nothing was charged/i);
+  assert.equal((res.structured as { refused?: string }).refused, "worse_than_quoted");
+  assert.equal(calls.length, before, "nothing may be signed");
+});
+
+test("a book that moved in the user's FAVOUR still places", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.30", size: "25" }], bids: [{ price: "0.29", size: "100" }],
+  }));
+  const before = calls.length;
+  const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true, max_fill_price: 0.4 });
+  assert.equal(res.isError, undefined, res.text);
+  assert.equal(calls.length, before + 1, "a better price is not a reason to refuse");
+});
+
+test("a sell is bounded the other way — a LOWER fill is the worse one", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.60", size: "100" }], bids: [{ price: "0.45", size: "100" }],
+  }));
+  const before = calls.length;
+  const worse = await executeTrade({ action: "sell", token_id: "111", size: 10, confirm: true, max_fill_price: 0.5 });
+  assert.equal(worse.isError, true, worse.text);
+  assert.match(worse.text, /book moved/);
+  assert.equal(calls.length, before, "nothing signed on a sell below the floor");
+
+  const ok = await executeTrade({ action: "sell", token_id: "111", size: 10, confirm: true, max_fill_price: 0.4 });
+  assert.equal(ok.isError, undefined, ok.text);
+  assert.equal(calls.length, before + 1);
+});
+
+test("without the bound, behaviour is unchanged — the walk stands on its own", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.55", size: "25" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  const before = calls.length;
+  const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+  assert.equal(res.isError, undefined, res.text);
+  assert.equal(calls.length, before + 1);
+});

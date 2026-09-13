@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
@@ -178,6 +178,23 @@ Returns a permanent BlockRun-hosted URL.`,
           const { solanaPaidAsyncPost } = await import("../utils/solana-402.js");
           const { data, paidUsd, txHash } = await solanaPaidAsyncPost("/v1/audio/generations", body, {
             pollBudgetMs: MUSIC_POLL_BUDGET_MS,
+            // The helper offers this hook and music passed nothing, so the
+            // guard fired against no one and the SPL transfer was signed for
+            // whatever the quote said (audit round 2).
+            onQuote: (solQuotedUsd, quoteDetails) => {
+              // Captured for the give-up path: on Solana the quote is only ever
+              // seen inside the helper.
+              quotedUsd = solQuotedUsd;
+              assertQuoteNearEstimate(solQuotedUsd, MUSIC_COST, {
+                what: `${model} music`,
+                quotedFor: quoteDetails?.resource?.description,
+                hint: `Retry on Base (blockrun_wallet action:"chain" chain:"base"), or report the quote.`,
+              });
+              if (solQuotedUsd === null || solQuotedUsd <= MUSIC_COST) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, solQuotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           });
           // Book before validating the payload: a malformed completed body must
           // not make a settled charge vanish from the local ledger.
@@ -210,6 +227,23 @@ Returns a permanent BlockRun-hosted URL.`,
         const paymentRequired = parsePaymentRequired(prHeader);
         const details = extractPaymentDetails(paymentRequired);
         quotedUsd = amountToUsd(details.amount);
+
+        // WHAT was quoted, before how much. 0.49.0 added this to video (both
+        // rails) and image (Solana) and left the identical hand-rolled flows
+        // here unguarded — so a gateway that quotes a different product, the
+        // way sol.blockrun.ai quoted azure/sora-2 as Seedance at 2.7x, was
+        // signed unseen. Refusing costs nothing: nothing is signed yet.
+        assertQuoteNearEstimate(quotedUsd, MUSIC_COST, {
+          what: `${model} music`,
+          quotedFor: details.resource?.description,
+          hint: `Retry on Solana (blockrun_wallet action:"chain" chain:"solana"), or report the quote.`,
+        });
+        // And the cap, against the REAL price rather than the estimate.
+        if (quotedUsd !== null && quotedUsd > MUSIC_COST) {
+          gate?.release();
+          gate = reserveBudget(budget, agent_id, quotedUsd);
+          if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+        }
 
         // validBefore is counted from HERE, so the authorization deadline has to
         // be stamped here too — not after submit, which can burn up to 95s.
@@ -420,10 +454,20 @@ Returns a permanent BlockRun-hosted URL.`,
               isError: true,
             };
           }
+          // Solana gives up the same way: the shared helper's own message says
+          // a poll still in flight at the deadline can settle server-side.
+          // 0.49.0 booked that on Base and on the account rail and left the
+          // DEFAULT chain booking nothing (audit round 2).
+          if (!isApiKeyMode() && getChain() === "solana") {
+            recordActualSpend(budget, quotedUsd, MUSIC_COST, agent_id);
+            return {
+              content: [{ type: "text", text: `Music generation timed out on Solana. A poll still in flight at the deadline can settle server-side, so the charge MAY have gone through — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.${reclaim}\nError: ${errMsg}` }],
+              isError: true,
+            };
+          }
           // On Base, settlement happens only on a response the gateway sends
-          // as settled; the last one was not, so nothing settled. The Solana
-          // helper describes its own money state in errMsg.
-          const base = !isApiKeyMode() && getChain() !== "solana";
+          // as settled; the last one was not, so nothing settled.
+          const base = !isApiKeyMode();
           return {
             content: [{ type: "text", text: `Music generation timed out.${base ? ` No payment was taken.${reclaim}` : ""}\nError: ${errMsg}` }],
             isError: true,

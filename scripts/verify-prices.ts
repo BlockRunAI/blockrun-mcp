@@ -471,7 +471,11 @@ for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
     if (typeof input !== "number" || typeof output !== "number") continue;
     // Base marks retired rows `available:false`; Solana omits the field
     // entirely, and an omitted flag is a served model, not an unknown one.
-    if (m.available === false) continue;
+    //
+    // A model FREE_CHAT_MODELS claims is free is checked even when unavailable:
+    // the dangerous direction is a $0 reserve for a call that costs money, and
+    // "retired today" does not promise "still free when it comes back".
+    if (m.available === false && !FREE_CHAT_MODELS.has(m.id)) continue;
     checked++;
     listed.add(m.id);
     const isFree = FREE_CHAT_MODELS.has(m.id);
@@ -503,10 +507,20 @@ for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
       catalogueNotes.push(`${name}: ${m.id} is billed $0 but FREE_CHAT_MODELS does not list it — an explicit call reserves the default, and an exhausted budget refuses a free call`);
     }
   }
-  for (const id of MODEL_TIERS.free) {
-    if (!listed.has(id)) catalogueNotes.push(`${name}: free[] routes ${id}, which the catalogue does not list — not a death certificate (gpt-oss-120b is hidden-alive); probe with a realistic POST before removing`);
+  // Every id we reserve $0 for, not just the routing tier — FREE_CHAT_MODELS is
+  // the classifier estimateChatCost actually consults, and it has members the
+  // tier list does not. An unlisted one is UNVERIFIED, not verified-free: the
+  // sweep can only price what the catalogue reports.
+  let unverifiedFree = 0;
+  for (const id of FREE_CHAT_MODELS) {
+    if (listed.has(id)) continue;
+    unverifiedFree++;
+    catalogueNotes.push(`${name}: reserves $0 for ${id}, which the catalogue does not list — UNVERIFIED, not confirmed free (delisting is not death: gpt-oss-120b is hidden-alive). Probe with a realistic POST before trusting or removing it`);
   }
-  console.log(`  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve`);
+  console.log(
+    `  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve` +
+      (unverifiedFree ? `, ${unverifiedFree} free-list members unverified (not in the catalogue)` : ""),
+  );
 }
 for (const g of catalogueGaps) console.log(`  ✗  ${g}`);
 for (const n of catalogueNotes) console.log(`  !  ${n}`);

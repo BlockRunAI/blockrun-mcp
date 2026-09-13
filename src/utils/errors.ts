@@ -56,6 +56,23 @@ export function isPaymentRejectionError(message: string): boolean {
 }
 
 /**
+ * Where a status code is allowed to END.
+ *
+ * End of string, or a character that is neither a digit nor a dot — that much
+ * is what keeps "$402.50" and "$1.4020" from reading as status codes, and it is
+ * load-bearing (both are pinned by tests).
+ *
+ * The third alternative is the fix for a real gap: the SDK's ACCOUNT client
+ * writes `BlockRun account API error: 502.` with a sentence-ending period
+ * (@blockrun/llm dist/index.js, `${response.status}.${hint}`), and a dot was
+ * excluded outright — so every account-rail 5xx fell through unclassified and
+ * the caller got no guidance at all, while the identical wallet-rail message
+ * ("API error: 502") got it. A dot NOT followed by a digit is punctuation; a
+ * dot followed by a digit is a decimal point and still disqualifies.
+ */
+const STATUS_END = "(?:$|[^0-9.]|\\.(?!\\d))";
+
+/**
  * True when `message` carries a 5xx that READS as an HTTP status. A bare
  * three-digit match is far too loose: LLM errors are full of incidental
  * 5xx-shaped numbers ("max_tokens 512 is above the limit", "embedding dimension
@@ -69,7 +86,7 @@ export function hasLabelledServerStatus(message: string): boolean {
   const m = message.toLowerCase();
   // "payment" is a label too: the SDK's post-402 prefix is "API error after
   // payment: 502", where the word before the number is "payment", not "error".
-  return /(?:status(?:\s*code)?|http|error|payment)\s*[:=]?\s*5[0-9]{2}(?:$|[^0-9.])/.test(m) ||
+  return new RegExp(`(?:status(?:\\s*code)?|http|error|payment)\\s*[:=]?\\s*5[0-9]{2}${STATUS_END}`).test(m) ||
     /(?:^|[^0-9.])5[0-9]{2}:?\s+(?:internal|server error|bad gateway|service unavailable|gateway time)/.test(m);
 }
 
@@ -87,19 +104,37 @@ export function formatError(message: string, opts?: { altModels?: string }): str
   // characters", "$1.4020", or "$402.50" must not classify as 500/402 errors.
   // The trailing boundary excludes a following digit AND a following dot, so the
   // integer part of a decimal amount ($402.50) is not misread as a status code.
-  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}($|[^0-9.])`).test(msgLower);
+  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}${STATUS_END}`).test(msgLower);
 
   const isPostPaymentClientError = msgLower.includes("api error after payment") &&
     /(^|[^0-9.])4[0-9]{2}($|[^0-9.])/.test(msgLower);
+  // Every way this repo and the gateway say "the money did not move". The list
+  // is longer than it looks because the sentence is written in five places by
+  // four authors: the gateway ("payment NOT charged"), the SDK, the manual-402
+  // tools ("No payment taken", "no charge was made"), and the quote guard
+  // ("Refusing to sign it — no charge was made").
   const explicitlyUncharged =
     msgLower.includes("no payment was made") ||
+    msgLower.includes("no payment was taken") ||
+    msgLower.includes("no payment taken") ||
     msgLower.includes("no charge was made") ||
+    msgLower.includes("nothing was charged") ||
     msgLower.includes("not charged");
-  const isPaymentError = !isPostPaymentClientError && (
+  // …and it gates the WHOLE funding branch, not just the "payment" keyword.
+  // It used to gate only that sub-clause, so a message carrying a bare 402, the
+  // word "balance", or "insufficient" still earned "your wallet needs funding"
+  // while saying in the same breath that nothing was charged. Two of this
+  // repo's own messages did exactly that: the video tool's unreadable-quote
+  // refusal ("Refusing to sign a payment for an amount that could not be
+  // validated — no charge was made") matched the bare 402 and told a wallet
+  // holding $1,000 to top up, and RealFace's "No payment taken" was not even in
+  // the marker list. Telling someone to fund a wallet that was never debited is
+  // the same class of wrong as #132, pointed the other way.
+  const isPaymentError = !isPostPaymentClientError && !explicitlyUncharged && (
     hasStatus("402") ||
     msgLower.includes("balance") ||
     msgLower.includes("insufficient") ||
-    (msgLower.includes("payment") && !hasStatus("500") && !explicitlyUncharged)
+    (msgLower.includes("payment") && !hasStatus("500"))
   );
 
   // Upstream model/provider availability, e.g. token360 returns
@@ -133,7 +168,7 @@ export function formatError(message: string, opts?: { altModels?: string }): str
   // gateway settled and then upstream refused, and this formatter has no
   // endpoint context to know whether the nonce was released.
   const isNotServed =
-    /(?:status(?:\s*code)?|http|error|payment)\s*[:=]?\s*501(?:$|[^0-9.])/.test(msgLower) ||
+    new RegExp(`(?:status(?:\\s*code)?|http|error|payment)\\s*[:=]?\\s*501${STATUS_END}`).test(msgLower) ||
     /(?:^|[^0-9.])501:?\s+not implemented/.test(msgLower);
   const isNotServedPrePayment = isNotServed && !msgLower.includes("api error after payment");
 

@@ -81,12 +81,31 @@ jobs:
         run: echo "npm already at ${{ steps.v.outputs.pkg }} — skipping npm publish"
 
       # ---- MCP registry ----
+      # PINNED, and checksum-verified against the same release.
+      #
+      # This used to curl `releases/latest` straight into `tar -xz` and then into
+      # /usr/local/bin — an unpinned third-party binary, executed in a job that
+      # holds the npm publish token, whose contents could change between two runs
+      # of the same commit with nothing in this repo recording it. Pinning is the
+      # part that matters: the version moves when someone here changes this line.
+      # The checksum file ships from the same release, so it proves the download
+      # is intact, not that the release is trustworthy — that is what pinning is
+      # for. Bump deliberately; the registry's own releases page lists the tag.
       - name: Install mcp-publisher
         if: steps.v.outputs.pkg != steps.v.outputs.reg
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
         run: |
-          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" \
-            | tar -xz mcp-publisher
+          set -euo pipefail
+          os=$(uname -s | tr '[:upper:]' '[:lower:]')
+          tarball="mcp-publisher_${os}_amd64.tar.gz"
+          base="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl -fsSL -o "$tarball" "${base}/${tarball}"
+          curl -fsSL -o checksums.txt "${base}/registry_${MCP_PUBLISHER_VERSION#v}_checksums.txt"
+          grep " ${tarball}$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/
+          rm -f "$tarball" checksums.txt
 
       - name: Stamp + publish server.json to MCP registry
         if: steps.v.outputs.pkg != steps.v.outputs.reg

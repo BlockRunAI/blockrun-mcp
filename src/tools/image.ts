@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
+import { isTimeoutError } from "../utils/http.js";
 import { BudgetExceededError, assertQuoteNearEstimate, reReserveIfHigher, recordActualSpend, recordSpending, reserveBudget } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError } from "../utils/errors.js";
@@ -339,6 +340,11 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
       },
     },
     async ({ prompt, action, model, image, mask, size, quality, inline, agent_id }) => {
+      // Hoisted for the outer catch: a timeout after the payment was sent has
+      // to be booked, and the catch needs both the reserve and whether a paid
+      // request was outstanding.
+      let estimatedCostForCatch = 0;
+      let paidRequestInFlight = false;
       try {
         const selectedModel = model || "openai/gpt-image-2";
 
@@ -408,6 +414,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         // record the real cost — releasing the reservation in finally on every
         // path (including a decline, which charges nothing).
         const estimatedCost = estimateCost(selectedModel, size);
+        estimatedCostForCatch = estimatedCost;
         let gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {
@@ -470,7 +477,9 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
-            const r = await apiKeyPost(endpoint, body, { timeoutMs: SOLANA_IMAGE_TIMEOUT_MS });
+            paidRequestInFlight = true;
+            const r = await apiKeyPost(endpoint, body, { timeoutMs: SOLANA_IMAGE_TIMEOUT_MS })
+              .finally(() => { paidRequestInFlight = false; });
             // paidUsd null is "the rail settled nothing at response time", NOT
             // "free" — fall back to the estimate and say so, never book $0.
             billedUsd = r.paidUsd ?? estimatedCost;
@@ -490,6 +499,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
+            paidRequestInFlight = true;
             const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS, {
               // The Solana gateway prices carry a markup over the Base estimate
               // table, so the real quote can exceed what we reserved. Re-reserve
@@ -509,6 +519,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
                 }
               },
             });
+            paidRequestInFlight = false;
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
             billedUsd = paidUsd ?? estimatedCost;
             costIsEstimate = paidUsd === null;
@@ -565,6 +576,13 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         const errMsg = err instanceof Error ? err.message : String(err);
         if (err instanceof BudgetExceededError) {
           return { content: [{ type: "text", text: errMsg }], isError: true };
+        }
+        if (paidRequestInFlight && isTimeoutError(err)) {
+          recordActualSpend(budget, null, estimatedCostForCatch, agent_id);
+          return {
+            content: [{ type: "text", text: `Image generation timed out while a request carrying the payment was still in flight, so the gateway MAY have settled the charge after this client gave up — it has been booked against your budget; check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
+            isError: true,
+          };
         }
         if (err instanceof PaymentError) {
           return {

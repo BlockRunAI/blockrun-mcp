@@ -56,6 +56,8 @@ Prices are probabilities 0–1 on the market's tick grid. token_id comes from bl
           .describe("pUSD dollars — to spend (market buy) or to cash out (withdraw; default full balance)"),
         order_type: z.enum(["GTC", "GTD", "FOK", "FAK"]).optional()
           .describe("Default: GTC for limit orders, FOK for market orders"),
+        max_fill_price: z.number().gt(0).lt(1).optional()
+          .describe("Market orders only: the worst fill you accept (0-1). Carry the preview's worst-fill figure into the confirm and a book that moved in between is refused rather than signed at the new price. Buy = ceiling, sell = floor."),
         expires_at: z.number().int().positive().optional()
           .describe("Unix seconds expiry (GTD only, ≥ ~3 min in the future)"),
         post_only: z.boolean().optional()

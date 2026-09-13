@@ -2,14 +2,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, recordActualSpend, reserveBudget } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
-import { apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
+import { PORTAL_CREDITS_URL, apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -32,18 +32,39 @@ const ENROLLMENT_PRICE_USD = withTxFee(0.01);
 // 402 (payment), 422 (image rejected, NOT charged) and 2xx apart, and collapsing
 // those into an exception loses the distinction that decides whether a refund
 // message is warranted.
+/**
+ * Set for the whole window in which a request carrying a payment (a signature,
+ * or the account Bearer) is outstanding. The gateway does not stop settling
+ * because this client disconnected — the property video.ts and music.ts both
+ * guard with paidPollInFlight / paidRequestInFlight — so an abort here is not
+ * "no charge", and 0.49.0 gave realface neither the flag nor the wording
+ * (audit round 2).
+ */
+let paidRequestInFlight = false;
+
 async function payAndPostJson(
   path: string,
   reqBody: string,
   fallbackDescription: string,
+  /**
+   * Called with the authoritative quote BEFORE anything is signed, on whichever
+   * rail is active. Throwing aborts unpaid. realface was the one manual-402
+   * tool with no such hook: it read the 402 amount and signed it five lines
+   * later, so a gateway quoting a different product (as sol.blockrun.ai did for
+   * azure/sora-2 on 2026-09-08) was paid without a word.
+   */
+  onQuote?: (quotedUsd: number | null, quotedFor?: string) => void,
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
   // ---- Rail 1: account API key. ----
   if (isApiKeyMode()) {
+    // No 402 on this rail: one POST, billed by the account. There is no quote
+    // to sanity-check, which is why onQuote is not called here.
+    paidRequestInFlight = true;
     const resp = await fetchWithTimeout(`${getApiBase()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
       body: reqBody,
-    }, 90_000);
+    }, 90_000).finally(() => { paidRequestInFlight = false; });
     const data = await resp.json().catch(() => ({})) as Record<string, any>;
     // settledUsd null: the account API returns no per-call cost, so callers fall
     // back to ENROLLMENT_PRICE_USD as an estimate.
@@ -54,8 +75,11 @@ async function payAndPostJson(
   // (probed 2026-09-05: 400 on a missing `name`, i.e. the route is live). ----
   if (getChain() === "solana") {
     const { solanaPaidPost } = await import("../utils/solana-402.js");
+    paidRequestInFlight = true;
     try {
-      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000);
+      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000, {
+        onQuote: (quotedUsd, quoteDetails) => onQuote?.(quotedUsd, quoteDetails?.resource?.description),
+      }).finally(() => { paidRequestInFlight = false; });
       return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
     } catch (err) {
       // solanaPaidPost throws on a non-2xx terminal response. Recover the status
@@ -90,6 +114,7 @@ async function payAndPostJson(
   const paymentRequired = parsePaymentRequired(prHeader);
   const details = extractPaymentDetails(paymentRequired);
 
+  onQuote?.(amountToUsd(details.amount), details.resource?.description);
   const paymentPayload = await createPaymentPayload(
     privateKey,
     account.address,
@@ -104,6 +129,7 @@ async function payAndPostJson(
     }
   );
 
+  paidRequestInFlight = true;
   const resp = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
@@ -111,7 +137,7 @@ async function payAndPostJson(
       "PAYMENT-SIGNATURE": paymentPayload,
     },
     body: reqBody,
-  }, 90_000);
+  }, 90_000).finally(() => { paidRequestInFlight = false; });
 
   const data = await resp.json().catch(() => ({})) as Record<string, any>;
   return { status: resp.status, data, settledUsd: amountToUsd(details.amount) };
@@ -325,6 +351,20 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/portrait/enroll",
             JSON.stringify({ name, image_url }),
             "BlockRun Virtual Portrait enrollment",
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "portrait enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
@@ -396,6 +436,20 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/realface/enroll",
             JSON.stringify({ name, image_url, group_id }),
             "BlockRun RealFace enrollment",
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "RealFace enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
@@ -445,7 +499,22 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         const errMsg = err instanceof Error ? err.message : String(err);
         if (isPaymentRejectionError(errMsg)) {
           return {
-            content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: isApiKeyMode()
+              ? `RealFace enrollment was refused for lack of credit on your BlockRun account — top it up at ${PORTAL_CREDITS_URL}.\nError: ${errMsg}`
+              : `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            isError: true,
+          };
+        }
+        if (paidRequestInFlight) {
+          // The request carrying the payment never answered. The gateway
+          // settles on its own clock, so this is not "no charge" — book the
+          // charge conservatively and say what we do and do not know. Same
+          // trade-off video and music already make: over-counting a request
+          // that settled nothing is recoverable, under-counting a real charge
+          // is not.
+          recordActualSpend(budget, null, ENROLLMENT_PRICE_USD, agent_id);
+          return {
+            content: [{ type: "text", text: `RealFace ${action} did not answer while a request carrying the payment was still in flight, so the gateway MAY have settled the charge after this client gave up — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.\nError: ${errMsg}` }],
             isError: true,
           };
         }

@@ -3,9 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import type { ImageModel, Model } from "@blockrun/llm";
-import { getClient } from "../utils/wallet.js";
+import { getChain, getClient } from "../utils/wallet.js";
+import { getAuthMode } from "../utils/auth.js";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
-import { loadModels, type ModelCache, type ModelEntry } from "../utils/model-cache.js";
+import { loadModels, modelCacheKey, type ModelCache, type ModelEntry } from "../utils/model-cache.js";
 
 function getModelType(model: ModelEntry): "llm" | "image" {
   return model.type === "image" || "pricePerImage" in model ? "image" : "llm";
@@ -16,7 +17,10 @@ export function registerModelsTool(server: McpServer, modelCache: ModelCache): v
     "blockrun_models",
     {
       description: "List available AI models with pricing. Use to discover models and compare costs.",
-      annotations: TOOL_ANNOTATIONS.readOnly,
+      // readOnlyOpenWorld, not readOnly: this reads the LIVE gateway catalogue
+      // over the network. openWorldHint describes whether the tool reaches
+      // outside the process, and this one does.
+      annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
         category: z.enum(["all", "chat", "reasoning", "image", "embedding"]).optional().default("all").describe("Filter by category"),
         provider: z.string().optional().describe("Filter by provider (e.g., 'openai', 'anthropic')"),
@@ -24,7 +28,7 @@ export function registerModelsTool(server: McpServer, modelCache: ModelCache): v
     },
     async ({ category, provider }) => {
       try {
-      let models = await loadModels(getClient(), modelCache);
+      let models = await loadModels(getClient(), modelCache, modelCacheKey(getAuthMode(), getChain()));
 
       if (provider) {
         const p = provider.toLowerCase();

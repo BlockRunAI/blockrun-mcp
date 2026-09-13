@@ -2,6 +2,212 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.50.0
+
+**Three audit rounds, each aimed at the one before it.** 0.49.0's thirty-seven fixes
+were written by six agents working in parallel, and this round went looking for
+what that costs. It found the shape immediately: each agent had hardened the
+rail it was looking at. The quote guard landed on video and image but not music
+and speech. The in-flight booking landed on Base and the account rail but not
+Solana, the default chain. Music's Solana call passed no `onQuote` at all, so
+the guard hook fired against nobody while the transfer was signed. Every one of
+those was a money path and every one passed CI.
+
+Thirty findings survived adversarial verification, and **not one was a P0 or a
+P1** — 0.49.0's own list had one of each. The read at the time was that the
+general search was spent, so the next change was not a fix but a table.
+
+That read was half right, and the half it got wrong is worth stating plainly.
+The general SWEEP was spent: another pass over the same files would have
+returned docs and cosmetics. What was not spent was the surfaces no sweep had
+opened. Round 3 went at the four the critic named and found a path that
+destroys a funded wallet key: an empty `~/.blockrun/.session` made the keychain
+gate and the loader behind it disagree, and the disagreement minted a new
+wallet over the funded one. Round 4 went at the surfaces still unread — the CI
+and publish workflows, `verify-prices`, the Apps UI, the protocol entry — and
+at the class that produced four of round 3's five findings: a comment stating a
+contract the code does not honour on some branch, platform or early return.
+Comments cannot fail a test, so nothing had ever checked them.
+
+The durable output of all three rounds is the same shape: where an assumption
+was load-bearing and lived only in prose, it is now a test. `rail-parity`,
+`axios-scope`, `scripts-redaction`, `scripts-spend-gate`, `doc-file-refs`.
+
+**The rail-parity matrix.** `test/rail-parity.test.ts` states, per paid tool and
+per rail, which treatments a paid call needs: a quote checked before signing, a
+re-reservation at the real price, in-flight booking, honest give-up wording, and
+the right ledger figure. A cell is a claim about the source, so adding a
+rail-specific guard without filling in its siblings turns the file red. It also
+pins the division that is deliberate — the seven tools whose 402 the SDK owns
+must NOT grow a quote guard, because they cannot see the quote — and fails when
+a paid tool is missing from the table altogether. It found four more gaps on its
+first run.
+
+### The money paths
+
+- **A strict-keychain wallet could be moved off its funded chain by reading its
+  own status.** 0.49.0's own P0 fix stored the new Solana key and deleted the
+  session file, which is exactly what `getChain()` keys on — so the continuity
+  pin was never written and the next start moved a funded Base user onto an
+  empty Solana wallet. The pin is now written off the provisioning fact rather
+  than re-derived from caches the mint just invalidated.
+- **Two concurrent callers minted two Solana wallets.** The cache was assigned
+  after the await, and 0.49.0 made that reachable from two entry points at once,
+  so one caller could be handed a funding QR for an address whose key was thrown
+  away. Single-flighted — and the rejection is deliberately not cached, or
+  unlocking a keychain and retrying would stay broken until restart.
+- **The order card could submit the same order twice.** The stale-amount guard
+  re-enabled an armed Place button mid-submit, and its catch treated every
+  transport failure as "nothing happened". Both now distinguish "we know nothing
+  was signed" from "we do not know", which is the difference between a retry and
+  a duplicate bet.
+- **The previewed worst fill is now enforced across the confirm**, not just
+  inside one call: `max_fill_price` refuses a book that moved against the quote
+  before anything is signed, and the card carries its own displayed figure.
+- **A chat call the account rail billed and then dropped booked $0** and read as
+  a free failure, whose obvious next step is to pay for it again.
+- **An empty `~/.blockrun/.session` overwrote a funded key in the keychain.**
+  The gate that decides whether to consult the keychain asked `existsSync`; the
+  loaders on the far side of it trim the file and treat whitespace as no key.
+  A zero-byte session file therefore read as present to the gate and absent to
+  the loader, so the keychain was skipped, a new wallet was minted, and the
+  mirror-back overwrote the entry that still held the funded key. `saveWallet`
+  is a plain non-atomic write, so an interrupted one is enough to produce that
+  file. Both rails now ask whether the file HOLDS a key, which is what
+  `getChain()` already asked, twice, with comments saying why.
+- **`blockrun_music`, `blockrun_speech` and `blockrun_realface` signed whatever
+  the 402 quoted**, with no sanity check and no re-reservation. **Giving up on
+  Solana booked nothing** in video and music, and **speech, image and realface
+  had no in-flight tracking at all**, so an abort after the gateway settled left
+  a real charge unbooked.
+- **The ledger booked the reserve, not the charge.** `tx-fee.ts` has said since
+  0.40.1 that the gate and the ledger are different numbers, and one file
+  honoured it. On Solana, where the gateway charges no transaction fee, an agent
+  capped at $1.00 making only `blockrun_rpc` calls was cut off after 250 of them
+  having actually spent $0.50 — and `action:"report"` said $1.00.
+- **A per-agent cap could refill itself.** `delegate` wrote `spent: 0`
+  unconditionally, and `delegate` is a tool the model can call. A limit is the
+  operator's to raise; spend already happened and is not theirs to erase.
+- **The Polymarket approval prompt never said what it was worth**: the default
+  grants an unlimited pUSD allowance to four spenders. It says so now, before
+  the signature, and names `POLYMARKET_BOUNDED_APPROVALS`.
+- **The relayer's double-send guard armed on failures that signed nothing** —
+  credential derivation happens before the batch exists — and its 4xx detector
+  never saw a CLOB `ApiError`'s status, so definite refusals looked ambiguous
+  and wedged the user behind a deadline for a transfer that was never made.
+
+### Saying the true thing
+
+- **"Your wallet needs funding" no longer appears on messages that say nothing
+  was charged.** The uncharged markers gated one keyword clause, so a bare 402
+  or the word "balance" still earned the footer — including on this repo's own
+  unreadable-quote refusal, which told a wallet holding $1,000 to top up.
+- **Account-rail errors are classified at all.** The status boundary excluded a
+  following dot, which is what keeps `$402.50` from reading as a status — and
+  also what made every `BlockRun account API error: 502.` fall through silently
+  while the identical wallet-rail message got guidance.
+- **A locked keychain is not a missing wallet**, and telling that user to run
+  setup invites a second one.
+- **`blockrun_video` and `blockrun_realface`** stopped offering a card top-up
+  for a wallet that is not paying on the account rail, and the wallet card
+  stopped offering card top-up on Solana, where it is not available.
+
+### Around the edges
+
+The model catalogue cache is keyed by rail and chain (the two gateways do not
+serve the same one), `blockrun_models` is annotated as reaching the network
+because it does, the video poll timeout matches the gateway route's own 60s
+limit, `SOLANA_RPC_HEADERS` is honoured again so a private RPC works, a settled
+Solana response whose body will not parse still books the charge, and the MCP
+registry publisher is pinned and checksum-verified instead of curled from
+`releases/latest` into the job that holds the npm token. `keychainDelete` now
+answers the same on both backends: it documents "gone, including was never
+there", and only macOS honoured that, so a Linux miss reported the key as still
+in the keychain when it was not.
+
+Two comments were retired for saying things the code no longer does.
+`l1-auth-1271.ts` still opened by describing the ERC-7739 wrapped L1 signature
+as the workaround in force and closed by telling a future maintainer to delete
+the module once the upstream issue is fixed. The wrap was the wrong diagnosis
+-- the CLOB answers "Invalid L1 Request headers", both call sites derive as a
+plain EOA -- and the module now holds `deriveApiCreds`, so following that
+instruction would remove credential derivation and stop all trading. And the
+argument that `applyClobProxyOnce`'s process-wide `axios.defaults` mutation is
+safe (every axios importer is a Polymarket one, everything else uses fetch)
+lived only in a comment, which cannot fail; `test/axios-scope.test.ts` now
+fails the day a non-Polymarket module imports axios and would start routing
+through an operator's `POLYMARKET_CLOB_PROXY` unasked.
+
+**The live e2e scripts printed the wallet address they promised to hide.** Three
+of the four say in their own header that wallet addresses and transaction ids
+are never printed, and each implemented it with a different regex. The one in
+the two scripts that actually move money matched 64-hex only, which is a
+transaction hash; a 40-hex address went through untouched, and the withdrawal
+path really does interpolate a bridge response carrying an address into its
+error text. Worse, only the `isError` branch was ever redacted — a thrown
+exception printed the raw message and stack. There is now one redaction,
+covering every exit path, and a test that fails if a script grows its own regex
+again. `scripts/` is also in the typecheck now: these files import from `src`
+and were checked by nothing, so a signature change surfaced when someone ran
+them against a funded wallet.
+
+**`scripts/smoke-speech.ts` charged the wallet for being run.** No flag, no
+prompt, `limit: null` so nothing capped it, under a header advertising "real
+$0.001 speak" while the run ends with a $0.0525 sound effect. It now refuses
+without `--confirm`, states the real total, and carries its own budget cap. A
+static test holds the line for the next script like it: the check is
+deliberately not behavioural, since a test that proved the gate by running the
+script would charge the wallet on the day the gate broke.
+
+**The release automation could publish wrong numbers without failing.** Four
+scripts nobody had audited, each able to produce confident output from a
+failure. `measure-tool-schema.mjs` ignored JSON-RPC errors, so a server that
+answered `tools/list` with an error was measured as zero tokens across zero
+tools and printed as a real figure at exit 0 — with `--svg` that reached the
+context-cost cards as "0.0K tokens" and a literal "NaN% less". It also decoded
+the child's stdout per chunk, so an em dash split across a 16KB pipe boundary
+became a replacement character and quietly changed the count, which the
+in-process test could never catch because it measures through
+`InMemoryTransport`. `stamp-server-json.mjs` stamped nothing when no package
+entry matched, left the template's `0.0.0-template` in place (valid semver, so
+validation passes) and printed a success line claiming it had stamped —
+pointing every registry consumer at an npm version that does not exist. And
+`changelog-section.mjs` compared a realpath'd module URL against a
+non-realpath'd `argv[1]`, so from any checkout reached through a symlink it
+exited 0 with empty stdout, which in `publish.yml` skips the fallback and
+publishes a release with an empty body. All four now fail instead.
+
+**The brand-number sync wrote unvalidated remote JSON into the README.** Values
+fetched from blockrun.ai were rendered with `String(value)` and interpolated
+into `src="…"` and `alt="…"` with no escaping, then committed and pushed to the
+default branch weekly by an unattended bot with `contents: write`. A value
+carrying a quote or an angle bracket closed the attribute and injected markup
+into every consuming repo. Rendered values are now checked at the point of use
+— a number or a short plain label, nothing else — and escaped on top of that.
+Its `--check` also no longer prints the stale markers it found and then
+declares everything up to date.
+
+Two documentation claims that nothing was watching: the README said "same 20
+tools either way" two lines below a marker rendering 19, and
+`docs/mcp-schema-overhead.md` kept a second copy of the profile-cost table that
+no test pinned. Both are now covered, along with the profile list itself, which
+was hardcoded in two places and would have left a newly added profile measured
+by neither.
+
+**CONTRIBUTING told new contributors to call the SDK directly.** Step 1 of
+"Adding a new MCP tool" was "copy `src/tools/surf.ts`", a file deleted with the
+tool in 0.49.0, and the payment section documented
+`client.getWithPaymentRaw` / `requestWithPaymentRaw` as the way to make a paid
+call. There are three payment rails and the SDK knows two: on the account rail
+it degrades to a plain Bearer fetch and discards the `x-blockrun-cost-usd`
+header, so a tool written from those instructions cannot report what it cost
+and books the wrong ledger figure. `src/utils/raw-call.ts` exists precisely so
+no tool picks a rail for itself, and every rail-parity bug this project has
+shipped came from one doing so. The steps now name files that exist and the
+helper that handles all three rails. `test/doc-file-refs.test.ts` fails when a
+doc names a repo path that is not there, and asserts that every path-based tool
+really does route through `raw-call`.
+
 ## 0.49.0
 
 **The error says whether money moved.** Issue #132 reported `blockrun_markets`

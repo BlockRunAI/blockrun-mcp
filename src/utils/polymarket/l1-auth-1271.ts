@@ -1,24 +1,44 @@
 // src/utils/polymarket/l1-auth-1271.ts
 //
-// Workaround for https://github.com/Polymarket/clob-client-v2/issues/65
+// CLOB L1 authentication and API-credential derivation.
+//
+// READ THIS BEFORE DELETING ANYTHING HERE. The file is named for a hypothesis
+// that turned out to be wrong, and the function every Polymarket action
+// depends on now lives in it: deriveApiCreds(). Removing the module removes
+// credential derivation, and all trading stops.
+//
+// The hypothesis was https://github.com/Polymarket/clob-client-v2/issues/65
 // (open as of v1.0.8, 2026-07): the SDK's createApiKey()/createL1Headers()
 // signs the L1 ClobAuth attestation as a PLAIN EOA signature bound to the EOA
-// address, while POLY_1271 orders set order.signer = deposit wallet — so the
-// CLOB rejects every order with 400 "the order signer address has to be the
-// address of the API KEY". The SDK's ORDER signing does wrap correctly
-// (ExchangeOrderBuilderV2.buildOrderSignature); only L1 auth lacks the wrap.
+// address, while POLY_1271 orders set order.signer = deposit wallet, and the
+// CLOB rejects those orders with 400 "the order signer address has to be the
+// address of the API KEY". The obvious reading was that L1 auth needed the
+// same ERC-7739 wrap the SDK already applies to orders, and
+// buildWrapped1271Headers() below implements exactly that.
 //
-// This module applies the SAME ERC-7739 TypedDataSign envelope the SDK uses
-// for orders to the L1 ClobAuth message, with POLY_ADDRESS = the deposit
-// wallet, so the derived API creds are bound to the deposit wallet:
+// It is not the fix. The CLOB rejects the wrapped envelope outright with
+// "Invalid L1 Request headers". L2 credentials are ALWAYS bound to the owner
+// EOA even in POLY_1271 mode, matching the reference Rust client
+// (rs-clob-client-v2 src/auth.rs): L1/L2 auth uses the owner's plain ECDSA
+// signature, and only the ORDER carries signer/maker = deposit wallet, checked
+// on-chain by that wallet's ERC-1271 isValidSignature. See the long note at
+// the buildClobClient() call site in client.ts.
+//
+// So the live path is buildPlainL1Headers(), and both call sites
+// (client.ts, relayer.ts) pass sigType 0. The wrapped path below is kept as a
+// tested reference implementation of the ERC-7739 envelope for ClobAuth --
+// it is correct about the envelope and wrong about what the server wants --
+// and test/polymarket-l1-auth.test.ts pins its byte layout. Nothing calls it
+// with sigType 3.
 //
 //   contentsHash = hashStruct(ClobAuth message)              (app = ClobAuthDomain v1)
 //   innerSig     = eth_signTypedData(TypedDataSign{contents, DepositWallet domain})
-//   envelope     = innerSig ‖ appDomainSeparator ‖ contentsHash
-//                  ‖ typeString(ClobAuth) ‖ uint16(len(typeString))
+//   envelope     = innerSig | appDomainSeparator | contentsHash
+//                  | typeString(ClobAuth) | uint16(len(typeString))
 //
-// Re-check issue #65 when bumping @polymarket/clob-client-v2 — if fixed
-// upstream, delete this module and use client.createOrDeriveApiKey().
+// When bumping @polymarket/clob-client-v2, what to re-check is whether the SDK
+// can now derive creds itself (client.createOrDeriveApiKey()) -- not whether
+// issue #65 is closed, since its premise was already wrong.
 import axios from "axios";
 import {
   encodeAbiParameters,
@@ -177,10 +197,15 @@ async function buildPlainL1Headers(account: PrivateKeyAccount): Promise<L1Header
 }
 
 /**
- * Create-or-derive CLOB L2 API creds. sigType 3 binds them to the deposit
- * wallet via the wrapped headers; sigType 0 binds them to the EOA. Mirrors the
- * SDK's createOrDeriveApiKey flow (POST /auth/api-key, falling back to
- * GET /auth/derive-api-key when the key already exists).
+ * Create-or-derive CLOB L2 API creds. Mirrors the SDK's createOrDeriveApiKey
+ * flow (POST /auth/api-key, falling back to GET /auth/derive-api-key when the
+ * key already exists).
+ *
+ * Pass sigType 0. It binds the creds to the EOA, which is what the CLOB wants
+ * in POLY_1271 mode too, and it is what both call sites pass. sigType 3 sends
+ * the wrapped headers and the server answers "Invalid L1 Request headers" --
+ * it is reachable only to keep the envelope implementation honest, not because
+ * it is an option. The file header explains why.
  */
 export async function deriveApiCreds(
   account: PrivateKeyAccount,

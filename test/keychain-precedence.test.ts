@@ -155,3 +155,76 @@ test("Solana: an existing session file outranks a stale keychain entry", async (
 
   readAnswer = { status: "found", value: KEYCHAIN_KEY };
 });
+
+// --- the empty-file gap (audit round 3) ---
+//
+// Both gates above asked `existsSync`. The loaders on the far side of them
+// (the SDK's resolveFromFiles / loadSolanaWallet) `.trim()` the file and treat
+// whitespace as no key. A zero-byte session file therefore read as PRESENT to
+// the gate and ABSENT to the loader: the keychain was skipped, a brand new
+// wallet was minted, and persistKey() then overwrote the keychain entry still
+// holding the funded key. saveWallet() is a plain non-atomic writeFileSync, so
+// an interrupted write or a full disk is enough to produce that file.
+
+test("EVM: an EMPTY session file does not shadow the funded key in the keychain", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, "   \n", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  const resolved = getOrCreateWalletKey();
+
+  assert.equal(
+    resolved,
+    KEYCHAIN_KEY,
+    "a file holding no key must fall through to the keychain, not mint over it",
+  );
+  assert.equal(
+    fs.readFileSync(session, "utf-8").trim(),
+    "",
+    "nothing may be minted and saved while a funded key sits in the keychain",
+  );
+
+  fs.rmSync(session, { force: true });
+  resetEvmWalletCache();
+});
+
+test("Solana: an EMPTY session file does not shadow the funded key in the keychain", async () => {
+  const { createSolanaWallet, solanaPublicKey } = await import("@blockrun/llm");
+  const { ensureSolanaWallet, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  const funded = await createSolanaWallet();
+
+  const session = path.join(home, ".blockrun", ".solana-session");
+  fs.writeFileSync(session, "\n", { mode: 0o600 });
+  resetSolanaKeyCache();
+  mode = "auto";
+  readAnswer = { status: "found", value: funded.privateKey };
+
+  const info = await ensureSolanaWallet();
+
+  assert.equal(info.isNew, false, "minting here orphans the key the keychain still holds");
+  assert.equal(info.privateKey, funded.privateKey);
+  assert.equal(info.address, await solanaPublicKey(funded.privateKey));
+
+  fs.rmSync(session, { force: true });
+  resetSolanaKeyCache();
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+});
+
+test("a file that HOLDS a key still outranks the keychain (the empty-file fix did not invert precedence)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, FILE_KEY + "\n", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), FILE_KEY, "rotation by replacing the file must keep working");
+
+  fs.rmSync(session, { force: true });
+  resetEvmWalletCache();
+});

@@ -278,7 +278,20 @@ export function keychainLoad(account: string): string | null {
   }
 }
 
-/** Delete a secret. Returns true when the entry is gone (including "was never there"). */
+/**
+ * Delete a secret. Returns true when the entry is gone, including when it was
+ * never there — callers care about the end state, not about who removed it.
+ *
+ * Both backends have to spell that out, and only the macOS branch used to.
+ * `secret-tool clear` is not consistent across versions about whether a miss
+ * exits 0 or 1, so accept LINUX_ITEM_NOT_FOUND alongside success; the entry is
+ * absent either way. Returning false there would tell a caller the key is
+ * still in the keychain when it is not — the exact direction that turns a
+ * cleanup into a retry loop or a refusal to re-provision.
+ *
+ * A platform with no keychain returns false: nothing was deleted and nothing
+ * can be, which keychainAvailable() already reports the same way.
+ */
 export function keychainDelete(account: string): boolean {
   const platform = os.platform();
   try {
@@ -297,7 +310,7 @@ export function keychainDelete(account: string): boolean {
         ["clear", "app", KEYCHAIN_SERVICE, "account", account],
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
-      return result.status === 0;
+      return result.status === 0 || result.status === LINUX_ITEM_NOT_FOUND;
     }
 
     return false;

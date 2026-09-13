@@ -149,8 +149,15 @@ export async function sendWalletBatch(
 ): Promise<{ transactionHash?: string }> {
   const deadlineSec = Math.floor(Date.now() / 1000) + BATCH_DEADLINE_SECS;
   let response: Awaited<ReturnType<RelayClient["executeDepositWalletBatch"]>>;
+  // Getting the client is NOT part of the send. getRelayClient derives CLOB
+  // credentials and creates a builder key — real network calls that happen
+  // before the RelayClient exists, so they cannot have signed or posted the
+  // batch. Leaving them inside the try armed the double-send guard for a
+  // failure that provably moved nothing, wedging the user behind a deadline
+  // for a transfer that was never signed.
+  const relay = await getRelayClient();
   try {
-    response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
+    response = await relay.executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
   } catch (err) {
     // The SDK signs, THEN posts. A lost response (proxy 502/504, reset — the
     // SDK surfaces these as `{"error":"connection error"}` or a 5xx "request
@@ -164,7 +171,16 @@ export async function sendWalletBatch(
     // clear it (withdraw.ts). Untracked batches (approvals, wrap) are safe to
     // retry and rethrow as before.
     const message = err instanceof Error ? err.message : String(err);
-    const definitelyRejected = /"status":4\d\d/.test(message);
+    // The CLOB SDK's ApiError carries its code on a `.status` PROPERTY and
+    // leaves the message as the bare error string, so matching only the JSON
+    // shape missed every definite 4xx it raises — the guard armed on rejections
+    // that were unambiguous. Read the property first, then fall back to the
+    // shapes that only appear in text.
+    const status = (err as { status?: unknown })?.status;
+    const definitelyRejected =
+      (typeof status === "number" && status >= 400 && status < 500) ||
+      /"status":4\d\d/.test(message) ||
+      /\b(?:HTTP|status(?:\s*code)?)\s*[:=]?\s*4\d\d\b/i.test(message);
     if (opts?.trackPendingWithdraw && !definitelyRejected) {
       saveState({ pendingWithdraw: { transactionID: "unknown", deadline: deadlineSec } });
       throw new Error(
