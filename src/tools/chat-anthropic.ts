@@ -203,12 +203,18 @@ const NATIVE_IDLE_TIMEOUT_MS = 120_000;
 async function streamNativeMessage(
   client: AnthropicLike,
   params: Anthropic.MessageStreamParams,
+  idleTimeoutMs = NATIVE_IDLE_TIMEOUT_MS,
 ): Promise<{ message: Anthropic.Message; costHeaderUsd: number | null }> {
   // The @blockrun/llm proxy wraps every messages.* call in an async function,
   // so the MessageStream arrives behind a promise; the SDK returns it directly.
   const stream = await client.messages.stream(params, { maxRetries: 0 });
   let accepted = false;
   stream.on("connect", () => { accepted = true; });
+  // What streamed before a failure: the caller paid for those tokens, and the
+  // compat assembler hands them back (D57); the native path dropped them
+  // until round 4b. The SDK's `text` event carries the running snapshot.
+  let partialText = "";
+  stream.on("text", (_delta: string, snapshot: string) => { partialText = snapshot; });
 
   // Idle guard, reset on every event. The SDK has no per-event deadline of its
   // own — its request timeout ends at the headers — and the fetch underneath
@@ -219,9 +225,14 @@ async function streamNativeMessage(
   const armIdle = () => {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      stalled(new AcceptedThenFailedError(`stream stalled: no data from the gateway for ${Math.round(NATIVE_IDLE_TIMEOUT_MS / 1000)}s`));
+      // A stall AFTER the 2xx is a settled call that went quiet; a stall
+      // BEFORE it is the paid request still in flight — a maybe, the same
+      // verdict the compat path gives its own "before the first frame"
+      // stall — never "the charge stands" (round 4b).
+      const what = `stream stalled: no data from the gateway for ${Math.round(idleTimeoutMs / 1000)}s`;
+      stalled(accepted ? new AcceptedThenFailedError(what, partialText) : new Error(`timeout: ${what}, before the stream connected`));
       stream.abort();
-    }, NATIVE_IDLE_TIMEOUT_MS);
+    }, idleTimeoutMs);
   };
   stream.on("streamEvent", armIdle);
   armIdle();
@@ -231,7 +242,7 @@ async function streamNativeMessage(
   } catch (error) {
     if (error instanceof AcceptedThenFailedError) throw error;
     if (accepted) {
-      throw new AcceptedThenFailedError(error instanceof Error ? error.message : String(error), "", { cause: error });
+      throw new AcceptedThenFailedError(error instanceof Error ? error.message : String(error), partialText, { cause: error });
     }
     throw error;
   } finally {
@@ -281,6 +292,8 @@ export interface AnthropicNativeArgs {
   budget: BudgetState;
   agentId?: string;
   estimatedCost: number;
+  /** Test seam for the idle guard; production uses NATIVE_IDLE_TIMEOUT_MS. */
+  idleTimeoutMs?: number;
 }
 
 type McpResult = {
@@ -428,7 +441,7 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
   let native: Anthropic.Message;
   let costHeaderUsd: number | null;
   try {
-    ({ message: native, costHeaderUsd } = await streamNativeMessage(client, params));
+    ({ message: native, costHeaderUsd } = await streamNativeMessage(client, params, args.idleTimeoutMs));
   } catch (error) {
     // Until audit round 3 this returned formatError and booked nothing, on
     // both rails — the settled-then-failed machinery the OpenAI-compat paths
@@ -444,7 +457,12 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     }
     const usd = failedLedgerUsd();
     recordActualSpend(budget, usd, estimatedCost, agentId);
-    return { content: [{ type: "text", text: nativeFailedText(error, usd, verdict) }], isError: true };
+    const partial = error instanceof AcceptedThenFailedError && error.partialText ? error.partialText : "";
+    return {
+      content: [{ type: "text", text: nativeFailedText(error, usd, verdict) + (partial ? `\n\nPartial response received before the failure (${partial.length.toLocaleString("en-US")} chars):\n${partial}` : "") }],
+      ...(partial ? { structuredContent: { partial_response: partial } } : {}),
+      isError: true,
+    };
   }
 
   // Book what the gateway actually charged: on the wallet rails the quote it

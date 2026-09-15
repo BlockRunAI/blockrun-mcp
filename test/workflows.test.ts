@@ -51,7 +51,7 @@ function step(wf: Workflow, job: string, name: string): Step {
  * the way it does for GITHUB_TOKEN here ("not permitted to create or approve
  * pull requests").
  */
-function landingFixture(opts: { ghSucceeds: boolean }) {
+function landingFixture(opts: { ghSucceeds: boolean; existingPr?: number }) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "brand-sync-run-"));
   const repo = path.join(dir, "repo");
   const bin = path.join(dir, "bin");
@@ -76,6 +76,9 @@ exec "${realGit}" "$@"
     path.join(bin, "gh"),
     `#!/bin/sh
 echo "gh $*" >> "${log}"
+if [ "$1 $2" = "pr list" ]; then
+  ${opts.existingPr ? `echo "${opts.existingPr}"; exit 0` : "exit 0"}
+fi
 ${opts.ghSucceeds ? 'echo "https://github.com/BlockRunAI/blockrun-mcp/pull/999"; exit 0' : 'echo "pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)" >&2; exit 1'}
 `,
   );
@@ -157,6 +160,22 @@ test("brand-sync: nothing to land is a quiet green, no push at all", () => {
   }
 });
 
+// Round 4b (CI-5): once a human has opened the fallback PR, the next Monday's
+// force-push refreshes it and `gh pr create` fails with "already exists" —
+// which used to be reported as "PR creation is unavailable, open it by hand".
+test("brand-sync: an already-open fallback PR is refreshed and the run is green", () => {
+  const f = landingFixture({ ghSucceeds: false, existingPr: 151 });
+  try {
+    const r = runLandStep(f);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /refreshed the open PR #151/);
+    assert.match(f.calls(), /git push -f origin HEAD:brand-sync/);
+    assert.doesNotMatch(f.calls(), /gh pr create/);
+  } finally {
+    f.cleanup();
+  }
+});
+
 // ---- publish.yml: three targets, three INDEPENDENT guards ----
 
 test("publish: a version below npm latest is refused before anything installs or publishes", () => {
@@ -180,7 +199,12 @@ test("publish: the tag/release step is gated on the tag being ABSENT, not on npm
 
   const release = step(wf, "publish", "Tag + GitHub release");
   const cond = (release.if ?? "").replace(/\s+/g, " ");
-  assert.match(cond, /steps\.v\.outputs\.tag_missing == 'true'/, "the release step's own guard is the tag");
+  // Round 4b: NOT gated on tag_missing either — once the tag is pushed, a
+  // re-run after `gh release create` failed must still reach the in-step
+  // `gh release view` guard, or a tag with no release is unrepairable.
+  assert.doesNotMatch(cond, /tag_missing/, "gating on the tag skips the release half on every re-run after the tag was pushed");
+  assert.match(release.run ?? "", /gh release view "\$TAG"/, "the release existence check lives in-step");
+  assert.match(release.run ?? "", /git ls-remote --exit-code --tags origin "refs\/tags\/\$TAG"/, "so does the tag existence check");
   assert.doesNotMatch(
     cond,
     /^\s*steps\.v\.outputs\.pkg != steps\.v\.outputs\.npm\s*$/,
@@ -193,6 +217,20 @@ test("publish: the tag/release step is gated on the tag being ABSENT, not on npm
   assert.match(cond, /steps\.build\.outcome == 'success'/, "never tag a build that did not pass");
   assert.equal(step(wf, "publish", "Publish to npm").id, "npm", "the npm step needs an id for its outcome to be referenced");
   assert.equal(step(wf, "publish", "Build, typecheck, test").id, "build");
+});
+
+test("publish: the job runs on main only — a workflow_dispatch from a branch must not publish", () => {
+  const wf = load("publish.yml");
+  assert.equal((wf.jobs.publish as { if?: string }).if, "github.ref == 'refs/heads/main'");
+});
+
+test("publish: the MCP-registry lookup splits none/unknown too, and an unknown state stops the job", () => {
+  const wf = load("publish.yml");
+  const resolve = step(wf, "publish", "Resolve versions").run ?? "";
+  assert.match(resolve, /curl -fsS "https:\/\/registry\.modelcontextprotocol\.io/, "a non-2xx must not read as 'none'");
+  assert.match(resolve, /REG=unknown/);
+  const guard = step(wf, "publish", "Refuse to run against an unknown registry state");
+  assert.equal(guard.if, "steps.v.outputs.reg == 'unknown'");
 });
 
 test("publish: an npm registry failure is 'unknown' and refused, only an E404 is 'none'", () => {

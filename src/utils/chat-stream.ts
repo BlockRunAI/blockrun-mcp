@@ -27,6 +27,7 @@
 // Both shapes now feed the same accumulator (assembleChatFrames).
 import type { ApiClient } from "./wallet.js";
 import { parseCostHeader } from "./api-key-call.js";
+import { ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
 
 /** Chat message shape the gateway accepts (content may be multimodal parts). */
 export interface StreamChatMessage {
@@ -367,6 +368,14 @@ export async function completeChat(
       if (!first.done) acc.fold(first.value);
       const out = first.done ? acc.result() : await assembleChatFrames(gen, opts.idleTimeoutMs, acc);
       rejectEmptyLength(model, out);
+      // The SDK's frame reader yields only `data:` lines. A route that ignored
+      // stream:true and answered a plain JSON body yields NOTHING — and the
+      // settlement was already recorded — so an empty result here would come
+      // back as a paid, successful, empty reply: the silent-truncation shape
+      // the Response path guards with its content-type check (round 4b).
+      if (!out.text && !out.finishReason && !out.servedModel) {
+        throw new AcceptedThenFailedError(`${model}: the paid stream ended with no frames — the route answered a streaming request with a body this client could not read`);
+      }
       return { ...out, settledUsd: null };
     });
   }
@@ -397,18 +406,28 @@ export async function completeChat(
  */
 export type SettlementVerdict = "none" | "unknown" | "settled";
 
-// Statuses an edge or a load balancer returns when the ORIGIN did not answer in
-// time — the origin may still be running the request and settle it afterwards
-// (the Cloud Run route documents that a client disconnect is never propagated
-// to a non-streaming handler). Everything else in the 4xx/5xx range is the
-// gateway itself answering, which it does before settlement starts.
-const ORIGIN_DID_NOT_ANSWER = new Set([408, 502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530]);
+// ORIGIN_DID_NOT_ANSWER (utils/uncharged.ts): the edge statuses that are not
+// an answer. Shared with the path tools and the media tools' tracker.
 
 // A fetch rejection that proves the request never left this machine.
-const NEVER_CONNECTED = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"]);
+// UND_ERR_CONNECT_TIMEOUT too: undici gave up before the TCP connection
+// existed, so nothing was sent — on Solana that is the shape of the blockhash
+// RPC dying inside the SDK's signing step, which round 4b found reading as
+// "unknown" and booking the tier reserve for a payment that was never signed.
+const NEVER_CONNECTED = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL", "UND_ERR_CONNECT_TIMEOUT"]);
 
 // Transport failures where the request may have been in flight when it died.
 const IN_FLIGHT_TRANSPORT = /aborted|timeout|timed out|fetch failed|socket hang up|ECONNRESET|ETIMEDOUT|EPIPE|terminated|network/i;
+
+/** True when an errno anywhere in the (bounded) cause chain proves the request never left this machine. */
+function neverConnectedCode(error: unknown): boolean {
+  let e = error as { code?: unknown; cause?: unknown } | undefined;
+  for (let depth = 0; e && depth < 5; depth++) {
+    if (typeof e.code === "string" && NEVER_CONNECTED.has(e.code)) return true;
+    e = e.cause as { code?: unknown; cause?: unknown } | undefined;
+  }
+  return false;
+}
 
 function statusOf(error: unknown): number | undefined {
   const e = error as { statusCode?: unknown; status?: unknown } | undefined;
@@ -457,8 +476,13 @@ export function settlementOnThrow(
   // Refused by this process before anything was sent.
   if (name === "BudgetExceededError" || name === "QuoteMismatchError") return "none";
 
-  const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause;
-  if (typeof cause?.code === "string" && NEVER_CONNECTED.has(cause.code)) return "none";
+  // The cause CHAIN, bounded: undici puts the errno on `cause.code`, and the
+  // Anthropic SDK wraps that TypeError once more (APIConnectionError → cause
+  // TypeError("fetch failed") → cause { code }), so a depth-one read found
+  // nothing and the "fetch failed" text tripped the transport regex — a DNS
+  // failure on the native path booked the reconstructed quote and forbade a
+  // retry, while the same outage on the compat path read "none" (round 4b).
+  if (neverConnectedCode(error)) return "none";
 
   const status = statusOf(error);
   if (status !== undefined) {

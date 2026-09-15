@@ -38,6 +38,16 @@ const fakeClob = {
     tick_size: "0.01", neg_risk: false, min_order_size: "5",
     asks: [{ price: "0.45", size: "100" }], bids: [{ price: "0.44", size: "100" }],
   }),
+  // Round 4b: the tool signs (createOrder / createMarketOrder — the SDK's
+  // pre-sign network reads live there) and POSTs the signed order separately,
+  // so only the POST can have an unknown outcome. These three route the
+  // split calls through the createAndPost* behaviour each test scripts.
+  createOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "limit", order, options }),
+  createMarketOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "market", order, options }),
+  postOrder: async (signed: { signedOf: string; order: Record<string, unknown>; options: Record<string, unknown> }, orderType: unknown, postOnly?: boolean) =>
+    signed.signedOf === "limit"
+      ? (fakeClob as any).createAndPostOrder(signed.order, signed.options, orderType, postOnly)
+      : (fakeClob as any).createAndPostMarketOrder(signed.order, signed.options, orderType),
   createAndPostOrder: async () => { calls.push({ kind: "limit" }); return limitBehaviour(); },
   createAndPostMarketOrder: async () => { calls.push({ kind: "market" }); return marketBehaviour(); },
   updateBalanceAllowance: async (args: unknown) => { refreshCalls.push(args); return refreshBehaviour(); },
@@ -181,4 +191,65 @@ test("the unconfirmed booking is visible in the session ledger the success text 
   assert.equal(res.isError, undefined, res.text);
   assert.match(res.text, /unconfirmed/i, "a later success must keep showing the unresolved order");
   assert.equal(getSessionLedger().unconfirmed, (ledgerBefore.unconfirmed ?? 0) + 1);
+});
+
+// Round 4b (PM-2): the SDK's createAndPost* helpers read the network BEFORE
+// they sign (GET /version, the market's condition id, tick size, builder
+// fees). A relay 502 or a dropped socket on any of those used to be wrapped
+// as outcome-unknown — a phantom "possibly live" order that never released,
+// with a "do NOT re-place" instruction — when nothing had been signed. Only
+// the POST of the signed order can be unknown.
+test("a failure BEFORE signing (the SDK's pre-sign reads) is a plain error: released, retryable, not unknown", async () => {
+  reset();
+  const before = getSessionLedger();
+  const original = (fakeClob as any).createMarketOrder;
+  (fakeClob as any).createMarketOrder = async () => { throw Object.assign(new Error("request error"), { status: 502 }); };
+  try {
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(res.text, /MAY have been accepted|outcome UNKNOWN/i, res.text);
+    const after = getSessionLedger();
+    assert.equal(after.totalUsd, before.totalUsd, "nothing was signed — the reservation is released");
+    assert.equal(after.unconfirmed, before.unconfirmed);
+    assert.deepEqual(calls, [], "no POST was made");
+  } finally {
+    (fakeClob as any).createMarketOrder = original;
+  }
+});
+
+// Round 4b (PM-4): withCredsRetry re-ran the WHOLE trade on any error whose
+// text matched the creds-mismatch phrases — and an unknown outcome carries
+// the raw transport text, which can say "unauthorized". A second signed
+// submit on top of a possibly-live order is the one thing it must not do.
+test("an unknown outcome whose raw text mentions 'unauthorized' is never re-submitted by the creds retry", async () => {
+  reset();
+  marketBehaviour = async () => { throw new Error("socket hang up: unauthorized proxy"); };
+  const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /MAY have been accepted/);
+  assert.equal(calls.length, 1, "exactly one POST — no retry on an unknown outcome");
+});
+
+// Round 4b (PM-6): every definite refusal ends with the repo's uncharged
+// wording, so the order card's outcomeIsUnknown() can re-arm on it instead of
+// locking as "outcome UNKNOWN" for an order the server never placed.
+test("a definite refusal carries the not-placed sentence and outcome:\"rejected\"; an unknown outcome does not", async () => {
+  const { outcomeIsUnknown } = await import("../apps/order-safety.js");
+  reset();
+  marketBehaviour = async () => { throw new ApiError("invalid amount", 400, { error: "invalid amount" }); };
+  const rejected = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.text, /nothing was charged/);
+  assert.equal((rejected.structured as { outcome?: string }).outcome, "rejected");
+  assert.equal(outcomeIsUnknown(rejected.text), false, "the card may re-arm");
+
+  const capped = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5000, confirm: true });
+  assert.equal(capped.isError, true);
+  assert.equal(outcomeIsUnknown(capped.text), false, `a cap refusal signs nothing: ${capped.text}`);
+
+  reset();
+  marketBehaviour = async () => { throw new Error("socket hang up"); };
+  const unknown = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+  assert.equal((unknown.structured as { outcome?: string }).outcome, "unknown");
+  assert.equal(outcomeIsUnknown(unknown.text), true, "the card must stay locked");
 });

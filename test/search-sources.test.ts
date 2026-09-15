@@ -148,3 +148,18 @@ test("a non-array sources value is left for the gateway's own 400 (unpaid) rathe
   assert.notEqual(res.isError, true);
   assert.equal(walletCalls.length, 1);
 });
+
+// The predicate itself, pinned directly (round 4b: the comment on it named a
+// test contract that did not exist).
+test("unsupportedSearchSource: only the names are checked, and X/Twitter gets the retired-source note", async () => {
+  const { unsupportedSearchSource } = await import("../src/tools/search.js");
+  assert.equal(unsupportedSearchSource(undefined), null);
+  assert.equal(unsupportedSearchSource({ sources: "web" }), null, "a non-array is the gateway's shape error, not ours");
+  assert.equal(unsupportedSearchSource({ sources: ["web", "news"] }), null);
+  assert.match(unsupportedSearchSource({ sources: ["web", "x"] }) ?? "", /removed upstream on 2026-07-05/);
+  assert.match(unsupportedSearchSource({ sources: ["Twitter"] }) ?? "", /do not retry with "x"/);
+  const other = unsupportedSearchSource({ sources: ["rss"] }) ?? "";
+  assert.match(other, /\["rss"\]/);
+  assert.doesNotMatch(other, /X\/Twitter/);
+  assert.match(other, /No payment was made/);
+});

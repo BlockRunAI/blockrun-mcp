@@ -32,6 +32,16 @@ const fakeClob = {
     tick_size: "0.01", neg_risk: false, min_order_size: "5",
     asks: [{ price: "0.40", size: "100" }], bids: [{ price: "0.39", size: "100" }],
   }),
+  // Round 4b: the tool signs (createOrder / createMarketOrder — the SDK's
+  // pre-sign network reads live there) and POSTs the signed order separately,
+  // so only the POST can have an unknown outcome. These three route the
+  // split calls through the createAndPost* behaviour each test scripts.
+  createOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "limit", order, options }),
+  createMarketOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "market", order, options }),
+  postOrder: async (signed: { signedOf: string; order: Record<string, unknown>; options: Record<string, unknown> }, orderType: unknown, postOnly?: boolean) =>
+    signed.signedOf === "limit"
+      ? (fakeClob as any).createAndPostOrder(signed.order, signed.options, orderType, postOnly)
+      : (fakeClob as any).createAndPostMarketOrder(signed.order, signed.options, orderType),
   createAndPostOrder: async () => { orderSubmits++; return { success: true, orderID: "0xORDER", status: "live" }; },
   createAndPostMarketOrder: async () => { orderSubmits++; return { success: true, orderID: "0xMKT", status: "matched" }; },
 };
@@ -243,4 +253,22 @@ test("read-only/free actions never prompt", async () => {
   const { call, prompts } = harness("decline");
   await call({ action: "positions" });
   assert.equal(prompts.length, 0);
+});
+
+// Round 4b (PM-1): the cap check and the reservation were split by the
+// awaited dialog, so two confirms waiting on it together could overshoot
+// POLYMARKET_MAX_SESSION_USD. The reservation is taken before the dialog and
+// released on a decline.
+test("a decline at the dialog leaves no reservation behind, and the reservation is held while the dialog is open", async () => {
+  const { executeTrade, getSessionLedger } = await import("../src/utils/polymarket/orders.js");
+  const before = getSessionLedger().totalUsd;
+  let duringDialog: number | undefined;
+  const res = await executeTrade({
+    action: "buy", token_id: "111", amount_usd: 5, confirm: true,
+    askUser: async () => { duringDialog = getSessionLedger().totalUsd; return { ok: false, reason: "declined" }; },
+  } as never);
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Declined at the confirmation prompt/);
+  assert.equal(duringDialog, before + 5, "the notional is reserved while the user is deciding — a concurrent confirm sees it");
+  assert.equal(getSessionLedger().totalUsd, before, "and released on decline");
 });

@@ -243,8 +243,8 @@ test("a not_charged terminal failure whose text says 'timeout' books nothing and
   assert.doesNotMatch(res.content[0].text, /booked against your budget/);
 });
 
-test("a 504 that ARRIVED on submit is an answer, not a maybe — nothing is booked as 'may have settled'", async () => {
-  script = [poll(504, { error: "Upstream timeout" })];
+test("a 500 that ARRIVED on submit is the gateway's answer — nothing is booked as 'may have settled'", async () => {
+  script = [poll(500, { error: "Upstream timeout" })];
   const { call, budget } = makeHarness();
   const res = await call({ prompt: "a cube", model: "google/nano-banana", size: "1024x1024" });
   assert.equal(res.isError, true);
@@ -253,6 +253,20 @@ test("a 504 that ARRIVED on submit is an answer, not a maybe — nothing is book
   // design; what must not happen is the in-flight BOOKING sentence.
   assert.doesNotMatch(res.content[0].text, /booked against your budget/);
   assert.doesNotMatch(res.content[0].text, /got no answer/);
+});
+
+// Round 4b: an EDGE 504 on the submit is not the gateway's answer — the
+// origin may have accepted the render and be billing it. The account helper
+// classifies it as an unknown billing, and the tool books the estimate and
+// says so.
+test("a 504 from the EDGE on submit is an unknown billing: booked, and the text says MAY", async () => {
+  script = [poll(504, { error: "upstream request timeout" })];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "google/nano-banana", size: "1024x1024" });
+  assert.equal(res.isError, true);
+  assert.ok(budget.spent > 0, `spent=${budget.spent}`);
+  assert.match(res.content[0].text, /MAY have been accepted/);
+  assert.match(res.content[0].text, /dashboard\/activity/);
 });
 
 test("a 202 whose body carries no poll_url is a BILLED job, not a plain error", async () => {

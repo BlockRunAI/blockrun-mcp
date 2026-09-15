@@ -288,3 +288,20 @@ test("settlementOnThrow: the native path (payment inside fetch) judges the statu
   assert.equal(n(sdk(undefined, "Connection error.", new Error("Payment was rejected. Check your wallet balance."))), "none");
   assert.equal(n(sdk(undefined, "Request timed out.")), "unknown");
 });
+
+// Round 4b (CH-2): the Solana frame path had no non-SSE guard. The SDK's
+// reader yields only `data:` lines, so a route that ignored stream:true and
+// answered a plain JSON body yielded nothing — and completeChat resolved
+// {text: ""} as a paid success. The Response path refuses that shape by
+// content-type; the frame path now refuses it by emptiness.
+test("Solana frame path: a stream that ends with no frames is a post-acceptance failure, not an empty success", async () => {
+  const { completeChat, AcceptedThenFailedError } = await import("../src/utils/chat-stream.js");
+  const client = {
+    stream: async function* () { /* the route answered JSON: no data: lines */ },
+    chatCompletion: async () => { throw new Error("must stream"); },
+  };
+  await assert.rejects(
+    completeChat(client as never, "nvidia/gpt-oss-20b", [{ role: "user", content: "hi" }], {}, { stream: true }),
+    (err: Error) => err instanceof AcceptedThenFailedError && /no frames/.test(err.message),
+  );
+});

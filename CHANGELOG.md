@@ -2,6 +2,93 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.51.1
+
+**Round four, second half.** 0.51.0 shipped with seven of round four's ten
+finders still unread — they had stalled — and this is what they found once
+they finished, plus a regression hunt over 0.51.0's own fixes. Forty-six
+findings survived two verifiers each: two P0, five P1, and three of the P1s
+were introduced by 0.51.0. That is the pattern every round has produced, and
+it is why the rounds continue.
+
+### The money paths
+
+- **Two more ways the URL parser and the price classifier disagreed** (P0).
+  The parser strips trailing control-or-space from the whole URL — and the
+  slug is its tail on every rail — so `phone/numbers/buy ` (an ordinary
+  tokenisation slip) reserved $0.012 and bought the $5.001 route. And for
+  https the parser reads a literal `\` as `/`, so `sandbox\create` priced as
+  a $0.003 op, skipped the gpu/timeout normalisation, and the gateway served a
+  $192 sandbox. Both guards share the cut now.
+- **0.51.0's settled-then-failed evidence was reading a shared counter** (P1).
+  The SDK's spend counter is per client, `getClient()` was a cached singleton
+  per rail, and tool calls run concurrently — so a concurrent call's
+  settlement landed inside a failing call's window and was booked to it as
+  "the charge stands", then booked again by the call that paid. Every path
+  tool builds its own client, as chat always has.
+- **An edge status is a maybe on every rail** (P1). 0.51.0 read every numeric
+  status as the gateway's verdict, which undid, for the media tools alone, the
+  rule chat and the path tools apply to the same status: 408/502/504/52x say
+  only that the origin did not answer in time and may still be settling. A
+  `blockrun_speech` answered 504 by the edge while TTS finished and billed at
+  the origin read "failed — try again", i.e. pay twice. One shared set now,
+  and the tracker remembers that a paid request LEFT even after a response
+  settled it.
+- **0.51.0's placeholder claim could delete a peer's freshly published key**
+  (P1). The claim renamed whatever was at the session file's name after a read
+  that saw it empty; a peer that claimed the same placeholder and linked its
+  key in the gap had it renamed aside and deleted. The aside is inspected and a
+  key found there is adopted.
+- **A DNS failure on the native claude-* path booked the quote and forbade a
+  retry** (P1). The Anthropic SDK nests undici's errno two causes deep; the
+  classifier read one. The chain is walked; a connect timeout is
+  never-connected too. An idle stall before the stream connects is a maybe,
+  not "settled"; partial text survives on the native path; and the Solana
+  frame path refuses a stream that ended with no frames instead of returning
+  a paid, empty success.
+- **Only the POST of a signed Polymarket order can be unknown.** The SDK's
+  helpers read the network before they sign, and a relay 502 on any of those
+  reads was wrapped as a phantom "possibly live" order that never released.
+  The creds retry never re-submits an unknown outcome; the reservation is
+  taken before the spend dialog so two waiting confirms cannot overshoot the
+  session cap; the EOA withdraw gets the double-send guard the relayer path
+  had; a throw from the relayer's poll is "may still land"; an unreadable
+  state file is a refusal, not an empty state; and every definite refusal
+  says nothing was placed, so the order card re-arms on it.
+- **The Linux keychain fix locked out fresh installs with no secrets service**
+  (a regression of 0.51.0). secret-tool prints a D-Bus or no-provider message
+  and exits 1 on hosts that have the binary and nothing behind it; that read
+  as a fault, and every paid tool refused to mint. A keychain that does not
+  exist is absent; a locked one is still an error.
+- `blockrun_image` and `blockrun_realface` say when the charge stands (a
+  settled 2xx with no URL / no asset id, a temp file that would not write); the
+  account rail's unreadable settled body is the same typed error the wallet
+  rails throw; `BASE_RPC_URL` is honoured on the Base balance read.
+
+### The release machinery
+
+`publish.yml` runs on `main` only — a `workflow_dispatch` from a bumped branch
+would have shipped it as `latest`, tagged at an unmerged commit. The
+tag/release step is no longer gated on the tag being absent, so a re-run after
+`gh release create` failed can actually create the release (the very failure
+that hit 0.51.0's first run). The MCP-registry lookup gets the npm lookup's
+none/unknown split. `brand-sync` refreshes an already-open fallback PR instead
+of going red. `verify:prices` tallies a probe that throws as unreachable
+(bounded by 30s) instead of exiting with the under-reserve code, and
+`version-gate.mjs` realpaths its `isMain` check so a symlinked checkout cannot
+fail open.
+
+### Saying the true thing
+
+"Timeout = no charge, retry" was wrong on Solana music and every account-rail
+media job; the setup and debug skills told the user to back up only
+`.session` when the funded key on a new install is `.solana-session`;
+spend-confirmation.md said Polymarket is not behind the dialog; four docs said
+native claude-* is Base-only when only `thinking` is; the gentech skill said
+music, speech and realface need Base; CONTRIBUTING's async pattern said
+timeouts never charge. All corrected, and the music/video tool descriptions
+say which rails bill at submit.
+
 ## 0.51.0
 
 **Round four went at round three.** 0.50.0's changelog said the general sweep

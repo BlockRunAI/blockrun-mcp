@@ -40,7 +40,7 @@ import type { BudgetState } from "../types.js";
 import { recordActualSpend } from "./budget.js";
 import { isTimeoutError } from "./http.js";
 import { isApiKeyMode } from "./auth.js";
-import { isExplicitlyUncharged } from "./uncharged.js";
+import { isExplicitlyUncharged, ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
 
 // Literal rather than PORTAL_ACTIVITY_URL: every handler test that mocks
 // utils/auth.js lists its named exports by hand, and the one name this module
@@ -95,7 +95,12 @@ const NEVER_CONNECTED = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENET
  */
 function noResponseObserved(err: unknown): boolean {
   if (isAnswer(err)) return false;
-  const cause = (err as { cause?: { code?: unknown } } | undefined)?.cause;
+  const e = err as { cause?: { code?: unknown } } | undefined;
+  // An edge status on the paid request: the request left, the origin did not
+  // answer — the same "no verdict" as a dropped socket, and booked the same.
+  const status = statusOf(err);
+  if (status !== undefined && ORIGIN_DID_NOT_ANSWER.has(status)) return true;
+  const cause = e?.cause;
   const code = typeof cause?.code === "string" ? cause.code : "";
   if (NEVER_CONNECTED.has(code)) return false;
   if (isTimeoutError(err)) return true;
@@ -121,18 +126,35 @@ function noResponseObserved(err: unknown): boolean {
  * job verdict, or the gateway's own uncharged marker.
  */
 function isAnswer(err: unknown): boolean {
-  const e = err as { statusCode?: unknown; status?: unknown; name?: unknown; message?: unknown } | undefined;
-  if (typeof e?.statusCode === "number" || typeof e?.status === "number") return true;
-  if (e?.name === "JobFailedError" || e?.name === "BilledJobError" || e?.name === "AccountApiError") return true;
-  return typeof e?.message === "string" && isExplicitlyUncharged(e.message);
+  const e = err as { name?: unknown; message?: unknown } | undefined;
+  if (e?.name === "JobFailedError" || e?.name === "BilledJobError") return true;
+  if (typeof e?.message === "string" && isExplicitlyUncharged(e.message)) return true;
+  const status = statusOf(err);
+  // A status is the gateway's verdict — unless it is an EDGE status, which
+  // says only that the origin did not answer in time: it may still be running
+  // the request and settling it. Round 4 read every number as an answer and
+  // undid, for the media tools alone, the rule chat and the path tools apply
+  // to the same status on the same rails (round 4b, P1).
+  return status !== undefined && !ORIGIN_DID_NOT_ANSWER.has(status);
+}
+
+/** The status on an error, when it carries one (SDK APIError / AccountApiError `statusCode`, Anthropic SDK `status`). */
+function statusOf(err: unknown): number | undefined {
+  const e = err as { statusCode?: unknown; status?: unknown } | undefined;
+  return typeof e?.statusCode === "number" ? e.statusCode : typeof e?.status === "number" ? e.status : undefined;
 }
 
 export function trackPaidRequest(): PaidRequest {
   let armed = false;
+  // Once true, a request carrying the payment has LEFT at least once. Kept
+  // apart from `armed`: an edge status settles the tracker (a response did
+  // arrive) and still means the origin may be running the request.
+  let sent = false;
   let quoted: number | null = null;
   return {
     arm(quotedUsd) {
       armed = true;
+      sent = true;
       if (typeof quotedUsd === "number" && Number.isFinite(quotedUsd) && quotedUsd > 0) quoted = quotedUsd;
     },
     settle() {
@@ -145,6 +167,14 @@ export function trackPaidRequest(): PaidRequest {
       return quoted;
     },
     mayHaveSettled(err) {
+      // An edge status on a request that carried the payment is a maybe
+      // whether or not the tracker was settled by its arrival — the
+      // gateway's own uncharged marker is the only thing that overrules it.
+      const status = statusOf(err);
+      if (sent && status !== undefined && ORIGIN_DID_NOT_ANSWER.has(status)) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return !isExplicitlyUncharged(msg);
+      }
       return armed && noResponseObserved(err);
     },
   };
@@ -165,7 +195,10 @@ export function trackPaidRequest(): PaidRequest {
  * exact edges of every request carrying the signature — so arm() and
  * settle() from those hooks and capture the quote in onQuote for arm() to
  * book. (Round 3 armed at onQuote, one step early: a signing-time RPC
- * failure read as "may have settled". Round 4 moved every tool to the hooks.)
+ * failure read as "may have settled". Round 4 moved image, speech and
+ * realface to the hooks alone; video and music arm at BOTH — onQuote for the
+ * async helper's signing window and the hooks for every later request — and
+ * accept that residual window on purpose, documented in video.ts.)
  *
  * NOT for a helper that bills on its own and classifies its own exits
  * (apiKeyAsyncPost: BilledJobError / JobFailedError). Wrapping one leaves

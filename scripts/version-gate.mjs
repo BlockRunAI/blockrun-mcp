@@ -21,6 +21,9 @@
 // and anything that is not X.Y.Z are refused, because the workflow has no
 // dist-tag path for them and a malformed string must not compare as 0.0.0.
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 
 /** -1 / 0 / 1, numerically per component. Throws on anything that is not X.Y.Z. */
@@ -60,7 +63,17 @@ export function gate({ pkg, npm }) {
   return { ok: true, reason: `package.json ${pkg} > npm latest ${npm}` };
 }
 
-const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+// realpath BOTH sides, as changelog-section.mjs and measure-tool-schema.mjs
+// do: Node realpaths the ESM main entry but leaves process.argv[1] as the
+// path it was invoked by, so through a symlinked checkout the two differed,
+// isMain was false, and the CLI exited 0 on a downgrade — the exact fail-open
+// those two scripts already fixed (round 4b).
+let isMain = false;
+try {
+  isMain = Boolean(process.argv[1]) && fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+} catch {
+  isMain = false;
+}
 if (isMain) {
   const [pkg, npm] = process.argv.slice(2);
   if (!pkg || !npm) {

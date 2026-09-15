@@ -284,3 +284,38 @@ test("hasPathTraversal survives a tab splitting a dot-escape (namespace escape)"
     assert.equal(hasPathTraversal(raw), true, raw);
   }
 });
+
+// Audit round 4b (two P0s, same class as the tab-in-escape hole): the WHATWG
+// parser does two more things to the slug before routing that the classifier
+// did not. It strips TRAILING C0-control-or-space from the whole URL input —
+// and the slug is the tail of `${base}${endpoint}` on every rail — so
+// `phone/numbers/buy ` (an ordinary tokenisation slip) leaves the machine as
+// /v1/phone/numbers/buy and the gateway serves the $5.001 route while the
+// exact-match price row missed and $0.012 was reserved. And for special
+// schemes it treats a literal `\` as `/`, so `sandbox\create` classified as
+// the $0.003 op while the gateway served a sandbox/create of up to $192 —
+// and the handler's gpu/timeout normalisation block was skipped with it.
+test("normalizeClassifyPath strips trailing C0/space the way the parser strips the URL's tail", () => {
+  assert.equal(normalizeClassifyPath("phone/numbers/buy "), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("voice/call" + String.fromCharCode(0)), "voice/call");
+  assert.equal(normalizeClassifyPath("contents " + String.fromCharCode(31) + " "), "contents");
+  // A trailing space BEFORE a query is inside the path and the parser keeps
+  // it (percent-encoded), so the gateway 404s unpaid — the safe direction; the
+  // classifier must not turn it into the real route either.
+  assert.equal(normalizeClassifyPath("phone/numbers/buy ?x=1"), "phone/numbers/buy ");
+});
+
+test("normalizeClassifyPath reads a literal backslash as a slash, as the parser does for https", () => {
+  assert.equal(normalizeClassifyPath("sandbox\\create"), "sandbox/create");
+  assert.equal(normalizeClassifyPath("phone/numbers\\buy"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("phone\\lookup\\fraud"), "phone/lookup/fraud");
+  // An ENCODED %5C stays a literal backslash inside the segment: the parser
+  // leaves it and the gateway's exact match 404s unpaid.
+  assert.equal(normalizeClassifyPath("sandbox%5Ccreate"), "sandbox\\create");
+});
+
+test("hasPathTraversal sees a `..` last segment with trailing C0/space, which the parser resolves", () => {
+  assert.equal(hasPathTraversal("phone/.. "), true);
+  assert.equal(hasPathTraversal("phone/.." + String.fromCharCode(0)), true);
+  assert.equal(hasPathTraversal("phone/%2e%2e "), true);
+});

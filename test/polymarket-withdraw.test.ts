@@ -348,3 +348,19 @@ test("relayer anti-retry guidance survives the error path untouched", async () =
     bridgeError = BRIDGE_OFFLINE;
   }
 });
+
+// Round 4b (PM-3): the EOA (sigType 0) withdraw is a plain Polygon
+// transaction, and it had no pendingWithdraw guard at all — a receipt timeout
+// after the broadcast invited a second full transfer with a fresh nonce. The
+// guard now records "eoa" before the send, "eoa:<hash>" once known, and is
+// cleared only by a receipt; a bare "eoa" blocks until the deadline.
+test("an EOA withdrawal whose send never answered blocks a second one without asking the relayer", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n;
+  stateFile = { pendingWithdraw: { transactionID: "eoa", deadline: futureDeadline() } };
+  relayerStateCalls = 0;
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /double-send/);
+  assert.equal(relayerStateCalls, 0, "an EOA transaction is not a relayer batch");
+  assert.ok(stateFile.pendingWithdraw, "the guard stays armed");
+});

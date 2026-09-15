@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.4K with --profile trading, 58% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 13.0K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.4K with --profile trading, 59% less.">
   </picture>
 </div>
 
@@ -252,13 +252,13 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 13,006 |
+| `full` *(default)* | 19 | 13,044 |
 | `trading` | 8 | 5,411 |
-| `media` | 7 | 5,790 |
+| `media` | 7 | 5,828 |
 | `research` | 5 | 2,752 |
 | `chat` | 3 | 2,079 |
 
-Running `--profile trading` instead of the default costs **58% less context** for the same trading
+Running `--profile trading` instead of the default costs **59% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
 
 Measure it yourself — against us, or against any other stdio MCP server:
@@ -611,11 +611,11 @@ One wallet, or one dashboard-backed API key. All sources.
 | `BLOCKRUN_API_KEY` | unset | A BlockRun account key (`brk_live_…`) from [user.blockrun.ai/dashboard/keys](https://user.blockrun.ai/dashboard/keys). **Set → account billing through `api.blockrun.ai`: no wallet is created, read or used, and no chain applies.** Takes priority over every wallet setting below. A malformed value is a startup error, never a silent fall back to the wallet. |
 | `~/.blockrun/.api-key` | not created | The same key on disk, for clients that make env vars awkward. Read only when `BLOCKRUN_API_KEY` is unset; an empty or unreadable file falls through to wallet mode. |
 | `BLOCKRUN_API_BASE_URL` | `https://api.blockrun.ai` | Account API service endpoint used after you get a key at `user.blockrun.ai`. Override only for staging. Accepts the OpenAI-style `…/v1` form too. |
-| `~/.blockrun/.session` | auto-created on first run | EVM private key (0x…). File exists → use Base. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
+| `~/.blockrun/.session` | created on the first `blockrun_wallet` call (with `.solana-session`) | EVM private key (0x…). Which chain pays is the priority list below, not this file's existence. Also the Polymarket signer (unless `BLOCKRUN_WALLET_KEY` or an agent `wallet.json` takes precedence). |
 | `BLOCKRUN_WALLET_KEY` | unset | Env override of the EVM key — takes precedence over `.session` / `wallet.json` as the Base + Polymarket signer. |
 | `~/.blockrun/.chain` | unset | Explicit chain preference: `base` or `solana`. Written only by `blockrun_wallet action:"chain"` — i.e. only when you choose. |
 | `~/.blockrun/.chain-auto` | written on first run | Automatic pin: the chain you were already on when your second wallet was provisioned. Keeps a Base user on Base once a Solana session exists, and is outranked by `SOLANA_WALLET_KEY`. Cleared whenever you set a chain explicitly. |
-| `~/.blockrun/.solana-session` | not created | Solana private key. File exists → Solana unless `.chain` says `base`. |
+| `~/.blockrun/.solana-session` | created on the first `blockrun_wallet` call (with `.session`) | Solana private key — the funded wallet on a new install. Which chain pays is the priority list below. |
 | `SOLANA_WALLET_KEY` | unset | Env override of `.solana-session`. Set → use Solana. |
 | `BLOCKRUN_KEYCHAIN` | `auto` | Key storage. `auto` — mirror the key into the OS keychain (macOS Keychain / Linux `secret-tool`) and keep the plaintext file, which stays authoritative so other BlockRun tools keep working and so replacing it still rotates your wallet. `off` — file only. `strict` — also delete `~/.blockrun/.session` once a read-back proves the keychain holds the same key; **this breaks other tools that read that file directly**. |
 | `BLOCKRUN_MCP_PROFILE` | `full` | Tool profile (`media` / `trading` / `research` / `chat`). |
@@ -653,7 +653,7 @@ The server runs a non-blocking npm registry check at startup and prints an `Upda
   Then restart Claude Code. Or pin absolute paths (`which npx`).
 - **`claude mcp list` doesn't show `blockrun`** → Check `node -v` (≥20.19). Clear the npx cache: `rm -rf ~/.npm/_npx`. Re-run the install.
 - **`fetch failed` / balance-check timeout** → Base RPC transient outage. The tool falls through 3 public RPCs; retry after 30s. Persistent = local proxy / firewall blocking outbound RPC.
-- **`Video`/`Music generation timed out`** → Upstream queue congestion. **No charge** (payment-on-completion). Retry, or pick a faster model.
+- **`Video`/`Music generation timed out`** → Upstream queue congestion. Whether it cost anything depends on the rail, and the error says which: on the **Base wallet** payment settles on completion, so it is **not charged** and a retry is safe; on **Solana music** and **every account-rail media job** the gateway bills at submit, so the job **is charged**, the error names it, and re-running bills a second one — check `blockrun_wallet action:"report"` instead.
 - **`blockrun_price` says `Equity quotes are not served (gateway 501 …)`** → Equity price/history were withdrawn on 2026-09-05; not an outage, and **nothing was charged** (the wallet is never asked to sign). The ticker catalog (`action:"list" category:"stocks"`) is still free. Equity coverage: hello@blockrun.ai.
 - **`blockrun_markets` on `sports/*` fails — before 0.49.0 as `API error after payment: 502` with no balance change** → Predexon's `sports/*` routes have been down upstream since 2026-08-04; the gateway releases the payment on that upstream 500, so the call is **not charged** (the error says so when the gateway's "payment NOT charged" confirmation is in the response; otherwise it tells you to check `blockrun_wallet action:"report"`). For sports odds use `path:"markets/search"` with `params:{ q: "NBA" }`, or `polymarket/events` with `params:{ search: "NBA" }` — the bare `markets` route and its `league` filter were removed upstream on 2026-08-04 and 404 before payment. Upgrade to ≥ 0.49.0 so the error says all of this itself.
 - **No spend-confirmation dialog although `BLOCKRUN_CONFIRM_SPEND=on`** → Your client doesn't support MCP elicitation (Windsurf, Codex, Gemini CLI); the server proceeds without asking by design. Use `BLOCKRUN_BUDGET_LIMIT` as the guard, or a client from the [support table](#%EF%B8%8F-human-in-the-loop-payments).
@@ -693,7 +693,7 @@ Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated c
 Yes. `blockrun_polymarket` places real, USDC-settled orders on Polymarket's CLOB — confirm-gated and capped. Read the odds with `blockrun_markets`, place with `blockrun_polymarket`.
 
 **Base or Solana?**
-Both. Switch instantly with `blockrun_wallet action:"chain"`. Three things are Base-only, and each says so when you call them on Solana: `blockrun_defi` (DefiLlama) and `blockrun_modal`, which the Solana gateway does not serve, and native Anthropic `claude-*` chat. Media generation, markets, search and Polymarket all settle on either chain.
+Both. Switch instantly with `blockrun_wallet action:"chain"`. Three things are Base-only, and each says so when you call them on Solana: `blockrun_defi` (DefiLlama) and `blockrun_modal`, which the Solana gateway does not serve, and `claude-*` chat with `thinking` (the native `/v1/messages` path pays on Base; a plain `claude-*` call takes the compat path on Solana). Media generation, markets, search and Polymarket all settle on either chain.
 
 ---
 

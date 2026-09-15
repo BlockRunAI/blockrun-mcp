@@ -229,7 +229,7 @@ function bestQuote(book: OrderBookSummary, side: "buy" | "sell"): number | null 
  * level for FOK, the top-of-array level for FAK), so a book that thinned
  * between preview and confirm was signed far from the "best ask" the user
  * consented to. Books are not guaranteed sorted; sort explicitly.
- * Exported for tests.
+ * Exported for the direct cases in test/polymarket-walk-book.test.ts.
  */
 export function walkBook(
   book: OrderBookSummary,
@@ -372,6 +372,10 @@ async function withCredsRetry<T>(fn: (clob: ClobClient) => Promise<T>): Promise<
   try {
     return await fn(clob);
   } catch (err) {
+    // An unknown outcome carries the raw transport text inside its message,
+    // and that text can contain "unauthorized"; re-running the whole trade on
+    // it would sign a second order on top of one that may be live (round 4b).
+    if (err instanceof OrderOutcomeUnknownError) throw err;
     if (!isCredsMismatchError(err as { message?: string; status?: number; data?: unknown })) throw err;
     const { address, sigType } = bindAddressForCreds();
     if (address) invalidateL2Creds(address, sigType);
@@ -413,7 +417,25 @@ export interface TradeInput {
 export type { ToolResult, SpendGate } from "./transactions.js";
 
 
+/**
+ * The sentence every DEFINITE refusal from executeTrade ends with, so the
+ * order card (apps/order-safety.ts outcomeIsUnknown) can tell it from an
+ * unknown outcome. The card keys on the repo's uncharged wording; of
+ * executeTrade's refusals only two carried it, so a per-order-cap refusal or
+ * a definite CLOB 4xx locked the card as "outcome UNKNOWN" and told the model
+ * to check positions for an order the server provably never placed (round 4b).
+ */
+const NOT_PLACED = " The order was not placed and nothing was charged.";
+
 export async function executeTrade(input: TradeInput): Promise<ToolResult> {
+  const result = await executeTradeInner(input);
+  if (!result.isError) return result;
+  const unknown = (result.structured as { outcome?: unknown } | undefined)?.outcome === "unknown";
+  if (unknown || /nothing was charged|no charge was made|nothing was signed/i.test(result.text)) return result;
+  return { ...result, text: `${result.text}${NOT_PLACED}`, structured: { ...(result.structured ?? {}), outcome: "rejected" } };
+}
+
+async function executeTradeInner(input: TradeInput): Promise<ToolResult> {
   const side = input.action === "buy" ? Side.BUY : Side.SELL;
   const isLimit = input.price !== undefined;
 
@@ -636,11 +658,21 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
 
       const options = { tickSize: tickSize as never, negRisk };
 
-      // The signed submit, factored out so it can be retried after a CLOB
-      // balance-cache refresh (below) without rebuilding/re-signing anything else.
-      const submitOrder = (): Promise<unknown> =>
+      // SIGN and POST are two steps on purpose. The SDK's createAndPost*
+      // helpers make several network reads BEFORE they sign (GET /version on
+      // the first order, the market's condition id and tick size on the first
+      // order per token, builder fees), and a relay 502 or a dropped socket
+      // on any of those has no 4xx behind it — so wrapping the whole helper
+      // in the unknown-outcome classifier booked a phantom "possibly live"
+      // order that never released, and told the agent not to retry, when
+      // nothing had been signed (round 4b). Only the POST of the signed order
+      // can have an unknown outcome; a pre-sign failure is a plain error.
+      const orderType = isLimit
+        ? (orderKind === "GTD" ? OrderType.GTD : OrderType.GTC)
+        : (orderKind === "FAK" ? OrderType.FAK : OrderType.FOK);
+      const signOrder = () =>
         isLimit
-          ? clob.createAndPostOrder(
+          ? clob.createOrder(
               {
                 tokenID: token.tokenId,
                 price: price as number,
@@ -649,10 +681,8 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
                 ...(orderKind === "GTD" && input.expires_at ? { expiration: input.expires_at } : {}),
               },
               options,
-              orderKind === "GTD" ? OrderType.GTD : OrderType.GTC,
-              input.post_only ?? false,
             )
-          : clob.createAndPostMarketOrder(
+          : clob.createMarketOrder(
               {
                 tokenID: token.tokenId,
                 amount: input.action === "buy" ? (input.amount_usd as number) : (size as number),
@@ -665,8 +695,9 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
                 price: worstFillPrice as number,
               },
               options,
-              orderKind === "FAK" ? OrderType.FAK : OrderType.FOK,
             );
+      const postSigned = (signed: Awaited<ReturnType<typeof signOrder>>): Promise<unknown> =>
+        clob.postOrder(signed, orderType, isLimit ? (input.post_only ?? false) : undefined);
 
       // The SDK signs and posts; a throw with no 4xx behind it (dropped socket,
       // client timeout, relay 502/504) arrives AFTER the order may have been
@@ -690,26 +721,42 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         );
       };
       const submitOrUnknown = async (): Promise<unknown> => {
+        // A throw here — the SDK's pre-sign reads, or the signing itself —
+        // moved nothing: it propagates plain, and the reservation is released.
+        const signed = await signOrder();
         try {
-          return await submitOrder();
+          return await postSigned(signed);
         } catch (err) {
           throw isDefiniteRejection(err) ? err : outcomeUnknown(err);
         }
       };
 
+      // Reserve now — before the dialog and before the await — so a
+      // concurrent order sees this spend; rolled back if the user declines or
+      // the submit is definitely rejected, so neither consumes budget. The
+      // dialog used to sit between the cap check and this reservation, and
+      // two confirms waiting on it together could overshoot
+      // POLYMARKET_MAX_SESSION_USD (round 4b).
+      reserveBet(notional, input.agent_id);
+
       // The last word before a signature is the user's, when the operator
       // asked for one (BLOCKRUN_CONFIRM_SPEND=on). Every guard above has
-      // passed, nothing is reserved yet, so a decline leaves no residue.
+      // passed; a decline releases the reservation and leaves no residue.
       if (input.askUser) {
         const what = `${input.action} ${token.outcome ? `"${token.outcome}"` : `token ${token.tokenId.slice(0, 12)}…`}`;
-        const gate = await input.askUser(notional, `polymarket · ${what} · ${isLimit ? `limit ${orderKind}` : `market ${orderKind}`}`);
-        if (!gate.ok) return declinedResult(`the ${what} order`);
+        let gate: { ok: boolean; reason?: string };
+        try {
+          gate = await input.askUser(notional, `polymarket · ${what} · ${isLimit ? `limit ${orderKind}` : `market ${orderKind}`}`);
+        } catch (err) {
+          releaseBet(notional, input.agent_id);
+          throw err;
+        }
+        if (!gate.ok) {
+          releaseBet(notional, input.agent_id);
+          return declinedResult(`the ${what} order`);
+        }
       }
 
-      // Reserve now (before the await) so a concurrent order sees this spend;
-      // roll back if the submit is definitely rejected so a failed order
-      // doesn't consume budget.
-      reserveBet(notional, input.agent_id);
       let response: unknown;
       try {
         try {

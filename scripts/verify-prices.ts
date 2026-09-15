@@ -96,11 +96,25 @@ type Probe = {
 
 type Quote = { usd: number; description?: string };
 
+// A probe that THROWS (reset, DNS, TLS, a gateway that accepts the socket and
+// never answers) is an unreachable ROW, not a crash: uncaught it rejected the
+// top-level await and Node exited 1 — the "confirmed under-reserve" code — with
+// none of the verdict lines printed (round 4b). Bounded so a hung gateway
+// cannot stall the release gate for undici's five-minute headers timeout.
+const PROBE_TIMEOUT_MS = 30_000;
+
 async function quote(host: string, path: string, body?: unknown): Promise<Quote | string> {
-  const res = await fetch(host + path, {
-    method: body === undefined ? "GET" : "POST",
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(host + path, {
+      method: body === undefined ? "GET" : "POST",
+      ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const why = err instanceof Error ? (err.name === "TimeoutError" ? `no answer in ${PROBE_TIMEOUT_MS / 1000}s` : err.message) : String(err);
+    return `unreachable (${why})`;
+  }
   const header = res.headers.get("payment-required");
   if (!header) return `no 402 (HTTP ${res.status})`;
   let parsed: { accepts?: Array<{ amount?: string; extra?: { description?: string } }>; resource?: { description?: string } };
@@ -336,7 +350,14 @@ for (const probe of PROBES) {
     // The guard says this cannot render; the gateway is expected to refuse
     // it unpaid. Either side quoting it is the finding, on whichever chain.
     const refused = (q: Quote | string) => typeof q === "string" && /no 402 \(HTTP 4\d\d\)/.test(q);
-    if (refused(liveQ) && refused(solQ)) {
+    // A 5xx, an undecodable header or a thrown probe is neither a refusal nor
+    // a quote: the row was not verified. Tally it as such rather than as "the
+    // gateway sells it" (round 4b).
+    const unverified = (q: Quote | string) => typeof q === "string" && !refused(q);
+    if (unverified(liveQ) || unverified(solQ)) {
+      console.log(`  ?  ${probe.label.padEnd(26)} ${[unverified(liveQ) ? `Base ${liveQ}` : "", unverified(solQ) ? `Solana ${solQ}` : ""].filter(Boolean).join("; ")}`);
+      unreachable++;
+    } else if (refused(liveQ) && refused(solQ)) {
       console.log(`  ✓  ${probe.label.padEnd(26)} refused unpaid on both gateways, as the client-side guard expects`);
     } else {
       const sold = [

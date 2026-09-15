@@ -17,6 +17,8 @@
 
 import { fetchWithTimeout } from "./http.js";
 import { JobFailedError, pollTimeoutFor } from "./poll.js";
+import { ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
+import { RawCallSettledError } from "./settled-error.js";
 import { apiAuthHeaders } from "./auth.js";
 import { getApiBase, resolveGatewayUrl } from "./wallet.js";
 
@@ -153,6 +155,22 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return (await response.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+/**
+ * The body of a SETTLED 2xx. This rail bills on the response, and the cost
+ * header is already on it, so a body that will not parse is a charge with an
+ * unusable result — a typed error the path tools' catch books and says the
+ * charge stands for, as the wallet rails do (round 4b). Until then it was
+ * returned as a successful `{}`.
+ */
+async function readSettledJson(response: Response, what: string): Promise<Record<string, unknown>> {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    throw new RawCallSettledError(`${what} answered ${response.status} but the body could not be read: ${why}`, costFrom(response), { cause: err });
+  }
+}
+
 /** The message for a non-ok response whose body has already been read. */
 function statusErrorMessage(response: Response, what: string, body: Record<string, unknown>): string {
   // A 402 on this rail is not a quote to pay — it means the ACCOUNT is out of
@@ -218,7 +236,7 @@ export async function apiKeyPost(
     opts.timeoutMs ?? 120_000,
   );
   if (!response.ok) await throwForStatus(response, `POST ${endpoint}`);
-  return { data: await readJson(response), paidUsd: costFrom(response), txHash: receiptFrom(response) };
+  return { data: await readSettledJson(response, `POST ${endpoint}`), paidUsd: costFrom(response), txHash: receiptFrom(response) };
 }
 
 /**
@@ -241,7 +259,7 @@ export async function apiKeyGet(
     opts.timeoutMs ?? 120_000,
   );
   if (!response.ok) await throwForStatus(response, `GET ${endpoint}`);
-  return { data: await readJson(response), paidUsd: costFrom(response), txHash: receiptFrom(response) };
+  return { data: await readSettledJson(response, `GET ${endpoint}`), paidUsd: costFrom(response), txHash: receiptFrom(response) };
 }
 
 /**
@@ -299,7 +317,21 @@ export async function apiKeyAsyncPost(
       { paidUsd: null, billing: "unknown" },
     );
   }
-  if (!submit.ok && submit.status !== 202) await throwForStatus(submit, `POST ${endpoint}`);
+  if (!submit.ok && submit.status !== 202) {
+    // An EDGE status is not the gateway's answer: the origin may have accepted
+    // the job and be billing it while the load balancer gave up waiting. Same
+    // "unknown" as a submit that never returned (round 4b).
+    if (ORIGIN_DID_NOT_ANSWER.has(submit.status)) {
+      const body = await readJson(submit);
+      throw new BilledJobError(
+        `POST ${endpoint} was answered ${submit.status} by the edge, not by the gateway (${JSON.stringify(body)}). The request reached the ` +
+          `gateway and this rail bills a job the moment it is accepted, so the job MAY have been accepted and billed to the account — ` +
+          `check https://user.blockrun.ai/dashboard/activity before submitting again.`,
+        { paidUsd: null, billing: "unknown" },
+      );
+    }
+    await throwForStatus(submit, `POST ${endpoint}`);
+  }
 
   const submitted = await readJson(submit);
   const submitCost = costFrom(submit);

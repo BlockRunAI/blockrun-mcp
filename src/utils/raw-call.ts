@@ -17,6 +17,7 @@
 
 import { isApiKeyMode } from "./auth.js";
 import { apiKeyGet, apiKeyPost } from "./api-key-call.js";
+import { RawCallSettledError } from "./settled-error.js";
 import { getChain } from "./wallet.js";
 import { OBSERVED_GATEWAY_TX_FEE_USD, TRANSACTION_FEE_USD } from "./tx-fee.js";
 
@@ -28,22 +29,7 @@ export type RawClient = {
   getSpending?: () => { totalUsd: number };
 };
 
-/**
- * The SDK call threw AFTER its own counter recorded a settlement. Both wallet
- * clients count on the paid retry's 2xx and only then read the body
- * (SolanaLLMClient.requestWithPaymentRaw: assertPaid → recordSettlement →
- * json()), so a non-JSON 200 surfaces as a bare SyntaxError — no status, no
- * transport words, "none" to settlementOnThrow — for a call that was paid.
- * The counter is the evidence, and this carries it to the tool's catch.
- */
-export class RawCallSettledError extends Error {
-  readonly settledUsd: number;
-  constructor(message: string, settledUsd: number, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "RawCallSettledError";
-    this.settledUsd = settledUsd;
-  }
-}
+export { RawCallSettledError };
 
 function counted(client: RawClient): number | undefined {
   try {

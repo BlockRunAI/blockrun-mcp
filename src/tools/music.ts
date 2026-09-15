@@ -103,13 +103,13 @@ export function registerMusicTool(server: McpServer, budget: BudgetState): void 
       description: `Generate music tracks via BlockRun x402 (async, client-polled).
 
 Generates a full-length ~3 minute MP3 track. Takes 1-3 minutes to complete. The
-tool submits the job and, for slower tracks, polls until it is ready. On Base
-and the account rail payment settles only when a finished track is returned —
-if the job fails you are not charged; if this client gives up while a paid
-request is still in flight the gateway may still settle, and the error text
-says so. On Solana the gateway settles the payment when it ACCEPTS the job, so
-a job that later fails or outlives the poll budget is still charged — the error
-text says so and names the job, which stays claimable for ~48h.
+tool submits the job and, for slower tracks, polls until it is ready. On the
+Base wallet payment settles only when a finished track is returned — if the
+job fails you are not charged; if this client gives up while a paid request is
+still in flight the gateway may still settle, and the error text says so. On
+Solana and on the account rail the job is billed when the gateway ACCEPTS it,
+so a job that later fails or outlives the poll budget is still charged — the
+error text says so and names the job, which stays claimable for ~48h.
 
 Model: minimax/music-2.5+ ($0.1575/track, up to ~4 min)
 

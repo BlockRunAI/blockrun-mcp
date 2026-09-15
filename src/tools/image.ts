@@ -377,6 +377,25 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
       // never set on Base, and set BEFORE the unpaid quote probe on Solana, so
       // a 15s probe timeout booked a whole render (audit round 3).
       const paid = trackPaidRequest();
+      // The amount booked once settlement was OBSERVED, on any rail. Read by
+      // the catch: a failure after this point — no URL in the body, a temp
+      // file that would not write — is a real charge with an unusable result,
+      // and the message has to say the charge stands rather than "failed"
+      // with alt-model advice that runs a second paid render (round 4b: the
+      // D13 step video, music and speech got; image had not).
+      let bookedUsd: number | null = null;
+      const book = (paidUsd: number | null, fallback: number) => {
+        recordActualSpend(budget, paidUsd, fallback, agent_id);
+        bookedUsd = paidUsd ?? fallback;
+      };
+      const chargeStands = (why: string) => {
+        const booked = bookedUsd as number | null;
+        const where = isApiKeyMode() ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report"`;
+        return {
+          content: [{ type: "text" as const, text: `Image generation settled and the charge stands — $${(booked ?? 0).toFixed(4)} is booked against your budget — but the result could not be used: ${why}\nCheck ${where} before doing anything else; re-running blockrun_image would charge a second render.` }],
+          isError: true as const,
+        };
+      };
       try {
         const selectedModel = model || "openai/gpt-image-2";
 
@@ -531,7 +550,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             // "free" — fall back to the estimate and say so, never book $0.
             billedUsd = r.paidUsd ?? estimatedCost;
             costIsEstimate = r.paidUsd === null;
-            recordActualSpend(budget, r.paidUsd, estimatedCost, agent_id);
+            book(r.paidUsd, estimatedCost);
             imageUrl = (r.data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
           } else if (getChain() === "solana") {
             // Solana: manual x402 against the sol.blockrun.ai gateway (the SDK's
@@ -575,7 +594,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
                 solQuotedUsd = quotedUsd;
               },
             });
-            recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+            book(paidUsd, estimatedCost);
             billedUsd = paidUsd ?? estimatedCost;
             costIsEstimate = paidUsd === null;
             imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
@@ -606,16 +625,14 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               // No quality option: the SDK forwards any truthy value and the
               // gateway 400s all of them for these models (see the schema).
               : getImageClient().generate(prompt, { model: selectedModel, size }), observedUsd);
-            recordActualSpend(budget, null, observedUsd, agent_id);
+            book(null, observedUsd);
             billedUsd = observedUsd;
             imageUrl = response.data?.[0]?.url;
           }
 
           if (!imageUrl) {
-            return {
-              content: [{ type: "text", text: formatError("No image URL in response") }],
-              isError: true,
-            };
+            // A settled 2xx with no URL in it: the charge stands.
+            return chargeStands("No image URL in response");
           }
 
           const delivered = await materializeImageUrl(imageUrl);
@@ -653,6 +670,10 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         if (err instanceof BudgetExceededError) {
           return { content: [{ type: "text", text: errMsg }], isError: true };
         }
+        // 1. Settlement was observed and booked, then the result could not be
+        //    used (a temp file that would not write, a body that would not
+        //    materialise). The charge stands; do not run the tool again.
+        if ((bookedUsd as number | null) !== null) return chargeStands(errMsg);
         // The account rail's async path: the gateway accepted the job (or may
         // have — a submit that never answered), and it is charged when the
         // render completes whether or not this client is still polling. Book

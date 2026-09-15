@@ -60,9 +60,28 @@ const MACOS_ITEM_NOT_FOUND = 44;
  */
 const LINUX_ITEM_NOT_FOUND = 1;
 
-/** A secret-tool exit 1 that printed nothing is a miss; one that said why is a fault. */
-function linuxLookupMissed(result: { status: number | null; stderr?: string | null }): boolean {
-  return result.status === LINUX_ITEM_NOT_FOUND && !(result.stderr ?? "").trim();
+/**
+ * secret-tool's stderr when there is NO secrets service to talk to at all — no
+ * D-Bus session (SSH, containers, systemd units), or a session bus with no
+ * keyring provider (Fedora and Arch ship secret-tool in the base libsecret
+ * package). That is a keychain that does not exist, not one that would not
+ * open: nothing funded can be in it. Round 4 read every stderr as a fault,
+ * and a fresh install on such a host could never mint a wallet — every paid
+ * tool refused with "your existing one is most likely still in the keychain"
+ * until the user found BLOCKRUN_KEYCHAIN=off (round 4b).
+ */
+const LINUX_NO_SECRETS_SERVICE = /cannot autolaunch d-bus|was not provided by any \.service files|could not connect|failed to connect to socket|no such interface|org\.freedesktop\.secrets|name is not activatable|dbus/i;
+
+/**
+ * What a secret-tool exit 1 meant: a miss printed nothing; a service that is
+ * not there printed one of the lines above; anything else it printed (a locked
+ * collection, a dismissed unlock prompt) is a fault a funded key may sit behind.
+ */
+function linuxLookupVerdict(result: { status: number | null; stderr?: string | null }): "miss" | "unavailable" | "fault" {
+  if (result.status !== LINUX_ITEM_NOT_FOUND) return "fault";
+  const said = (result.stderr ?? "").trim();
+  if (!said) return "miss";
+  return LINUX_NO_SECRETS_SERVICE.test(said) ? "unavailable" : "fault";
 }
 
 const warned = new Set<string>();
@@ -258,7 +277,7 @@ export function keychainRead(account: string): KeychainRead {
         const value = result.stdout.trim();
         return value ? { status: "found", value } : { status: "absent" };
       }
-      if (linuxLookupMissed(result)) return { status: "absent" };
+      if (linuxLookupVerdict(result) !== "fault") return { status: "absent" };
       if (binaryMissing(result)) return { status: "absent" };
       const said = (result.stderr ?? "").trim().split("\n")[0];
       return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}${said ? `: ${said}` : ""}` };
@@ -308,7 +327,7 @@ export function keychainLoad(account: string): string | null {
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
       if (result.status === 0) return result.stdout.trim() || null;
-      if (!linuxLookupMissed(result) && !binaryMissing(result)) {
+      if (linuxLookupVerdict(result) === "fault" && !binaryMissing(result)) {
         const said = (result.stderr ?? "").trim().split("\n")[0];
         warnOnce(
           `OS keychain read failed (secret-tool exit ${result.status}${said ? `: ${said}` : ""}) — falling back to ~/.blockrun/.session.`,

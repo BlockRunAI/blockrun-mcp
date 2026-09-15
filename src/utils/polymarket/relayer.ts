@@ -263,7 +263,18 @@ export async function sendWalletBatch(
   if (opts?.trackPendingWithdraw) {
     saveState({ pendingWithdraw: { transactionID: response.transactionID, deadline: deadlineSec } });
   }
-  const confirmed = await quietStdout(() => response.wait());
+  // wait() → pollUntilState → HttpClient.send THROWS on a transport failure
+  // mid-poll (`{"error":"connection error"}`, a relay 5xx) — the batch was
+  // ACCEPTED and may land; that is the same case as wait() resolving
+  // undefined, not a plain error to hand back verbatim with no anti-retry
+  // wording (round 4b).
+  let confirmed: Awaited<ReturnType<typeof response.wait>> | undefined;
+  let waitFailure: string | undefined;
+  try {
+    confirmed = await quietStdout(() => response.wait());
+  } catch (err) {
+    waitFailure = err instanceof Error ? err.message : String(err);
+  }
   if (!confirmed) {
     const state = await getRelayerTransactionState(response.transactionID);
     if (state && TERMINAL_FAILURE_STATES.includes(state)) {
@@ -279,7 +290,7 @@ export async function sendWalletBatch(
     // no "failed"/"revert" wording (this is not a revert), and deliberately
     // anti-retry advice — pendingWithdraw stays persisted when tracked.
     throw new Error(
-      `${description}: relayer batch did not confirm within the polling window ` +
+      `${description}: relayer batch ${waitFailure ? `polling failed (${waitFailure})` : "did not confirm within the polling window"} ` +
       `(tx ${response.transactionID}, relayer state: ${state ?? "unreachable"}). It may still land — the signed ` +
       `batch stays executable until its ${BATCH_DEADLINE_SECS / 60}-minute deadline. Do NOT retry yet: wait for ` +
       `the deadline to pass, then ${opts?.guidance ?? 're-run action:"setup" to re-check state'}.`,
