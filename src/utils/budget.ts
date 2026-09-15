@@ -282,8 +282,10 @@ export function getOperatorCeiling(budget: BudgetState): number | null {
 // and revoke moves the SAME object into a per-ledger tombstone map that the
 // next delegate of that id restores. A reservation taken before either
 // operation releases against the object that is live after it. Spend made
-// while an id is revoked is tracked globally only, as before — a revoked id
-// has no per-agent cap, and a cap it does not have cannot be charged against.
+// while an id is revoked is credited to the tombstone as well as the global
+// ledger (recordSpending) — a revoked id has no per-agent CAP to refuse
+// against, but the money it spent must come back with the id, or revoke →
+// settle → delegate is a refill one in-flight call at a time (round 4).
 const revokedLedgers = new WeakMap<BudgetState, Map<string, AgentBudget>>();
 
 /**
