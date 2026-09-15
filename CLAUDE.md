@@ -1,6 +1,6 @@
 # BlockRun MCP
 
-MCP server giving Claude real-time data — markets, research, X/Twitter, crypto. Pay per call with USDC.
+MCP server giving Claude real-time data — markets, research, web search, crypto. Pay per call with USDC.
 
 ## Commands
 

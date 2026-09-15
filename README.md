@@ -380,7 +380,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 | `blockrun_polymarket_read` | Read-only Polymarket positions/open orders plus executable live order previews, separated for MCP clients that enforce tool safety annotations | free |
 | `blockrun_polymarket` | **Trade on Polymarket** (CLOB V2): place/cancel real bets, positions, redeem winnings — signed locally, settled in pUSD from a gasless deposit wallet. Confirm-gated, $25/order default cap. [Details ↓](#-polymarket-trading) | free tool; bets are your funds |
 | `blockrun_exa` | Neural web search (Exa) — research, competitors, papers, URL content | $0.01 + fee/query |
-| `blockrun_search` | Grok Live Search — web + X/Twitter + news with citations | $0.025 × max_results |
+| `blockrun_search` | Grok Live Search — web + news with citations | $0.025 × max_results |
 | `blockrun_dex` | Live DEX prices via DexScreener | free |
 | `blockrun_rpc` | Raw JSON-RPC on <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains (Ethereum, Base, Solana, Bitcoin, Sui, NEAR, …) via Tatum | $0.002 + fee/call |
 | `blockrun_defi` | DefiLlama — protocol TVL, chain TVL, yield pools (APY), token prices | $0.001–0.005 + fee/call |
