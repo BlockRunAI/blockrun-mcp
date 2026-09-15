@@ -366,7 +366,12 @@ for (const row of ROWS) {
 // verdict now comes off the error (a status, a typed job verdict, the
 // gateway's uncharged marker), never its message.
 // ---------------------------------------------------------------------------
-const answered5xx = () => ({ status: 504, ok: false, headers: headers(), json: async () => ({ error: "The operation was aborted due to timeout" }) });
+const answered5xx = () => ({ status: 500, ok: false, headers: headers(), json: async () => ({ error: "The operation was aborted due to timeout" }) });
+// The EDGE answering for an origin that did not: not a verdict. The origin may
+// still be running the request and settling it, so this is booked as a
+// precaution — the rule chat and the path tools already apply to the same
+// status on the same rails (round 4b, P1: the tracker read it as an answer).
+const edge504 = () => ({ status: 504, ok: false, headers: headers(), json: async () => ({ error: "upstream request timeout" }) });
 for (const row of ROWS) {
   // video's Solana submit answering 5xx is the helper's own "poll error" shape
   // after a 202; a 5xx ON the submit is covered the same way in the helper.
@@ -391,6 +396,28 @@ for (const row of ROWS) {
     assert.equal(res.isError, true, `${row.name}/account: ${t}`);
     assert.doesNotMatch(t, /got no answer|booked against your budget/, `${row.name}/account: an answered 5xx is not "no answer" — got: ${t}`);
     assert.equal(budget.spent, 0, `${row.name}/account: an answered 5xx books nothing — spent=${budget.spent}`);
+  });
+}
+
+for (const row of ROWS) {
+  // video and music go through the async helpers, whose own post-submit
+  // classification (poll loop, BilledJobError) owns the edge case; the
+  // single-POST tools are the ones whose only evidence is the status.
+  if (row.name === "video" || row.name === "music") continue;
+  test(`${row.name} on Solana: the paid request is answered 504 by the EDGE → booked as a precaution`, async () => {
+    rail = "solana";
+    quotedAmount = micro(row.reserve);
+    script = [resp402, edge504];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    assertBooked(res, budget, row.reserve, /MAY have (gone through|settled)/, `${row.name}/solana/504`);
+  });
+  test(`${row.name} on the account rail: the Bearer request is answered 504 by the EDGE → booked as a precaution`, async () => {
+    rail = "account";
+    script = [edge504];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    assertBooked(res, budget, row.reserve, /MAY have (gone through|settled|been accepted)/, `${row.name}/account/504`);
   });
 }
 

@@ -143,16 +143,37 @@ test("a non-positive or unreadable quote is not captured — the reserve stays t
 // booked a whole render on image's account rail and said "MAY have gone
 // through" — the C13 shape, on the rail whose tools had just documented
 // why it must not happen.
-test("an error carrying a status is an answer, not a maybe — even when its body says 'timeout'", async () => {
+test("an error carrying a GATEWAY status is an answer, not a maybe — even when its body says 'timeout'", async () => {
   const paid = trackPaidRequest();
-  const answered = Object.assign(new Error('API error 504: {"error":"Upstream timeout"}'), { statusCode: 504, name: "AccountApiError" });
+  const answered = Object.assign(new Error('API error 500: {"error":"Upstream timeout"}'), { statusCode: 500, name: "AccountApiError" });
   await assert.rejects(sendPaid(paid, async () => { throw answered; }, 0.05));
   assert.equal(paid.outstanding, true, "sendPaid itself cannot know a response arrived");
   assert.equal(paid.mayHaveSettled(answered), false, "a statusCode proves the gateway answered");
-  const sdkShape = Object.assign(new Error("API error after payment: 502"), { statusCode: 502 });
+  const sdkShape = Object.assign(new Error("API error after payment: 503"), { statusCode: 503 });
   assert.equal(paid.mayHaveSettled(sdkShape), false);
-  const anthropicShape = Object.assign(new Error("Request timed out"), { status: 408 });
-  assert.equal(paid.mayHaveSettled(anthropicShape), false);
+  const refused = Object.assign(new Error("API error: 400"), { status: 400 });
+  assert.equal(paid.mayHaveSettled(refused), false);
+});
+
+// Round 4b: an EDGE status is not an answer. 408/502/504/52x say only that
+// the origin did not answer in time — it may still be running the request
+// and settling it — and chat and the path tools already book that status as
+// a precaution on the same rails. Round 4 read every number as a verdict and
+// a speech request the edge answered 504 while TTS finished and billed read
+// "failed — try again": pay twice.
+test("an EDGE status (504/502/408/52x) on the paid request is a maybe, like a dropped socket", async () => {
+  const paid = trackPaidRequest();
+  for (const status of [408, 502, 504, 522, 524]) {
+    const edge = Object.assign(new Error(`API error ${status}: upstream request timeout`), { statusCode: status, name: "AccountApiError" });
+    await assert.rejects(sendPaid(paid, async () => { throw edge; }, 0.05));
+    assert.equal(paid.mayHaveSettled(edge), true, `${status} is not a verdict`);
+    const anthropicShape = Object.assign(new Error("Request timed out"), { status });
+    assert.equal(paid.mayHaveSettled(anthropicShape), true, `status ${status}`);
+  }
+  // ...but the gateway's own uncharged marker still overrules it.
+  const marked = Object.assign(new Error("API error 502: Upstream provider error (payment NOT charged)"), { statusCode: 502 });
+  await assert.rejects(sendPaid(paid, async () => { throw marked; }, 0.05));
+  assert.equal(paid.mayHaveSettled(marked), false);
 });
 
 test("the gateway's own not-charged verdict outranks a timeout in the upstream text", async () => {

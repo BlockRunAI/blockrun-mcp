@@ -361,3 +361,20 @@ test("list on Base still asks the Base gateway for the EVM address", async () =>
   assert.match(text(res), /Base wallet/);
   assert.equal(res.structuredContent.chain, "base");
 });
+
+// Round 4b (RP-3): both enrolments book before validating the body (a settled
+// 2xx with a malformed body must not un-record the charge) and then threw on
+// a missing asset id — which the catch rendered as "RealFace enroll failed"
+// with nothing about the $0.01 that stands, inviting a second paid enrolment.
+test("a settled 2xx with no asset id says the charge stands and points at action:\"list\"", async () => {
+  chain = "base";
+  script = [resp402, () => ({ status: 200, ok: true, headers: headers({ "x-payment-receipt": "0xtx" }), json: async () => ({ name: "Ada" }) })];
+  const { call, budget } = makeHarness();
+  const res = await call({ action: "portrait", name: "Ada", image_url: "https://ok.example.com/ada.png" });
+  const t = text(res);
+  assert.equal(res.isError, true, t);
+  assert.ok(budget.spent > 0, `spent=${budget.spent}`);
+  assert.match(t, /charge stands/, t);
+  assert.match(t, /action:"list"/, t);
+  assert.doesNotMatch(t, /RealFace portrait failed|try again/i, t);
+});

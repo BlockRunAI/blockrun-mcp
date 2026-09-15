@@ -202,6 +202,16 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
       // THIS call's outstanding-payment state, read by the catch below. Per
       // call on purpose — see payAndPostJson.
       const paid = trackPaidRequest();
+      // The amount booked once settlement was OBSERVED. Read by the catch: a
+      // settled 2xx whose body carried no asset id is a real charge with an
+      // unusable result, and the message must say so and point at
+      // action:"list" — not "failed", which invites a second paid enrolment
+      // (round 4b: the D13 step the other media tools have).
+      let bookedUsd: number | null = null;
+      const book = (settledUsd: number | null) => {
+        recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+        bookedUsd = settledUsd ?? ENROLLMENT_PRICE_USD;
+      };
       try {
         // ---- init (free) ----
         if (action === "init") {
@@ -431,7 +441,8 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError(`Portrait rejected — ${data.hint || data.message || "use a clear front-facing character image"}. No payment taken.`) }], isError: true };
           }
           if (status < 200 || status >= 300) {
-            throw new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`);
+            // Status on the error, as the realface branch below (round 4b).
+            throw Object.assign(new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`), { statusCode: status });
           }
 
           // The gateway answers 2xx only AFTER settling, so the charge is real
@@ -439,7 +450,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           // a truncated or asset-less body used to throw first, the catch
           // formatted a failure, and finally released the reservation — a real
           // charge the ledger never saw (same ordering video.ts and speech.ts fixed).
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+          book(settledUsd);
 
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Portrait response missing asset_id: ${JSON.stringify(data)}`);
@@ -520,12 +531,15 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError(`Face match failed — ${data.hint || "use a clearer front-facing photo of the same person"}. No payment taken.`) }], isError: true };
           }
           if (status < 200 || status >= 300) {
-            throw new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`);
+            // With the status on it, so the catch can tell an edge 504 (the
+            // origin may still be enrolling and settling — a maybe) from the
+            // gateway's own refusal (round 4b).
+            throw Object.assign(new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`), { statusCode: status });
           }
 
           // Book before validating the payload — see the portrait action above:
           // a settled 2xx with a malformed body must not un-record the charge.
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+          book(settledUsd);
 
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Enroll response missing asset_id: ${JSON.stringify(data)}`);
@@ -555,6 +569,16 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         return { content: [{ type: "text", text: formatError(`Unknown action: ${action}`) }], isError: true };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        // 1. Settlement was observed and booked, then the body could not be
+        //    used. First, before any word-based branch can misread it.
+        const booked = bookedUsd as number | null;
+        if (booked !== null) {
+          const where = isApiKeyMode() ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report"`;
+          return {
+            content: [{ type: "text", text: `RealFace ${action} settled and the charge stands — $${booked.toFixed(4)} is booked against your budget — but the response could not be used: ${errMsg}\nRun blockrun_realface action:"list" to find the asset before enrolling again; check ${where} first.` }],
+            isError: true,
+          };
+        }
         if (isPaymentRejectionError(errMsg)) {
           return {
             content: [{ type: "text", text: isApiKeyMode()

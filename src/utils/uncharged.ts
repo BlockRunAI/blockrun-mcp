@@ -26,3 +26,19 @@ export function isExplicitlyUncharged(message: string): boolean {
     m.includes("not charged");
 }
 
+
+/**
+ * Statuses an edge or a load balancer returns when the ORIGIN did not answer
+ * in time. The origin may still be running the request and settle it after
+ * the client is gone (the Cloud Run route documents that a client disconnect
+ * is never propagated to a non-streaming handler), so a paid request that
+ * came back with one of these is NOT an answer — it is the same "no verdict"
+ * as a dropped socket. Everything else in the 4xx/5xx range is the gateway
+ * itself answering, which it does before settlement starts. One set, shared
+ * by chat (settlementOnThrow), the path tools (pathToolFailure) and the media
+ * tools (in-flight isAnswer): round 4b found the media copy missing, so a
+ * blockrun_speech answered 504 by the edge while TTS finished and billed at
+ * the origin read "failed — try again", i.e. pay twice, on the same rail where
+ * blockrun_exa booked the same status as a precaution.
+ */
+export const ORIGIN_DID_NOT_ANSWER: ReadonlySet<number> = new Set([408, 502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530]);
