@@ -8,7 +8,7 @@ import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
-import { delegateAgent, revokeAgent, sealOperatorCeiling } from "../utils/budget.js";
+import { delegateAgent, listRevokedAgents, revokeAgent, sealOperatorCeiling } from "../utils/budget.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
 
@@ -213,7 +213,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
 
       // Report: show spending breakdown by agent
       if (action === "report") {
-        const agentRows: Record<string, { limit: number; spent: number; calls: number; remaining: number }> = {};
+        const agentRows: Record<string, { limit: number | null; spent: number; calls: number; remaining: number | null; revoked?: true }> = {};
         for (const [id, ab] of budget.agents.entries()) {
           agentRows[id] = {
             limit: ab.limit,
@@ -222,8 +222,16 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
             remaining: Math.max(0, ab.limit - ab.spent),
           };
         }
+        // Revoked ids keep their ledger (the next delegate carries it); the
+        // report shows it, because "its spend is kept" is what the
+        // description promises and a tombstone nobody can read is not kept.
+        for (const [id, ab] of listRevokedAgents(budget)) {
+          if (!(id in agentRows)) agentRows[id] = { limit: null, spent: ab.spent, calls: ab.calls, remaining: null, revoked: true };
+        }
         const agentLines = Object.entries(agentRows).map(
-          ([id, ab]) => `  ${id}: $${ab.spent.toFixed(4)}/$${ab.limit.toFixed(2)} (${ab.calls} calls, $${ab.remaining.toFixed(4)} remaining)`
+          ([id, ab]) => ab.revoked
+            ? `  ${id}: $${ab.spent.toFixed(4)} (${ab.calls} calls, revoked — no cap; re-delegating carries this spend)`
+            : `  ${id}: $${ab.spent.toFixed(4)}/$${(ab.limit as number).toFixed(2)} (${ab.calls} calls, $${(ab.remaining as number).toFixed(4)} remaining)`
         );
         const lines = [
           `Global: $${budget.spent.toFixed(4)} spent${budget.limit ? ` / $${budget.limit.toFixed(2)} limit` : " (no limit)"} — ${budget.calls} calls${ceiling !== null ? ` (operator ceiling ${ceilingStr} via BLOCKRUN_BUDGET_LIMIT)` : ""}`,

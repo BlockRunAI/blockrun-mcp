@@ -149,12 +149,17 @@ export function recordSpending(budget: BudgetState, cost: number, agentId?: stri
   budget.calls += 1;
 
   if (agentId) {
-    const agentBudget = budget.agents.get(agentId);
+    // The live entry, or the tombstone a revoke left behind: a call that
+    // settles while its id is revoked still spent that agent's money, and the
+    // next delegate of the id carries the ledger back. Until audit round 4
+    // this looked only at the live map, so revoke → settle → delegate forgot
+    // the call — a per-agent refill, one in-flight call at a time.
+    const agentBudget = budget.agents.get(agentId) ?? revokedLedgers.get(budget)?.get(agentId);
     if (agentBudget) {
       agentBudget.spent += cost;
       agentBudget.calls += 1;
     }
-    // If no budget entry for this agent, spending is tracked globally only
+    // If no entry for this agent anywhere, spending is tracked globally only
   }
 }
 
@@ -307,6 +312,14 @@ export function delegateAgent(
   const entry: AgentBudget = { limit, spent: 0, calls: 0 };
   budget.agents.set(agentId, entry);
   return { entry, carried: false };
+}
+
+/**
+ * The ledgers revoke left behind, for action:"report": the tool description
+ * promises "its spend is kept", and kept spend nobody can read is not kept.
+ */
+export function listRevokedAgents(budget: BudgetState): Array<[string, AgentBudget]> {
+  return [...(revokedLedgers.get(budget)?.entries() ?? [])];
 }
 
 /**

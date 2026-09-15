@@ -148,3 +148,11 @@ test("without a budget (legacy wiring) behaviour is unchanged", async () => {
   assert.equal(res.isError, undefined, res.text);
   assert.equal(signed, 1);
 });
+
+// Audit round 4: the registrar accepted a ledger the handler never passed, so
+// the fee booking above existed only in this file. Pin the wiring itself.
+test("mcp-handler hands the budget ledger to the polymarket registrar", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/mcp-handler.ts", import.meta.url), "utf8");
+  assert.match(src, /registerPolymarketTool\(server, budget\)/, "fund's fee is reserved and booked only when the ledger reaches the tool");
+});

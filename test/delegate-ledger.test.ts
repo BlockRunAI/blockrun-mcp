@@ -179,3 +179,46 @@ test("an agent whose spend has reached the limit is told so, not silently re-arm
   assert.match(res.content[0].text, /raise agent_limit above \$1\.0000/);
   assert.equal(reserveBudget(budget, "spent-out", 0.01).allowed, false);
 });
+
+// Audit round 4: the case between the two above. The in-flight call SETTLES
+// while the id is revoked — recordSpending looked the id up in the live map,
+// found nothing, and credited the global ledger only; the release then netted
+// the reservation out of the tombstoned entry, and the next delegate carried
+// a ledger that had forgotten the call. revoke → (call settles) → delegate was
+// still a per-agent refill, one call at a time.
+test("a call that settles while its agent is revoked is still booked against that agent's ledger", async () => {
+  const { call, budget } = makeHarness();
+  await call({ action: "delegate", agent_id: "worker-3", agent_limit: 2 });
+  const gate = reserveBudget(budget, "worker-3", 1.5);
+  await call({ action: "revoke", agent_id: "worker-3" });
+
+  // Settles at the estimate while revoked, then releases — the order every
+  // paid tool follows.
+  recordActualSpend(budget, 1.5, 1.5, "worker-3");
+  gate.release();
+  assert.equal(budget.spent, 1.5, "the global ledger has it");
+
+  const back = await call({ action: "delegate", agent_id: "worker-3", agent_limit: 2 });
+  assert.equal(back.structuredContent.spent, 1.5, "so must the agent's ledger — revoke is not a refill");
+  assert.equal(back.structuredContent.calls, 1);
+  assert.equal(reserveBudget(budget, "worker-3", 0.6).allowed, false, "$1.50 of $2 spent leaves no room for $0.60");
+});
+
+test("action:\"report\" still shows a revoked agent's spend, marked as revoked", async () => {
+  // The description promises "its spend is kept" and "report to audit
+  // spending"; a tombstone nobody can read is not kept spend.
+  const { call, budget } = makeHarness();
+  await call({ action: "delegate", agent_id: "ghost", agent_limit: 2 });
+  budget.agents.get("ghost")!.spent = 0.75;
+  budget.agents.get("ghost")!.calls = 3;
+  await call({ action: "revoke", agent_id: "ghost" });
+
+  const report = await call({ action: "report" });
+  assert.match(report.content[0].text, /ghost.*\$0\.7500.*revoked/);
+  const row = report.structuredContent.agents.ghost;
+  assert.ok(row, "the revoked agent has a row");
+  assert.equal(row.spent, 0.75);
+  assert.equal(row.calls, 3);
+  assert.equal(row.revoked, true);
+  assert.equal(row.limit, null, "a revoked agent has no cap");
+});
