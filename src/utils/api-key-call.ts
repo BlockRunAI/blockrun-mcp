@@ -181,8 +181,25 @@ function statusErrorMessage(response: Response, what: string, body: Record<strin
   return `API error ${response.status}: ${JSON.stringify(body)}`;
 }
 
+/**
+ * A non-OK answer from the account API, carrying its status the way the SDK's
+ * APIError does (`statusCode`). The path tools' shared catch
+ * (utils/path-tool-catch.ts) reads it through settlementOnThrow to tell an edge
+ * 502/504 — the origin may still be running and billing the call — from a
+ * refusal the gateway itself authored; a bare Error hid the status inside the
+ * message and every account-rail 5xx read as "nothing could have settled".
+ */
+export class AccountApiError extends Error {
+  readonly statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "AccountApiError";
+    this.statusCode = statusCode;
+  }
+}
+
 async function throwForStatus(response: Response, what: string): Promise<never> {
-  throw new Error(statusErrorMessage(response, what, await readJson(response)));
+  throw new AccountApiError(statusErrorMessage(response, what, await readJson(response)), response.status);
 }
 
 /** POST an endpoint that answers inline. `endpoint` is rooted, e.g. "/v1/audio/speech". */

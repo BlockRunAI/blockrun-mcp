@@ -55,17 +55,24 @@ test("a pre-payment validation error that says no payment was made is not fundin
   assert.doesNotMatch(out, /funding instructions/);
 });
 
-test("post-payment 5xx still reads as an outage even without a parseable status", () => {
+test("post-payment 5xx is never an empty wallet, even without a parseable status", () => {
+  // Since audit round 3 (C38) an UNMARKED post-payment 5xx is hedged ("the
+  // charge MAY have gone through") rather than sold as an outage to retry;
+  // the per-rail wording is pinned in errors-rails.test.ts. What this test
+  // guards is the older mistake: the "payment" keyword reading as "fund".
   for (const msg of [
     "API error after payment: 500 Internal Server Error",
     "API error after payment: 502 Bad Gateway",
     "API error after payment: upstream provider unavailable",
-    "Request failed with status code 503",
   ]) {
     const out = formatError(msg);
-    assert.match(out, /temporary API issue/, msg);
+    assert.match(out, /MAY have gone through/, msg);
     assert.doesNotMatch(out, /needs funding/, msg);
   }
+  // A 5xx with no payment attached is still the plain outage.
+  const out = formatError("Request failed with status code 503");
+  assert.match(out, /temporary API issue/);
+  assert.doesNotMatch(out, /needs funding|MAY have gone through/);
 });
 
 test("an incidental 5xx-shaped number is not sold to the user as an outage", () => {
@@ -147,17 +154,20 @@ test("extractErrorMessage surfaces the SDK's `detail` field (blockrun-llm-ts#39)
 });
 
 test("a post-payment 5xx WITHOUT the gateway's uncharged marker never claims nothing was charged", () => {
-  // The formatter must never invent a settlement claim: only the gateway's own
-  // marker in the message earns the "nothing was charged" line.
+  // The formatter must never invent a settlement claim in EITHER direction:
+  // only the gateway's own marker earns "nothing was charged", and the
+  // post-payment hedge says MAY, never "the charge stands".
   for (const msg of [
     "API error after payment: 502\nRequest failed",
     "API error after payment: 500 Internal Server Error",
-    "error 500 occurred",
   ]) {
     const out = formatError(msg);
-    assert.match(out, /temporary API issue/, msg);
-    assert.doesNotMatch(out, /nothing was charged|not settled/, msg);
+    assert.match(out, /MAY have gone through/, msg);
+    assert.doesNotMatch(out, /nothing was charged|not settled|charge stands|Try again in a few minutes/, msg);
   }
+  const out = formatError("error 500 occurred");
+  assert.match(out, /temporary API issue/);
+  assert.doesNotMatch(out, /nothing was charged|not settled/);
 });
 
 test("extractErrorMessage does not repeat a detail identical to the message", () => {
@@ -195,8 +205,13 @@ test("a post-payment 501 does not claim nothing was charged", () => {
 
 test("the SDK's post-payment prefix counts as a labelled status", () => {
   // "API error after payment: 502" — the word before the number is "payment".
+  // It classifies as a 5xx (hasLabelledServerStatus), and because the payment
+  // had been sent it is the hedged branch, not the plain outage and not
+  // funding advice.
+  assert.equal(hasLabelledServerStatus("API error after payment: 502\nRequest failed"), true);
   const out = formatError("API error after payment: 502\nRequest failed");
-  assert.match(out, /temporary API issue/);
+  assert.match(out, /MAY have gone through/);
+  assert.doesNotMatch(out, /needs funding/);
 });
 
 // --- the account rail's own error shape (audit round 2) ---
@@ -219,9 +234,15 @@ test("an account-rail 5xx is classified like the wallet rail's", () => {
   }
 });
 
-test("an account-rail 402 still reads as a funding problem", () => {
+test("an account-rail 402 is classified as a payment problem, not an outage", () => {
+  // This file runs on whatever rail the machine is on; the rail-specific
+  // remedy (credit top-up vs wallet funding) is pinned under a mocked auth.js
+  // in errors-rails.test.ts. The earlier version of this test matched
+  // /Insufficient/, a word the echoed input already contains, so it could not
+  // fail either way (C28).
   const out = formatError("BlockRun account API error: 402. Insufficient credit");
-  assert.match(out, /wallet needs funding|Insufficient/i);
+  const guidance = out.slice(out.indexOf("\n\n"));
+  assert.match(guidance, /needs funding|out of credit/);
   assert.doesNotMatch(out, /temporary API issue/);
 });
 

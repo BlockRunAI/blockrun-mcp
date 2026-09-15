@@ -89,7 +89,9 @@ export const BASE_RPC_URLS = [
 //   nemotron-nano-12b-v2-vl (vision).
 //   Also live but UNLISTED (hidden from GET /v1/models, still served): gpt-oss-120b
 //   — the gateway's own free fallback — and gpt-oss-20b (both re-probed
-//   2026-08-12, ~0.6-2.5s, serving themselves).
+//   2026-08-12, ~0.6-2.5s, serving themselves). NO LONGER TRUE OF 120b: the
+//   2026-09-13 sweep saw it answer as nano-omni on Base and 3.5-lightning on
+//   Solana — see the free[] note; 20b still serves itself on both.
 //   DEAD SINCE THE JULY SWEEP, removed 2026-08-12: deepseek-v4-flash and
 //   seed-oss-36b now report `"model": "nvidia/gpt-oss-120b"` on BOTH chains —
 //   the aliasing trap from the note above, caught again. Keeping them routed
@@ -134,8 +136,11 @@ export const MODEL_TIERS = {
   // it is the single most load-bearing free model there is. Re-probed 2026-07-21
   // on BOTH chains with a realistic ~1.5K-token prompt: gpt-oss-120b 3.5s,
   // gpt-oss-20b 3.7s; re-confirmed 2026-08-12 (0.6-2.5s, serving themselves).
-  // Absence from the public catalogue is a listing decision, not a health
-  // signal — check the behaviour. But the 2026-08-12 sweep also showed the
+  // (Since 2026-09-13 gpt-oss-120b is on the OTHER side of that line — the
+  // alias target became an alias — which is why it left the tier. Its bare
+  // spelling stays in the tool description as the example free id; it is
+  // still $0.) Absence from the public catalogue is a listing decision, not a
+  // health signal — check the behaviour. But the 2026-08-12 sweep also showed the
   // CONVERSE playing out: two other delisted entries (deepseek-v4-flash,
   // seed-oss-36b) turned out to be alias-dead, not hidden-alive. Delisting
   // tells you NOTHING either way; only the response's `model` field does.
@@ -148,25 +153,44 @@ export const MODEL_TIERS = {
   // is the trap the gateway's own probe script added a --real mode for. Never
   // health-check a free model with a 16-token ping.
   //
-  // 2026-09-08 order, three bands, from the live catalogue (listing evidence
-  // only — see the NVIDIA note above for what was and was not probed):
-  //   1. gpt-oss-120b — hidden-alive, the gateway's own free fallback; and
-  //      nemotron-3-nano-omni — listed, available, served itself on 2026-08-12.
-  //   2. Listed billing_mode:"free" on BOTH chains and available: the two new
-  //      NVIDIA entries and the first two non-NVIDIA free models. Unprobed for
-  //      latency, so they sit behind the proven pair, not ahead of it.
-  //   3. The four delisted entries. Delisting tells you nothing either way;
-  //      each is bounded by FREE_MODEL_TIMEOUT_MS and the loop by
-  //      FREE_TIER_DEADLINE_MS, so a dead tail costs time, never money.
-  //      Remove them only on a POST probe that shows aliasing or a crawl.
-  // Skipped on purpose: nemotron-3.5-lightning (available:false on Base),
-  // muse-glimmer-30b and gemma-4-31b (Solana catalogue only) — routing has to
-  // hold on both chains. They are still in FREE_CHAT_MODELS, so an explicit
-  // call to one reserves $0 like any other free id.
+  // 2026-09-13 SWEEP — the realistic-prompt POST probe the 09-08 note asked
+  // for: ~3,000 characters, max_tokens 32, no payment header, both gateways,
+  // the response's `model` field read on every 200. It found the tier was
+  // mostly ALIASES: six of the eleven routed ids answered as another model on
+  // BOTH chains —
+  //     gpt-oss-120b          -> nemotron-3-nano-omni (Base, 6.4s) / nemotron-3.5-lightning (sol, 21.9s)
+  //     nemotron-3-ultra-550b -> nemotron-3-super-120b (Base) / nemotron-3.5-lightning (sol, 63.9s)
+  //     step-3.7-flash        -> nemotron-3-super-120b (Base) / no answer in 90s (sol)
+  //     mistral-nemotron      -> nemotron-3-nano-omni (Base) / nemotron-3-super-120b (sol)
+  //     nemotron-nano-12b-v2-vl, nemotron-nano-9b-v2 -> nano-omni on both
+  // — and the TARGET moves between probes (the 09-13 finder saw gpt-oss-120b
+  // land on nemotron-3-super-120b hours earlier). "The gateway's own free
+  // fallback serves itself", the premise free[0] rested on since July, is
+  // gone: the fallback now serves whatever has capacity. So the tier walked
+  // the same saturated backend under five names inside the 150s deadline and
+  // reported "did not answer" having tried ONE model. Removed, per this list's
+  // own rule (a POST probe that shows aliasing). They stay in FREE_CHAT_MODELS:
+  // still $0, and an explicit call must still reserve nothing.
+  //
+  // What is left is every id that echoed ITS OWN NAME on both chains, fastest
+  // first — distinct backends, which is the only thing a fallback rung is for:
+  //   gpt-oss-20b (0.7s sol / 1.7s Base), north-mini-code (1.0s / 3.0s),
+  //   nemotron-3-nano-omni (2.3s as "…-nim" on sol / 3.6s), then two that
+  //   served themselves on Solana and were merely unavailable on Base that day
+  //   (laguna-xs-2.1: 429 "capacity exhausted" on Base, 0.7s on sol;
+  //   llama-3.2-11b-vision: no answer in 90s on Base, 9.8s on sol) — last, so
+  //   a bad day on one chain costs the loop time at the tail, never at the head.
+  // Since audit round 3 the reply names the served model whenever it differs
+  // from the requested id (see chat.ts servedNotes), so the next alias is
+  // visible in the tool output instead of in a sweep months later.
+  //
+  // Skipped on purpose: nemotron-3.5-lightning (429 on Base, no answer on
+  // sol), muse-glimmer-30b and gemma-4-31b (400 "Unknown model" on Base;
+  // gemma crawled 79.8s on sol) — routing has to hold on both chains. They are
+  // still in FREE_CHAT_MODELS, so an explicit call to one reserves $0.
   free: [
-    "nvidia/gpt-oss-120b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "nvidia/llama-3.2-11b-vision", "nvidia/nemotron-3-ultra-550b", "cohere/north-mini-code", "poolside/laguna-xs-2.1",
-    "nvidia/step-3.7-flash", "nvidia/mistral-nemotron", "nvidia/gpt-oss-20b", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2",
+    "nvidia/gpt-oss-20b", "cohere/north-mini-code", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    "poolside/laguna-xs-2.1", "nvidia/llama-3.2-11b-vision",
   ],
   coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
@@ -206,10 +230,19 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  */
 export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   ...MODEL_TIERS.free,
+  // Still $0 on both gateways (200 without a payment header, 2026-09-13) but
+  // answering as ANOTHER model — pulled from the routing tier, kept here so an
+  // explicit call reserves $0. See the free[] sweep note.
+  "nvidia/gpt-oss-120b",
+  "nvidia/nemotron-3-ultra-550b",
+  "nvidia/step-3.7-flash",
+  "nvidia/mistral-nemotron",
+  "nvidia/nemotron-nano-12b-v2-vl",
+  "nvidia/nemotron-nano-9b-v2",
   // Live billing_mode:"free" on 2026-09-08 but deliberately not routed.
-  "nvidia/nemotron-3.5-lightning", // available:false on Base that day
-  "nvidia/muse-glimmer-30b", // Solana catalogue only
-  "nvidia/gemma-4-31b", // Solana catalogue only
+  "nvidia/nemotron-3.5-lightning", // 429 capacity on Base, no answer on sol (09-13)
+  "nvidia/muse-glimmer-30b", // Solana catalogue only (400 on Base)
+  "nvidia/gemma-4-31b", // Solana catalogue only (400 on Base; 79.8s crawl on sol)
 ]);
 
 /**
@@ -264,6 +297,15 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-6-astra": { input: 10, output: 50 },
   "anthropic/claude-fable-5.1": { input: 10, output: 50 },
   "anthropic/claude-fable-5": { input: 10, output: 50 },
+  // Hidden from every /v1/models listing but still SERVED, and the rails do
+  // not agree on what it costs: the account rail bills it from the public
+  // sheet at $15/$75 (blockrun.ai/api/pricing, hidden:true, available:true —
+  // the 2026-09-15 catalogue sweep caught it reserving the $5/$30 default),
+  // while both wallet gateways alias the request onto Opus 4.8 and quote
+  // $5/$25 (unpaid POST 2026-09-15: "Claude Opus 4.8 API call"). The reserve
+  // has to cover the dearer rail; the native ledger keys on the SERVED id
+  // (catalogueKeyForEcho), so the wallet rails still book the 4.8 rate.
+  "anthropic/claude-opus-4": { input: 15, output: 75 },
   // At or below the default — listed so the CHEAP tiers reserve their own real
   // rate instead of the $5/$30 worst case, which would price a qwen3.7-flash
   // call like a frontier one and lock small budgets out of the cheap path.

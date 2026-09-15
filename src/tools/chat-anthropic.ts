@@ -16,8 +16,10 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { recordActualSpend } from "../utils/budget.js";
+import { isApiKeyMode } from "../utils/auth.js";
 import { OBSERVED_GATEWAY_TX_FEE_USD } from "../utils/tx-fee.js";
 import { CHAT_PRICE_PER_MTOKEN, GATEWAY_CHARS_PER_TOKEN_OBSERVED } from "../utils/constants.js";
+import { AcceptedThenFailedError, settlementOnThrow, settledCostFromHeaders } from "../utils/chat-stream.js";
 import type { BudgetState } from "../types.js";
 
 /**
@@ -120,8 +122,142 @@ export function anthropicCallCost(
   return Math.ceil(charged * 1e6) / 1e6; // the gateway settles in whole micro-USDC
 }
 
+/**
+ * The ACCOUNT rail's ledger entry for a native call, when the response carried
+ * no `x-blockrun-cost-usd` (chat settles after the response, so it never does).
+ *
+ * Not anthropicCallCost: that is the x402 QUOTE the wallet rails settle —
+ * output at 0.1x max_tokens, a $0.001 floor, the observed transaction fee —
+ * and api.blockrun.ai settles none of it. It bills exact usage, base rate with
+ * no fee and no floor (reconciled against the dashboard 2026-09-05). Booking
+ * the quote formula here added $0.001 to every call on a rail that charges no
+ * fee — a $1 delegate cut off at 500 haiku calls that had cost $0.50 (D58).
+ *
+ * `usage` is the response's own input/output token counts when the call
+ * completed; on a failure after acceptance there is none, so the prompt at the
+ * observed chars/token and the full max_tokens stand in — the conservative
+ * side for a call that reported nothing. Null when the model has no row, so
+ * the caller falls back to the pre-call estimate.
+ */
+export function anthropicAccountLedgerUsd(
+  model: string,
+  promptChars: number,
+  maxTokens: number,
+  usage: { input_tokens: number; output_tokens: number } | null,
+): number | null {
+  const id = catalogueKeyForEcho(model);
+  const rate = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id) ? CHAT_PRICE_PER_MTOKEN[id] : undefined;
+  if (!rate) return null;
+  const inputTokens = usage?.input_tokens ?? Math.ceil(promptChars / GATEWAY_CHARS_PER_TOKEN_OBSERVED) + MESSAGE_TOKEN_OVERHEAD;
+  const outputTokens = usage?.output_tokens ?? maxTokens;
+  const usd = (inputTokens / 1_000_000) * rate.input + (outputTokens / 1_000_000) * rate.output;
+  return Math.ceil(usd * 1e6 - 1e-6) / 1e6; // whole micro-dollars, float noise excluded
+}
+
 // AnthropicClient.messages is typed as the official SDK's Messages resource.
 type AnthropicLike = { messages: Anthropic["messages"] };
+
+/**
+ * Nothing streamed for this long means the connection is dead, not slow: the
+ * API sends `ping` events every few seconds while a long thinking budget runs,
+ * and the gateway forwards them. Same figure as the OpenAI-compat assembler.
+ */
+const NATIVE_IDLE_TIMEOUT_MS = 120_000;
+
+/**
+ * Run the native call as a STREAM and assemble the final Message.
+ *
+ * Streaming, not create(): two reasons, both money or reach.
+ *
+ *   1. @anthropic-ai/sdk refuses a non-streaming request whose max_tokens
+ *      could run past ten minutes — `calculateNonstreamingTimeout` throws
+ *      "Streaming is required for operations that may take longer than 10
+ *      minutes" above 21,333 tokens — and effectiveMax is budget_tokens + 1024,
+ *      so every thinking budget from 20,310 up to the schema's 100,000 died in
+ *      this process with an error that blamed the caller (D51). The check is
+ *      skipped when `stream` is set.
+ *   2. A non-streaming request moves zero bytes while Claude thinks, and the
+ *      edge in front of the gateway 524s the idle connection at ~100s — after
+ *      the gateway verified the payment. Streaming keeps bytes flowing (pings,
+ *      thinking deltas), the same fix chat-stream.ts made for the compat paths.
+ *
+ * `maxRetries: 0`, always. @blockrun/llm builds the official SDK at its default
+ * of two retries with a fetch that signs a FRESH x402 payment on every 402 it
+ * sees — the PAYMENT-SIGNATURE header lives on a local copy, never on the
+ * SDK's request init — so a 5xx/524/timeout after settlement was retried up to
+ * twice more, each retry a new USDC settlement for an undelivered answer, none
+ * of it visible to the ledger (C20). The gateway already saw the payment; a
+ * retry is a second purchase, and the routing loop's one-settlement rule
+ * belongs here too. (The account rail's client is built with maxRetries 0 by
+ * the SDK itself; passing it per request covers both.)
+ *
+ * The SDK's MessageStream accumulates thinking and signature deltas, so the
+ * assembled Message carries the same verbatim thinking blocks the non-streaming
+ * response did — the test against the real SDK pins that.
+ *
+ * `accepted` is whether the stream CONNECTED (the SDK emits `connect` once the
+ * 2xx is in, before the first event). A throw after that point is wrapped as
+ * AcceptedThenFailedError: the payment settled (wallet) or the request is
+ * billed (account), and the caller books it.
+ */
+async function streamNativeMessage(
+  client: AnthropicLike,
+  params: Anthropic.MessageStreamParams,
+): Promise<{ message: Anthropic.Message; costHeaderUsd: number | null }> {
+  // The @blockrun/llm proxy wraps every messages.* call in an async function,
+  // so the MessageStream arrives behind a promise; the SDK returns it directly.
+  const stream = await client.messages.stream(params, { maxRetries: 0 });
+  let accepted = false;
+  stream.on("connect", () => { accepted = true; });
+
+  // Idle guard, reset on every event. The SDK has no per-event deadline of its
+  // own — its request timeout ends at the headers — and the fetch underneath
+  // clears its abort timer at the same point.
+  let idleTimer: NodeJS.Timeout | undefined;
+  let stalled: (err: Error) => void = () => undefined;
+  const stall = new Promise<never>((_, reject) => { stalled = reject; });
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      stalled(new AcceptedThenFailedError(`stream stalled: no data from the gateway for ${Math.round(NATIVE_IDLE_TIMEOUT_MS / 1000)}s`));
+      stream.abort();
+    }, NATIVE_IDLE_TIMEOUT_MS);
+  };
+  stream.on("streamEvent", armIdle);
+  armIdle();
+  try {
+    const message = await Promise.race([stream.finalMessage(), stall]);
+    return { message, costHeaderUsd: settledCostFromHeaders(stream.response?.headers) };
+  } catch (error) {
+    if (error instanceof AcceptedThenFailedError) throw error;
+    if (accepted) {
+      throw new AcceptedThenFailedError(error instanceof Error ? error.message : String(error), "", { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(idleTimer);
+  }
+}
+
+/**
+ * The note for a native call that cost money — or may have — and then failed.
+ * Same voice as chat.ts's settledThenFailedText; the two paths book the same
+ * way and must read the same way to the agent acting on them.
+ */
+function nativeFailedText(error: unknown, usd: number, certainty: "settled" | "unknown"): string {
+  const amount = `$${usd.toFixed(6)}`;
+  const what = isApiKeyMode()
+    ? certainty === "settled"
+      ? `Note: the gateway had accepted this request (HTTP 200) before it failed, so it is billed to your BlockRun account at exact usage — ` +
+        `an estimated ~${amount} has been recorded against your budget; https://user.blockrun.ai/dashboard/activity has the exact figure.`
+      : `Note: this request MAY have been billed to your BlockRun account — no response was observed, so this process cannot tell. ` +
+        `An estimated ~${amount} has been recorded against your budget as a precaution; https://user.blockrun.ai/dashboard/activity has the truth.`
+    : certainty === "settled"
+      ? `Note: payment had already settled when this failed, so the charge stands (~${amount}, the reconstructed quote) and it has been recorded against your budget.`
+      : `Note: the payment for this call had been signed and sent before it failed, and this process cannot tell whether the gateway settled it — ` +
+        `it may have settled after the connection dropped. The reconstructed quote (${amount}) has been recorded against your budget as a precaution.`;
+  return `${formatError(extractErrorMessage(error))}\n\n${what} Retrying will incur a second charge — check blockrun_wallet action:"report" first.`;
+}
 
 type TextPart = { type: "text"; text: string };
 type ImagePart = { type: "image_url"; image_url: { url: string } };
@@ -264,7 +400,7 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
       ? m.content.length
       : JSON.stringify(m.content ?? "").length), 0);
 
-  const params: Anthropic.MessageCreateParamsNonStreaming = {
+  const params: Anthropic.MessageStreamParams = {
     model,
     max_tokens: effectiveMax,
     messages: apiMessages,
@@ -280,23 +416,52 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     params.temperature = Math.max(0, Math.min(1, temperature));
   }
 
+  // What a failure after the money moved is booked at. The wallet rails settle
+  // the quote (anthropicCallCost); the account rail bills exact usage, which a
+  // failed call never reports, so its ledger figure is the model's rate over
+  // the prompt and the full max_tokens. Either falls back to the reserve when
+  // the model has no row.
+  const failedLedgerUsd = () => (isApiKeyMode()
+    ? anthropicAccountLedgerUsd(model, anthropicPromptChars, effectiveMax, null)
+    : anthropicCallCost(model, anthropicPromptChars, effectiveMax)) ?? estimatedCost;
+
   let native: Anthropic.Message;
+  let costHeaderUsd: number | null;
   try {
-    native = await client.messages.create(params);
+    ({ message: native, costHeaderUsd } = await streamNativeMessage(client, params));
   } catch (error) {
-    return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
+    // Until audit round 3 this returned formatError and booked nothing, on
+    // both rails — the settled-then-failed machinery the OpenAI-compat paths
+    // gained in 0.40.1/0.49.0/0.50.0 never reached here, so a 524 after the
+    // gateway settled read as "temporary API issue, try again" and the agent
+    // paid again (C20). Same classifier as those paths: a 4xx before the
+    // stream connected (the gateway's own refusal, or the SDK's) and a
+    // payment the wallet could not make are not money; a failure after the
+    // 2xx is; an origin that never answered may be.
+    const verdict = settlementOnThrow(error, { rail: isApiKeyMode() ? "account" : "wallet", estimateUsd: estimatedCost, transparentPayment: true });
+    if (verdict === "none") {
+      return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
+    }
+    const usd = failedLedgerUsd();
+    recordActualSpend(budget, usd, estimatedCost, agentId);
+    return { content: [{ type: "text", text: nativeFailedText(error, usd, verdict) }], isError: true };
   }
 
-  // Book what the gateway actually charged (the quote it settled), not the flat
-  // estimate and not a token reconstruction at Anthropic's list prices.
+  // Book what the gateway actually charged: on the wallet rails the quote it
+  // settled (anthropicCallCost) — not the flat estimate and not a token
+  // reconstruction at Anthropic's list prices; on the account rail the
+  // response's settled cost when it carried one, else exact usage at the
+  // model's rate (anthropicAccountLedgerUsd), labelled as the estimate it is.
   // effectiveMax is the max_tokens the request was sent with — including the
   // auto-raise for a thinking budget, which is what the quote was priced on.
-  recordActualSpend(
-    budget,
-    anthropicCallCost(native.model, anthropicPromptChars, effectiveMax),
-    estimatedCost,
-    agentId,
-  );
+  const bookedUsd = isApiKeyMode()
+    ? (costHeaderUsd ?? anthropicAccountLedgerUsd(native.model, anthropicPromptChars, effectiveMax, native.usage))
+    : anthropicCallCost(native.model, anthropicPromptChars, effectiveMax);
+  const costIsEstimate = isApiKeyMode() && costHeaderUsd === null;
+  recordActualSpend(budget, bookedUsd, estimatedCost, agentId);
+  const costLine = costIsEstimate && bookedUsd !== null && bookedUsd > 0
+    ? `\n\n(Cost: ~$${bookedUsd.toFixed(4)}, estimated — billed to your BlockRun account at exact usage; https://user.blockrun.ai/dashboard/activity has the figure.)`
+    : "";
 
   const thinkingBlocks = native.content.filter(isThinkingBlock);
   const textBlocks = native.content.filter(isTextBlock);
@@ -310,7 +475,14 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
   if (raisedMaxTokens) headerBits.push(`max_tokens→${effectiveMax}`);
   const header = `[${headerBits.join(" | ")}]`;
 
-  const content: { type: "text"; text: string }[] = [{ type: "text", text: `${header}\n\n${answerText}` }];
+  // stop_reason "max_tokens" is the native spelling of a reply cut short;
+  // surfaced in the text as the compat paths do, not only in structuredContent.
+  const truncated = native.stop_reason === "max_tokens"
+    ? `\n\n⚠️ TRUNCATED OUTPUT: the reply hit max_tokens=${effectiveMax} and stopped mid-way (stop_reason "max_tokens"). ` +
+      `Raise max_tokens to get the rest — thinking tokens count against it too.`
+    : "";
+
+  const content: { type: "text"; text: string }[] = [{ type: "text", text: `${header}\n\n${answerText}${truncated}${costLine}` }];
   if (thinkingText) {
     content.push({ type: "text", text: `🧠 Thinking (signature ${signaturePresent ? "present" : "absent"}):\n${thinkingText}` });
   }
@@ -328,7 +500,10 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
       thinking_blocks: thinkingBlocks,
       signature_present: signaturePresent,
       stop_reason: native.stop_reason,
+      ...(native.stop_reason === "max_tokens" ? { truncated_output: true } : {}),
       usage: native.usage,
+      cost_usd: bookedUsd ?? estimatedCost,
+      cost_is_estimate: costIsEstimate || bookedUsd === null,
       native,
     },
   };
