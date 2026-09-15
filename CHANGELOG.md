@@ -2,6 +2,189 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.51.0
+
+**Round four went at round three.** 0.50.0's changelog said the general sweep
+was spent and the surfaces no sweep had opened were where the money was. Round
+three opened them — it is the fifty-nine hundred lines behind this release, nine
+commits that replaced every hand-copied `paidRequestInFlight` boolean with one
+per-call tracker, made every chat path stream and classify its failure by what
+the wire said, sealed `BLOCKRUN_BUDGET_LIMIT` as a ceiling the session cannot
+raise, and closed four ways a funded key could be lost. Round four then audited
+round three with the same adversarial loop, and found the pattern the loop has
+found every time: a fix that reaches one rail and not its siblings, a comment
+that states a contract one branch does not honour, and a fix whose own shape
+is the next bug. Fourteen findings survived two verifiers each — one P0, three
+P1 — and every one of them is in this release with the test that pins it.
+
+### The money paths
+
+- **A settled chat call is booked at what the rail bills, on every rail.** The
+  account rail books exact usage at the model's rate — no fee, no floor —
+  instead of the gate reserve that ran 3–50x high and tripped
+  `BLOCKRUN_BUDGET_LIMIT` at a fraction of real spend; a settled
+  `x-blockrun-cost-usd`, zero included, wins when present. The wallet rails
+  read the SDK's counter and, where the counter cannot see (a payment signed
+  and sent, no verdict back), book the reserve as a precaution and stop the
+  routing loop instead of paying a second model under the same reservation.
+  Before this, five typo'd model ids exhausted a delegated cap at $0 real
+  spend on the account rail, and a 524 after the gateway settled read as
+  "temporary API issue, try again" on the native claude-* path — with the SDK
+  retrying the settled request twice more, each retry a fresh x402 payment.
+- **Solana chat streams.** The default chain ran every paid chat through the
+  SDK's non-streaming path with a 60s abort, so a generation over a minute was
+  cancelled client-side after the SPL payment was sent. The native claude-*
+  path streams too (`maxRetries: 0`): the SDK refused non-streaming thinking
+  budgets above ~21k tokens with an error that blamed the caller.
+- **One in-flight tracker, per call, on every rail** (`utils/in-flight.ts`).
+  0.50.0's copies were wrong in five different ways — cleared in a `.finally`
+  that runs before the catch, set on Base only, module-global so one call's
+  outstanding payment booked a phantom charge against another call's failure,
+  armed before the unpaid quote probe. And round four found the tracker's own
+  shape: a helper that inspects the response and THROWS on it leaves the
+  tracker armed with an answer in hand, so `blockrun_image` on the account
+  rail booked a whole render for a `not_charged` job whose upstream text read
+  "aborted due to timeout" and told the user the charge may have gone through.
+  The verdict now comes off the error — a status, a typed job verdict, the
+  gateway's own uncharged marker — never its prose. The rail-parity matrix
+  gained the cell.
+- **Settled-at-submit routes are billed on every escape.** `sol.blockrun.ai`
+  settles the audio route optimistically at POST (the 202 says
+  `settled_optimistic`); the helper assumed payment-on-completion for every
+  route and said "No payment was taken" for a failed track the gateway had
+  already charged. Round three typed the failed-job, poll-error and deadline
+  exits; round four found the reactive re-sign path still throwing "No charge
+  was made" — every post-submit throw on that model is now a certain charge.
+  Music's Solana submit timeout is the 95s the route needs, not the 30s video
+  default that aborted every track slower than 30s after the money had moved.
+- **The seven path tools book a payment the origin never answered.** They did
+  `formatError(extractErrorMessage(err))` and nothing else, so a call whose
+  payment left and whose origin never answered booked $0 and read "try again
+  in a few minutes". The rule is narrower than chat's on purpose — the search
+  route's bare 500 is pre-settle, and booking it would invent $0.26 of phantom
+  spend per Grok blip. And a throw AFTER the SDK counted the settlement (a
+  non-JSON 200: no status, no transport words) now books the counted amount as
+  a certain charge instead of "none".
+- **`BLOCKRUN_BUDGET_LIMIT` is a ceiling the session cannot raise.** It seeded
+  the same mutable cap that `blockrun_wallet action:"budget"` writes, so the
+  agent it constrained could clear or raise it in one free tool call — and the
+  denial text at the cap pointed it at exactly that tool. `set` clamps to it,
+  `clear` restores it, `delegate` clamps the child cap to it, and every reply
+  says when and why it clamped. A revoked agent keeps its ledger — revoke +
+  delegate was still a refill, and round four found the last form of it: a
+  call that settled while its id was revoked landed on the global ledger
+  only, and the next delegate carried a ledger that had forgotten it.
+- **Unknown is never a plain error on Polymarket.** A submit that threw with no
+  4xx behind it (dropped socket, relay 502/504) released the reservation and
+  rendered as a plain error, steering the agent into a second real order
+  while the session cap saw one. The notional stays booked as unconfirmed, the
+  message says what to check, the balance-cache retry never re-submits on top
+  of a possibly-live order, and the order card keeps its lock across Re-quote.
+  `fund` arms a `pendingFund` guard for the 300s a lost EIP-3009 authorization
+  stays executable, so a retry cannot double-send; its $0.01 gateway fee is
+  reserved and booked like any paid call — round four found the ledger had
+  never been handed to the tool, so that booking existed only in the unit
+  test. A bare `confirm:true` on a market order is held to the worst fill of
+  the last preview, and `BLOCKRUN_CONFIRM_SPEND=on` finally asks the human
+  before buy/sell/fund/withdraw sign — a $0.004 rpc call got the dialog while
+  a $25 bet did not.
+- **Three pre-payment guards for paid mistakes.** `blockrun_modal` trims `gpu`
+  the way the gateway prices it — `" H100 "` quoted $8.001 against a $0.102
+  reserve, and $192 against $2.40 at 24h, past the cap and the confirm dialog
+  — and refuses a tier the gateway would 400. `blockrun_search` refuses the
+  X/Twitter source the gateway removed on 2026-07-05 and this tool advertised
+  for two months. `blockrun_markets` refuses a `?` in `path`, which bypassed
+  every params-based check. And `hasPathTraversal` decodes per segment: one
+  malformed `%` after a `#` blinded the whole-string decode, and
+  `%2e%2e/phone/numbers/buy#%` priced as a $0.003 modal op and POSTed the
+  $5.001 number purchase.
+
+### The keys
+
+- **A `secret-tool` exit 1 is read by stderr.** libsecret returns 1 for a miss
+  and for a fault alike; only the fault prints why. Round three's tri-state
+  keychain read was macOS-only, so on Linux a locked collection, a missing
+  D-Bus session or a dismissed unlock prompt all read as "absent" — and under
+  `BLOCKRUN_KEYCHAIN=strict` both provisioners minted over the funded wallet
+  the process merely could not open. A silent exit 1 is a miss; one that said
+  something is an error, with the tool's reason in the detail.
+- **The legacy `wallet.key` ranks below the keychain.** Strict mode retires
+  `.session` and never `wallet.key`, so a stale legacy file from an older
+  install outranked the keychain the moment `.session` was gone, and its key
+  was stored over the funded one with `-U`. `.session` stays the rotation
+  seam; the legacy file is consulted only after the keychain says "absent".
+- **An env key is a signer override, not a wallet this machine owns.** It is
+  never mirrored into the keychain and never retires the file — one run with
+  a different key in the environment used to leave the funded wallet, also
+  the Polymarket deposit signer, in no store at all. `BASE_CHAIN_WALLET_KEY`,
+  the SDK's own spelling, is honoured by the gates that read only
+  `BLOCKRUN_WALLET_KEY`.
+- **Two servers on a fresh machine could both mint.** Claude Code, Cursor and
+  Desktop are commonly all installed `-s user`; the last writer won on disk
+  and USDC sent to the loser's address was unrecoverable once that process
+  exited. The mint is published exclusively and the loser adopts the winner's
+  key; an empty placeholder is claimed, not overwritten.
+- **A locked keychain never routes a Base user to Solana.** The chain
+  selector's probes collapsed a read error into "absent" and memoised it for
+  the process. "Unknown" is never memoised and never a Solana signal; the
+  Base path fails loudly with its unlock message.
+- **The onramp's $0 quote is enforced**, not commented: the code signed
+  whatever the 402 said, on the path that runs when something has already
+  gone wrong. A keychain replacement of a DIFFERENT key is announced on
+  stderr with the address being replaced, so a rotation nobody meant is
+  visible the run it happens.
+
+### Saying the true thing
+
+- **`served_model`, `finish_reason` and `truncated_output` ride on every chat
+  reply**, and partial text survives a mid-stream failure. The free tier was
+  re-swept with a realistic prompt: six of eleven routed ids answered as
+  another model on both chains, so the tier keeps the five that echo their
+  own name. `anthropic/claude-opus-4` — hidden from every listing, billed
+  $15/$75 on the account rail — has a price row instead of reserving the
+  $5/$30 default.
+- **`blockrun_speech` says when the charge stands** — a settled 200 whose body
+  is unusable, on all three rails — the step video and music got in round
+  three. `blockrun_realface` reads the status off the Solana helper's error
+  instead of a regex that turned any "402" in a quote fault into "out of
+  funds" plus a top-up page, and `action:"list"` asks the active chain's
+  gateway with the active chain's address instead of minting an EVM key on a
+  Solana install. `blockrun_image` polls the 202 the account rail hands back
+  for any render past its 30s window instead of reporting "No image URL", and
+  drops the `quality` parameter the gateway 400s for every listed model — the
+  zod default of `"standard"` was failing every Base generate.
+- **`formatError` knows the rail.** An account-rail 402 says "out of credit",
+  never "run setup"; a 5xx or transport failure after the payment left says
+  the charge MAY stand instead of "try again in a few minutes"; the Base-only
+  replay-nonce reading of "Payment was rejected" is a shared hedge, so a
+  30-second Exa blip stops telling a $50 wallet to top up.
+- **`action:"status"` reports this session's spend and cap next to the
+  balance**, and `action:"report"` lists revoked agents with their kept spend.
+  Polymarket `setup` no longer prints "🎯 Ready to trade" two lines under
+  "❌ Region: BLOCKED", and the relayer SDK's progress lines go to stderr
+  instead of the JSON-RPC channel.
+
+### The release machinery
+
+`publish.yml` refuses a `package.json` below npm latest (npm publish does not
+compare semver; a typo'd `0.5.1` would have become `latest` and downgraded
+every `npx` user) — and only npm's own E404 is "none": a registry failure is
+"unknown" and refused, because that is the one input where the two differ and
+the downgrade goes through. The tag/release step is gated on the tag being
+absent, so a job that went red after the npm publish can be repaired by a
+re-run. `brand-sync` goes red when it cannot land a drift — a green run behind
+a 26-day-stale README was the exact failure it promised could not happen.
+`verify:prices` exits 2 when it could not look and reads the account rail's
+public pricing sheet as a third catalogue. The live Polymarket e2e scripts
+require `--confirm` before signing anything; every one installs the redacted
+exit handler. The test suite pins `HOME` and every rail-selecting variable for
+every file — ten mocked-handler suites were running their Base assertions on
+the account rail on any machine with `~/.blockrun/.api-key` — and a
+`node_modules` symlink that pointed at itself is no longer tracked.
+
+Context cost re-measured: 13.0K tokens for the full profile, `--profile
+trading` 58% less.
+
 ## 0.50.0
 
 **Three audit rounds, each aimed at the one before it.** 0.49.0's thirty-seven fixes
