@@ -18,6 +18,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
+import { MODEL_TIERS } from "../src/utils/constants.js";
 
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
@@ -163,10 +164,11 @@ test("the routing loop stops after a payment settles — one reservation, one ch
 test("the routing loop still falls through when nothing settled (the free tier's whole design)", async () => {
   // Free NVIDIA models settle $0. A failure there must NOT stop the fallback,
   // or mode:"free" loses the resilience it exists for.
+  const [first, second, third] = MODEL_TIERS.free;
   script = new Map([
-    ["nvidia/gpt-oss-120b", { settleUsd: 0, fail: true }],
-    ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", { settleUsd: 0, fail: true }],
-    ["nvidia/step-3.7-flash", { settleUsd: 0, fail: false }],
+    [first, { settleUsd: 0, fail: true }],
+    [second, { settleUsd: 0, fail: true }],
+    [third, { settleUsd: 0, fail: false }],
   ]);
   attempts = [];
   const { budget, call } = makeHarness();

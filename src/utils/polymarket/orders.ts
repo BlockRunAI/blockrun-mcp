@@ -13,18 +13,25 @@ import { checkGeoblock, getClobClient, getPolymarketAccount, resetClobClient } f
 import { getMaxBetUsd, getMaxSessionUsd, getSigType } from "./constants.js";
 import { invalidateL2Creds, loadState } from "./creds.js";
 import { fetchWithTimeout } from "../http.js";
+import { declinedResult, isDefiniteRejection, type SpendGate, type ToolResult } from "./transactions.js";
 
 // --- Session bet ledger (in-memory; resets with the process) ---
 const ledger = {
   totalUsd: 0,
   count: 0,
+  // Submits whose response was lost or 5xx: the order MAY be live, so its
+  // notional stays inside totalUsd (a possibly-live order must count against
+  // the cap) but it is not a confirmed placement. Never decremented — the
+  // tool has no order id to reconcile against; a restart resets the ledger.
+  unconfirmed: 0,
   perAgent: new Map<string, number>(),
 };
 
-export function getSessionLedger(): { totalUsd: number; count: number; perAgent: Record<string, number> } {
+export function getSessionLedger(): { totalUsd: number; count: number; unconfirmed: number; perAgent: Record<string, number> } {
   return {
     totalUsd: ledger.totalUsd,
     count: ledger.count,
+    unconfirmed: ledger.unconfirmed,
     perAgent: Object.fromEntries(ledger.perAgent),
   };
 }
@@ -44,6 +51,26 @@ function releaseBet(usd: number, agentId?: string): void {
 /** Confirm a placed order (bump the count; spend was already reserved). */
 function commitBet(): void {
   ledger.count += 1;
+}
+
+// --- Previewed worst-fill bounds (in-memory; reset with the process) ---
+//
+// A market order's preview and its confirm are two tool calls, and the book
+// can move in between — against you exactly when it matters. The confirm
+// re-walks a fresh book, so "signed at the worst fill you saw" only held
+// within ONE call unless the caller carried `max_fill_price` forward, and the
+// documented agent flow (preview → quote the user → re-call with confirm:true)
+// never did. Only the MCP-Apps order card passed it. So the preview now
+// records the worst fill it showed, per (token, side), and a confirm that
+// carries no bound of its own is held to the LAST preview's figure: a worse
+// walk is refused unsigned with a re-preview instruction. A fresh preview
+// replaces the entry; an explicit max_fill_price overrides it either way.
+// Entries are never expired — a stale bound can only refuse (and say to
+// re-preview) or allow a better price, never sign a worse one.
+const previewedBounds = new Map<string, { worstFillPrice: number; at: number }>();
+
+function boundKey(tokenId: string, side: "buy" | "sell"): string {
+  return `${tokenId}:${side}`;
 }
 
 // --- Helpers ---
@@ -267,8 +294,22 @@ function isBalanceAllowanceError(err: unknown): boolean {
   return text.includes("not enough balance") || text.includes("insufficient") || text.includes("allowance");
 }
 
+/**
+ * Thrown by executeTrade when the submit's outcome is unknown. Carries the
+ * finished, agent-facing text so mapClobError passes it through untouched —
+ * none of its phrase branches ("closed", "tick", …) may reinterpret a
+ * transport message that happens to contain one of those words.
+ */
+export class OrderOutcomeUnknownError extends Error {
+  constructor(message: string, readonly cause: unknown) {
+    super(message);
+    this.name = "OrderOutcomeUnknownError";
+  }
+}
+
 /** Map CLOB errors to actionable guidance. Exported for unit tests. */
 export async function mapClobError(err: unknown): Promise<string> {
+  if (err instanceof OrderOutcomeUnknownError) return err.message;
   const e = err as { message?: string; status?: number; data?: unknown };
   const dataText = e?.data ? ` — ${typeof e.data === "string" ? e.data : JSON.stringify(e.data)}` : "";
   const message = `${e?.message ?? String(err)}${dataText}`;
@@ -355,13 +396,22 @@ export interface TradeInput {
   post_only?: boolean;
   confirm?: boolean;
   agent_id?: string;
+  /**
+   * The worst fill the CALLER accepts, overriding the previewed bound. Market
+   * orders are held to the worst fill the last preview for this (token, side)
+   * showed (see previewedBounds); pass this to widen or tighten that bound
+   * explicitly. A walk that comes out worse than the bound in force is REFUSED
+   * before anything is signed, never silently signed at the new number. With
+   * neither a preview in this process nor this field, the walk stands on its
+   * own.
+   */
+  max_fill_price?: number;
+  /** See SpendGate. Supplied by the tool handler; absent in direct/unit use. */
+  askUser?: SpendGate;
 }
 
-export interface ToolResult {
-  text: string;
-  structured?: Record<string, unknown>;
-  isError?: boolean;
-}
+export type { ToolResult, SpendGate } from "./transactions.js";
+
 
 export async function executeTrade(input: TradeInput): Promise<ToolResult> {
   const side = input.action === "buy" ? Side.BUY : Side.SELL;
@@ -438,6 +488,34 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         ? roundToTick(walk.worstPrice ?? (quote as number), tickSize, input.action)
         : undefined;
 
+      // The bound in force at a confirm: an explicit max_fill_price, else the
+      // worst fill the last preview for this (token, side) showed. A dry-run
+      // is the preview — it records its own walk below and is never bounded.
+      // Enforced BEFORE anything is signed. Buy: a worse fill is a HIGHER
+      // price; sell: a worse fill is a LOWER one.
+      const previewed = !isLimit && input.confirm === true ? previewedBounds.get(boundKey(token.tokenId, input.action)) : undefined;
+      const bound = input.max_fill_price ?? previewed?.worstFillPrice;
+      const boundSource = input.max_fill_price !== undefined ? "max_fill_price" : previewed ? "preview" : undefined;
+      if (!isLimit && input.confirm === true && bound !== undefined && worstFillPrice !== undefined) {
+        const worse = input.action === "buy" ? worstFillPrice > bound : worstFillPrice < bound;
+        if (worse) {
+          const dir = input.action === "buy" ? "above" : "below";
+          const ago = previewed && boundSource === "preview" ? ` (previewed ${Math.max(1, Math.round((Date.now() - previewed.at) / 1000))}s ago)` : "";
+          return {
+            text:
+              `The book moved since that quote: this order would fill at ${worstFillPrice} (${(worstFillPrice * 100).toFixed(1)}¢), ` +
+              `${dir} the ${bound} (${(bound * 100).toFixed(1)}¢) you were shown${ago}. Nothing was signed and nothing was charged. ` +
+              `Re-preview (the same call without confirm, or blockrun_polymarket_read action:"preview") to see the current ` +
+              `price and confirm again at the new figure, or pass max_fill_price yourself to set the bound you will accept.`,
+            isError: true,
+            structured: { refused: "worse_than_quoted", worstFillPrice, maxFillPrice: bound, boundSource, action: input.action },
+          };
+        }
+      }
+      // Past the guard, the order is still signed at THIS call's worst fill
+      // (below) — never looser than the bound, and never looser than the
+      // summary this call prints, which is what the agent relays to the user.
+
       const notional = isLimit
         ? (price as number) * (size as number)
         : input.action === "buy"
@@ -508,10 +586,21 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
         `  Tick ${tickSize} · negRisk ${negRisk} · min size ${minSize || "n/a"} · fees are taker-only`,
       ].join("\n");
 
-      // Dry-run: no confirm → preview only, nothing is signed.
+      // Dry-run: no confirm → preview only, nothing is signed. A market
+      // preview is the quote the confirm is held to: record its worst fill and
+      // say so, so the agent quoting "at most X" to the user is telling the
+      // truth across the two calls.
       if (input.confirm !== true) {
+        const boundNote = worstFillPrice !== undefined
+          ? `\nThe worst fill ${input.action === "buy" ? "≤" : "≥"} ${worstFillPrice} above is the limit the confirm is held to: ` +
+            `if the book moves past it before you confirm, the confirm is refused unsigned and you re-preview. ` +
+            `Pass max_fill_price to set a different bound.`
+          : "";
+        if (worstFillPrice !== undefined) {
+          previewedBounds.set(boundKey(token.tokenId, input.action), { worstFillPrice, at: Date.now() });
+        }
         return {
-          text: `DRY RUN — no order placed.\n${summary}\n\nRe-call with confirm:true to sign and submit.`,
+          text: `DRY RUN — no order placed.\n${summary}${boundNote}\n\nRe-call with confirm:true to sign and submit.`,
           structured: {
             dryRun: true,
             action: input.action,
@@ -579,29 +668,76 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
               orderKind === "FAK" ? OrderType.FAK : OrderType.FOK,
             );
 
+      // The SDK signs and posts; a throw with no 4xx behind it (dropped socket,
+      // client timeout, relay 502/504) arrives AFTER the order may have been
+      // accepted. Releasing the reservation and rendering it as a plain error
+      // steered the agent straight into a second real order while the session
+      // cap saw one. Keep the notional booked, count it as unconfirmed, and
+      // say what is and is not known — the relayer withdraw path and the order
+      // card already treat this failure class this way.
+      const outcomeUnknown = (cause: unknown): OrderOutcomeUnknownError => {
+        const raw = cause instanceof Error ? cause.message : String(cause);
+        const status = (cause as { status?: unknown } | undefined)?.status;
+        const check = isLimit
+          ? `run action:"orders" and look for a ${input.action} of ${size} @ ${price}`
+          : `run action:"positions" (a filled ${orderKind} shows up as a position; a killed one leaves nothing)`;
+        return new OrderOutcomeUnknownError(
+          `⚠️ Order outcome UNKNOWN — the CLOB did not answer${typeof status === "number" ? ` (HTTP ${status})` : ""}: ${raw}. ` +
+          `The signed ${input.action} MAY have been accepted and be live at the exchange. Do NOT re-place it yet: ` +
+          `${check} before retrying. The $${notional.toFixed(2)} stays booked against the session cap as unconfirmed ` +
+          `(it is not released — restart the server to reset the ledger once you have confirmed it is absent).`,
+          cause,
+        );
+      };
+      const submitOrUnknown = async (): Promise<unknown> => {
+        try {
+          return await submitOrder();
+        } catch (err) {
+          throw isDefiniteRejection(err) ? err : outcomeUnknown(err);
+        }
+      };
+
+      // The last word before a signature is the user's, when the operator
+      // asked for one (BLOCKRUN_CONFIRM_SPEND=on). Every guard above has
+      // passed, nothing is reserved yet, so a decline leaves no residue.
+      if (input.askUser) {
+        const what = `${input.action} ${token.outcome ? `"${token.outcome}"` : `token ${token.tokenId.slice(0, 12)}…`}`;
+        const gate = await input.askUser(notional, `polymarket · ${what} · ${isLimit ? `limit ${orderKind}` : `market ${orderKind}`}`);
+        if (!gate.ok) return declinedResult(`the ${what} order`);
+      }
+
       // Reserve now (before the await) so a concurrent order sees this spend;
-      // roll back if the submit throws so a failed order doesn't consume budget.
+      // roll back if the submit is definitely rejected so a failed order
+      // doesn't consume budget.
       reserveBet(notional, input.agent_id);
       let response: unknown;
       try {
         try {
-          response = await submitOrder();
+          response = await submitOrUnknown();
         } catch (submitErr) {
           // Funded + approved on-chain, but the CLOB's server-side balance cache
           // can lag reality — setup's warm-up refresh is best-effort and freshly
           // bridged pUSD takes a moment to register — so the exchange rejects a
           // fully-funded wallet with "not enough balance/allowance". Refresh the
           // cache for the traded asset and retry the submit ONCE before giving up
-          // (COLLATERAL for buys, the specific outcome token for sells).
-          if (!isBalanceAllowanceError(submitErr)) throw submitErr;
+          // (COLLATERAL for buys, the specific outcome token for sells). Only a
+          // definite rejection may take the retry — an unknown outcome whose
+          // raw text happens to mention balance must never be re-submitted on
+          // top of a possibly-live order. The refresh call is not an order, so
+          // its own failure is a plain error, never unknown.
+          if (submitErr instanceof OrderOutcomeUnknownError || !isBalanceAllowanceError(submitErr)) throw submitErr;
           await clob.updateBalanceAllowance(
             input.action === "buy"
               ? { asset_type: AssetType.COLLATERAL }
               : { asset_type: AssetType.CONDITIONAL, token_id: token.tokenId },
           );
-          response = await submitOrder();
+          response = await submitOrUnknown();
         }
       } catch (submitErr) {
+        if (submitErr instanceof OrderOutcomeUnknownError) {
+          ledger.unconfirmed += 1;
+          throw submitErr;
+        }
         releaseBet(notional, input.agent_id);
         throw submitErr;
       }
@@ -636,7 +772,8 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
           `  status: ${r?.status ?? "submitted"}${filled ? "" : " (resting in the book until filled or cancelled)"}`,
           ...(r?.errorMsg ? [`  note: ${r.errorMsg}`] : []),
           ...(r?.transactionsHashes?.length ? [`  tx: ${r.transactionsHashes.join(", ")}`] : []),
-          `  Session bets so far: $${ledger.totalUsd.toFixed(2)} across ${ledger.count} order(s).`,
+          `  Session bets so far: $${ledger.totalUsd.toFixed(2)} across ${ledger.count} order(s)` +
+            (ledger.unconfirmed ? ` plus ${ledger.unconfirmed} unconfirmed (outcome unknown — see action:"orders"/"positions").` : "."),
         ].join("\n"),
         structured: {
           orderID: r?.orderID,
@@ -652,7 +789,10 @@ export async function executeTrade(input: TradeInput): Promise<ToolResult> {
       };
     });
   } catch (err) {
-    return { text: await mapClobError(err), isError: true };
+    const structured = err instanceof OrderOutcomeUnknownError
+      ? { outcome: "unknown", action: input.action, session: getSessionLedger() }
+      : undefined;
+    return { text: await mapClobError(err), isError: true, ...(structured ? { structured } : {}) };
   }
 }
 

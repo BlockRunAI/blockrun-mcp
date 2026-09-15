@@ -15,14 +15,81 @@ import { BuilderConfig } from "@polymarket/builder-signing-sdk";
 import { ClobClient } from "@polymarket/clob-client-v2";
 import { createWalletClient, http, type Hex } from "viem";
 import { polygon } from "viem/chains";
-import { getPolymarketAccount } from "./client.js";
+import { getClobProxyAgent, getPolymarketAccount, installUnderscoreHeaderBridge } from "./client.js";
 import { CLOB_HOST, POLYGON_CHAIN_ID, POLYGON_WRITE_RPC_URL, RELAYER_URL } from "./constants.js";
 import { loadBuilderCreds, loadL2Creds, saveBuilderCreds, saveL2Creds, saveState } from "./creds.js";
 import { deriveApiCreds } from "./l1-auth-1271.js";
+import { isDefiniteRejection } from "./transactions.js";
 
 export type { DepositWalletCall };
 
 let _relayClient: RelayClient | null = null;
+
+// --- stdout discipline ---
+//
+// The relayer SDK console.logs progress ("Waiting for transaction …",
+// "Executing … transactions", "… timing out!") from pollUntilState and the
+// batch builders. In the stdio MCP server stdout IS the JSON-RPC channel, so
+// every deploy, approval, redeem and withdraw batch injected a non-JSON line
+// into the protocol stream, mid-money-operation. The TS SDK client survives
+// (it reports the bad line via onerror); a stricter client drops the
+// connection and the user never receives the result text — the tx hash or the
+// anti-retry guidance. Every SDK call below runs inside quietStdout, which
+// points console.log/info at stderr (the MCP log channel) for its duration.
+// Ref-counted: tool calls are dispatched concurrently, and two overlapping
+// batches must not leave a swapped console behind when the first finishes.
+let quietDepth = 0;
+let savedLog: typeof console.log | null = null;
+let savedInfo: typeof console.info | null = null;
+
+async function quietStdout<T>(fn: () => Promise<T>): Promise<T> {
+  if (quietDepth++ === 0) {
+    savedLog = console.log;
+    savedInfo = console.info;
+    console.log = (...args: unknown[]) => console.error(...args);
+    console.info = (...args: unknown[]) => console.error(...args);
+  }
+  try {
+    return await fn();
+  } finally {
+    if (--quietDepth === 0) {
+      if (savedLog) console.log = savedLog;
+      if (savedInfo) console.info = savedInfo;
+      savedLog = null;
+      savedInfo = null;
+    }
+  }
+}
+
+/**
+ * The relayer SDK builds its OWN axios instance (`httpClient.instance`,
+ * axios 0.27), so neither the underscore-header bridge nor the
+ * POLYMARKET_CLOB_PROXY agent installed on the hoisted axios in client.ts ever
+ * reached relayer traffic — while the 403 advice and deploy.sh told operators
+ * to point POLYMARKET_RELAYER_URL at the Caddy relay, whose /relayer/* route
+ * reconstructs POLY_BUILDER_* from the hyphenated copies the client never
+ * sent. Install both here, on that instance, right after construction. The
+ * bridge is harmless direct (Polymarket reads the underscore header and
+ * ignores the copy); the agent only applies when the operator set a proxy.
+ */
+function bridgeRelayerTransport(client: RelayClient): void {
+  const instance = (client as unknown as { httpClient?: { instance?: {
+    interceptors?: { request?: { use?: (fn: (config: unknown) => unknown) => void } };
+    defaults?: { httpsAgent?: unknown; proxy?: unknown };
+  } } }).httpClient?.instance;
+  if (!instance?.interceptors?.request?.use || !instance.defaults) {
+    // SDK shape drifted: say so on stderr rather than fail the money path —
+    // direct relayer traffic still works; only a relayed/proxied setup would not.
+    console.error("[BlockRun] relayer SDK exposes no axios instance — header bridge / POLYMARKET_CLOB_PROXY not applied to relayer traffic");
+    return;
+  }
+  installUnderscoreHeaderBridge(instance as never);
+  const agent = getClobProxyAgent();
+  if (agent) {
+    instance.defaults.httpsAgent = agent;
+    instance.defaults.proxy = false;
+  }
+}
 
 /**
  * Programmatically obtain Builder API credentials (key/secret/passphrase) for
@@ -77,7 +144,9 @@ export async function getRelayClient(): Promise<RelayClient> {
   });
   const builderCreds = await getOrCreateBuilderCreds();
   const builderConfig = new BuilderConfig({ localBuilderCreds: builderCreds });
-  _relayClient = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient, builderConfig);
+  const client = new RelayClient(RELAYER_URL, POLYGON_CHAIN_ID, walletClient, builderConfig);
+  bridgeRelayerTransport(client);
+  _relayClient = client;
   return _relayClient;
 }
 
@@ -97,8 +166,11 @@ export async function isDepositWalletDeployed(address: string): Promise<boolean>
  * relayer transaction id on failure/timeout so the user can re-run setup.
  */
 export async function deployDepositWallet(): Promise<{ transactionHash?: string }> {
-  const response = await (await getRelayClient()).deployDepositWallet();
-  const confirmed = await response.wait();
+  const relay = await getRelayClient();
+  const { response, confirmed } = await quietStdout(async () => {
+    const response = await relay.deployDepositWallet();
+    return { response, confirmed: await response.wait() };
+  });
   if (!confirmed) {
     throw new Error(
       `Deposit wallet deployment did not confirm (relayer tx ${response.transactionID}). ` +
@@ -117,7 +189,8 @@ const TERMINAL_FAILURE_STATES = ["STATE_FAILED", "STATE_INVALID"];
 /** Current relayer-side state of a submitted batch, or undefined if unreachable. */
 export async function getRelayerTransactionState(transactionID: string): Promise<string | undefined> {
   try {
-    const txns = await (await getRelayClient()).getTransaction(transactionID);
+    const relay = await getRelayClient();
+    const txns = await quietStdout(() => relay.getTransaction(transactionID));
     return txns?.[0]?.state;
   } catch {
     return undefined;
@@ -149,8 +222,15 @@ export async function sendWalletBatch(
 ): Promise<{ transactionHash?: string }> {
   const deadlineSec = Math.floor(Date.now() / 1000) + BATCH_DEADLINE_SECS;
   let response: Awaited<ReturnType<RelayClient["executeDepositWalletBatch"]>>;
+  // Getting the client is NOT part of the send. getRelayClient derives CLOB
+  // credentials and creates a builder key — real network calls that happen
+  // before the RelayClient exists, so they cannot have signed or posted the
+  // batch. Leaving them inside the try armed the double-send guard for a
+  // failure that provably moved nothing, wedging the user behind a deadline
+  // for a transfer that was never signed.
+  const relay = await getRelayClient();
   try {
-    response = await (await getRelayClient()).executeDepositWalletBatch(calls, depositWallet, String(deadlineSec));
+    response = await quietStdout(() => relay.executeDepositWalletBatch(calls, depositWallet, String(deadlineSec)));
   } catch (err) {
     // The SDK signs, THEN posts. A lost response (proxy 502/504, reset — the
     // SDK surfaces these as `{"error":"connection error"}` or a 5xx "request
@@ -164,8 +244,12 @@ export async function sendWalletBatch(
     // clear it (withdraw.ts). Untracked batches (approvals, wrap) are safe to
     // retry and rethrow as before.
     const message = err instanceof Error ? err.message : String(err);
-    const definitelyRejected = /"status":4\d\d/.test(message);
-    if (opts?.trackPendingWithdraw && !definitelyRejected) {
+    // The CLOB SDK's ApiError carries its code on a `.status` PROPERTY and
+    // leaves the message as the bare error string, so matching only the JSON
+    // shape missed every definite 4xx it raises — the guard armed on rejections
+    // that were unambiguous. isDefiniteRejection reads the property first,
+    // then the shapes that only appear in text (shared with the order submit).
+    if (opts?.trackPendingWithdraw && !isDefiniteRejection(err)) {
       saveState({ pendingWithdraw: { transactionID: "unknown", deadline: deadlineSec } });
       throw new Error(
         `${description}: the relayer returned no transaction id (${message}). It may still have ACCEPTED the ` +
@@ -179,7 +263,7 @@ export async function sendWalletBatch(
   if (opts?.trackPendingWithdraw) {
     saveState({ pendingWithdraw: { transactionID: response.transactionID, deadline: deadlineSec } });
   }
-  const confirmed = await response.wait();
+  const confirmed = await quietStdout(() => response.wait());
   if (!confirmed) {
     const state = await getRelayerTransactionState(response.transactionID);
     if (state && TERMINAL_FAILURE_STATES.includes(state)) {

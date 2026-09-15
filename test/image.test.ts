@@ -55,25 +55,29 @@ test("toImageDataUri refuses to fetch a loopback/link-local URL (SSRF guard)", a
   await assert.rejects(() => toImageDataUri("http://10.0.0.5/internal.png"), /refusing to fetch/i);
 });
 
-test("buildSolanaImageRequest generate targets /v1/images/generations with quality omitted for standard", () => {
+test("buildSolanaImageRequest generate targets /v1/images/generations with exactly the accepted keys", () => {
   const { endpoint, body } = buildSolanaImageRequest("generate", {
     model: "openai/gpt-image-2",
     prompt: "a fox",
     size: "1024x1024",
-    quality: "standard",
   });
   assert.equal(endpoint, "/v1/images/generations");
   assert.deepEqual(body, { model: "openai/gpt-image-2", prompt: "a fox", size: "1024x1024", n: 1 });
 });
 
-test("buildSolanaImageRequest maps quality hd → high (the gateway's zod enum has no 'hd')", () => {
-  const { body } = buildSolanaImageRequest("generate", {
-    model: "openai/gpt-image-2",
-    prompt: "a fox",
-    size: "1024x1024",
-    quality: "hd",
-  });
-  assert.equal(body.quality, "high");
+test("buildSolanaImageRequest never puts a quality key on the wire, even when a stale caller passes one", () => {
+  // The gateway refuses every quality value for every listed model BEFORE the
+  // 402 (unpaid probes 2026-09-13: "standard", "hd", "high" all 400). The old
+  // hd→high mapping therefore only ever turned a paid call into a 400.
+  for (const quality of ["standard", "hd", "high"]) {
+    const { body } = buildSolanaImageRequest("generate", {
+      model: "openai/gpt-image-2",
+      prompt: "a fox",
+      size: "1024x1024",
+      ...({ quality } as Record<string, unknown>),
+    } as Parameters<typeof buildSolanaImageRequest>[1]);
+    assert.equal("quality" in body, false, `quality=${quality} leaked onto the wire`);
+  }
 });
 
 test("buildSolanaImageRequest edit targets /v1/images/image2image with image and optional mask", () => {

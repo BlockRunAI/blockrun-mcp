@@ -155,3 +155,209 @@ test("Solana: an existing session file outranks a stale keychain entry", async (
 
   readAnswer = { status: "found", value: KEYCHAIN_KEY };
 });
+
+// --- the empty-file gap (audit round 3) ---
+//
+// Both gates above asked `existsSync`. The loaders on the far side of them
+// (the SDK's resolveFromFiles / loadSolanaWallet) `.trim()` the file and treat
+// whitespace as no key. A zero-byte session file therefore read as PRESENT to
+// the gate and ABSENT to the loader: the keychain was skipped, a brand new
+// wallet was minted, and persistKey() then overwrote the keychain entry still
+// holding the funded key. saveWallet() is a plain non-atomic writeFileSync, so
+// an interrupted write or a full disk is enough to produce that file.
+
+test("EVM: an EMPTY session file does not shadow the funded key in the keychain", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, "   \n", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  const resolved = getOrCreateWalletKey();
+
+  assert.equal(
+    resolved,
+    KEYCHAIN_KEY,
+    "a file holding no key must fall through to the keychain, not mint over it",
+  );
+  assert.equal(
+    fs.readFileSync(session, "utf-8").trim(),
+    "",
+    "nothing may be minted and saved while a funded key sits in the keychain",
+  );
+
+  fs.rmSync(session, { force: true });
+  resetEvmWalletCache();
+});
+
+test("Solana: an EMPTY session file does not shadow the funded key in the keychain", async () => {
+  const { createSolanaWallet, solanaPublicKey } = await import("@blockrun/llm");
+  const { ensureSolanaWallet, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  const funded = await createSolanaWallet();
+
+  const session = path.join(home, ".blockrun", ".solana-session");
+  fs.writeFileSync(session, "\n", { mode: 0o600 });
+  resetSolanaKeyCache();
+  mode = "auto";
+  readAnswer = { status: "found", value: funded.privateKey };
+
+  const info = await ensureSolanaWallet();
+
+  assert.equal(info.isNew, false, "minting here orphans the key the keychain still holds");
+  assert.equal(info.privateKey, funded.privateKey);
+  assert.equal(info.address, await solanaPublicKey(funded.privateKey));
+
+  fs.rmSync(session, { force: true });
+  resetSolanaKeyCache();
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+});
+
+// --- the refusal names the state it found, not a mode the user never set ---
+//
+// The empty-file gate above made the refusal reachable in AUTO mode: an
+// existing zero-byte .session consults the keychain, and if that read fails
+// the (correct) refusal said ".session no longer exists because
+// BLOCKRUN_KEYCHAIN=strict retired it" — neither half true. The user looks for
+// a file that is right there, never learns that restoring it from a backup is
+// the fix, and is told to unlock a keychain that may hold nothing.
+
+test("EVM: refusing over an EMPTY .session in auto mode says so, and does not blame strict mode", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, "", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "error", detail: "security exit 36" };
+
+  assert.throws(
+    () => getOrCreateWalletKey(),
+    (err: Error) =>
+      /Refusing to create a new wallet/.test(err.message) &&
+      /\.session exists but holds no key/.test(err.message) &&
+      /backup/.test(err.message) &&
+      !/strict/.test(err.message),
+    "the diagnosis must match the facts: the file exists, it is empty, strict mode was never set",
+  );
+  assert.equal(fs.readFileSync(session, "utf-8"), "", "nothing minted, nothing written");
+
+  fs.rmSync(session, { force: true });
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+  resetEvmWalletCache();
+});
+
+test("EVM: refusing with the file gone under strict still names strict mode as the reason it is gone", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  fs.rmSync(path.join(home, ".blockrun", ".session"), { force: true });
+  mode = "strict";
+  readAnswer = { status: "error", detail: "security exit 36" };
+
+  assert.throws(
+    () => getOrCreateWalletKey(),
+    (err: Error) => /Refusing to create a new wallet/.test(err.message) && /BLOCKRUN_KEYCHAIN=strict/.test(err.message),
+  );
+
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+  resetEvmWalletCache();
+});
+
+test("Solana: refusing over an EMPTY .solana-session in auto mode says so, and does not blame strict mode", async () => {
+  const { ensureSolanaWallet, resetSolanaKeyCache } = await import("../src/utils/wallet.js");
+  resetSolanaKeyCache();
+  const session = path.join(home, ".blockrun", ".solana-session");
+  fs.writeFileSync(session, "\n", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "error", detail: "security exit 36" };
+
+  await assert.rejects(
+    ensureSolanaWallet(),
+    (err: Error) =>
+      /Refusing to create a new Solana wallet/.test(err.message) &&
+      /\.solana-session exists but holds no key/.test(err.message) &&
+      /backup/.test(err.message) &&
+      !/strict/.test(err.message),
+  );
+  assert.equal(fs.readFileSync(session, "utf-8"), "\n", "nothing minted, nothing written");
+
+  fs.rmSync(session, { force: true });
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+  resetSolanaKeyCache();
+});
+
+test("a file that HOLDS a key still outranks the keychain (the empty-file fix did not invert precedence)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, FILE_KEY + "\n", { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), FILE_KEY, "rotation by replacing the file must keep working");
+
+  fs.rmSync(session, { force: true });
+  resetEvmWalletCache();
+});
+
+// --- audit round 4: the legacy file ranks BELOW the keychain ---------------
+//
+// evmKeyOnDisk() asks the SDK loader, and the loader reads ~/.blockrun/.session
+// THEN the legacy ~/.blockrun/wallet.key. Under strict mode the .session is
+// retired once its key is in the keychain — but wallet.key never is (persistKey
+// is only ever handed the .session path), so a stale legacy file from an older
+// install outranked the keychain the moment .session was gone, and its key was
+// stored over the funded one with -U. "The keychain becomes authoritative
+// exactly when the file is gone" was false on that branch. The .session is the
+// rotation seam and keeps outranking the keychain; the legacy file is a
+// fallback for a machine with no keychain entry, nothing more.
+test("EVM: a legacy wallet.key does NOT outrank the keychain once .session is retired (strict)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const dir = path.join(home, ".blockrun");
+  fs.rmSync(path.join(dir, ".session"), { force: true });
+  const LEGACY_KEY = "0x" + "33".repeat(32);
+  fs.writeFileSync(path.join(dir, "wallet.key"), LEGACY_KEY, { mode: 0o600 });
+  mode = "strict";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), KEYCHAIN_KEY, "the funded keychain wallet wins over a stale legacy file");
+
+  fs.rmSync(path.join(dir, "wallet.key"), { force: true });
+  mode = "auto";
+  resetEvmWalletCache();
+});
+
+test("EVM: the legacy wallet.key is still honoured when the keychain has nothing", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const dir = path.join(home, ".blockrun");
+  fs.rmSync(path.join(dir, ".session"), { force: true });
+  const LEGACY_KEY = "0x" + "33".repeat(32);
+  fs.writeFileSync(path.join(dir, "wallet.key"), LEGACY_KEY, { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "absent" };
+
+  assert.equal(getOrCreateWalletKey(), LEGACY_KEY, "no keychain entry: the legacy file is the wallet, not a reason to mint");
+
+  fs.rmSync(path.join(dir, "wallet.key"), { force: true });
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+  resetEvmWalletCache();
+});
+
+test("EVM: .session still outranks the keychain in strict mode (rotation by file)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, FILE_KEY, { mode: 0o600 });
+  mode = "strict";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), FILE_KEY);
+
+  fs.rmSync(session, { force: true });
+  mode = "auto";
+  resetEvmWalletCache();
+});

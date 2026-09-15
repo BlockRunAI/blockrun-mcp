@@ -62,8 +62,16 @@ function numberParam(params: Record<string, string>, key: string): number | unde
 /**
  * Catch the most expensive, repeatable Predexon request mistakes before an
  * x402 payment is created. This intentionally validates only endpoints whose
- * current contract has caused real paid failures; unknown paths still pass
- * through so the MCP remains forward-compatible with new Predexon routes.
+ * current contract has caused real failed round-trips; unknown paths still
+ * pass through so the MCP remains forward-compatible with new Predexon routes.
+ *
+ * ON MONEY: none of these rules guards a PAID failure. The gateway's pm route
+ * returns on any upstream !ok BEFORE settlePaymentWithRetry runs, and its 4xx
+ * bodies say "(payment NOT charged)"; a route the registry does not know 404s
+ * before the 402 is even built. What a rule saves is the unpaid round-trip and
+ * an opaque error — so relaxing one when Predexon adds a param risks nothing
+ * but a wasted turn. Earlier wording here ("returns 410 after settling",
+ * "a paid 400") said otherwise and was wrong about when money moves.
  */
 export function validateMarketRequest(
   rawPath: string,
@@ -73,13 +81,32 @@ export function validateMarketRequest(
   const path = normalizeMarketPath(rawPath);
   const query = params ?? {};
 
-  // Verified live 2026-07-29: this route settles a payment and THEN returns
-  // 410 Gone. The gateway still registers, prices, and advertises it
-  // (blockrun/src/lib/predexon.ts), which is what talked me out of this block in
-  // 0.33.0 — but the gateway only proxies, and Predexon has retired it upstream.
-  // The registry is not evidence that a route still serves.
+  // Retired upstream. It settled-then-410'd in July 2026 (verified live
+  // 2026-07-29); since 2026-08-04 the registry no longer routes it at all and
+  // it 404s BEFORE payment ("Unknown Predexon endpoint", re-probed
+  // unauthenticated 2026-09-13). The block stays for the steer, and it comes
+  // before the query-in-path refusal below because "this route is gone" is
+  // the more useful message when both apply.
   if (path === "markets/listings") {
-    return "Predexon has retired 'markets/listings' — it returns 410 Gone after settling payment. Use 'markets/search' to discover open venue markets, then resolve the selected Polymarket market with 'polymarket/markets/keyset'. No payment was made.";
+    return "Predexon removed 'markets/listings' upstream on 2026-08-04 — it now 404s before payment. Use 'markets/search' to discover open venue markets, then resolve the selected Polymarket market with 'polymarket/markets/keyset'. No payment was made.";
+  }
+
+  // A QUERY STRING IN `path` READS AS NO PARAMS AT ALL. The rules below take
+  // their query from `params`; the path is normalised (its `?…` stripped) only
+  // so a rule can match the slug. So `polymarket/markets?active=true` matched
+  // the Gamma-param rule's slug with an EMPTY query, passed, paid, and came
+  // back unfiltered (Predexon returns 200 + unfiltered data on an unknown
+  // param name — it never 400s); `polymarket/orderbooks?token_id=…&start_time=…`
+  // was refused as "missing" although it was complete; and on the account
+  // rail a path query plus `params` concatenated into `…?limit=5?status=open`.
+  // The tool's contract is already "pass query params via params" — hold the
+  // caller to it here, before any rule that reads `params` can be fooled.
+  // `#` too: fetch drops a fragment before sending, so it is a silent no-op
+  // that looks like a filter.
+  if (/[?#]/.test(rawPath)) {
+    return `Query strings are not accepted in 'path' (got ${JSON.stringify(rawPath)}). ` +
+      "Put the bare route in 'path' and every query value in 'params', e.g. path: 'polymarket/orderbooks', params: { token_id: '…', start_time: '…', end_time: '…' }. " +
+      "Values in the path are invisible to this tool's pre-payment checks and to the account rail's URL builder. No payment was made.";
   }
 
   if (path === "markets/search" && query.status === "active") {
@@ -101,18 +128,18 @@ export function validateMarketRequest(
     }
     // Reject only what is definitively malformed. Verified live: omitting
     // `interval` succeeds (the server has a default), `1440` succeeds, `1h`
-    // 422s — but `60` returns a paid 400 on a market where `1440` works. Which
-    // integer intervals a given market can serve is data-dependent, so a
-    // client-side whitelist of numeric values would block valid calls on some
-    // markets and still let paid failures through on others. Only the shape is
-    // ours to check.
+    // 422s — but `60` returns a 400 on a market where `1440` works (a 4xx
+    // round-trip the gateway does not settle). Which integer intervals a given
+    // market can serve is data-dependent, so a client-side whitelist of numeric
+    // values would block valid calls on some markets and still let failed
+    // round-trips through on others. Only the shape is ours to check.
     //
     // Honest limit: ONE market was probed. "Data-dependent" is an inference, not
     // a finding — "60 is simply unsupported" fits the same evidence. If that is
     // the true rule, letting integers through under-blocks every hourly request.
     // Re-probe a second market before treating this as settled.
     if (query.interval !== undefined && !/^\d+$/.test(query.interval)) {
-      return `Polymarket candlesticks interval '${query.interval}' is not a number. It is integer minutes. The minute-equivalent of '1h' is '60', but '60' was observed returning a paid 400 on a market where '1440' (daily) worked — so '1440' is the safer choice if daily resolution is acceptable, and note it is coarser than hourly. Which intervals a market serves varies. Optional start_time/end_time are Unix seconds. No payment was made.`;
+      return `Polymarket candlesticks interval '${query.interval}' is not a number. It is integer minutes. The minute-equivalent of '1h' is '60', but '60' was observed returning an (unpaid) 400 on a market where '1440' (daily) worked — so '1440' is the safer choice if daily resolution is acceptable, and note it is coarser than hourly. Which intervals a market serves varies. Optional start_time/end_time are Unix seconds. No payment was made.`;
     }
     if ("start" in query || "end" in query) {
       return "Polymarket candlesticks uses params.start_time and params.end_time in Unix seconds, not start/end. No payment was made.";
@@ -134,12 +161,12 @@ export function validateMarketRequest(
   // Requires a smart-wallet CRITERION, not merely any param. Verified live:
   // no params 400s, `{ window: "7d" }` alone ALSO 400s, `{ min_trades: "100" }`
   // alone succeeds. Treating `window` as a cohort filter (0.33.0 did) let a
-  // guaranteed paid 400 straight through.
+  // guaranteed (unpaid) 400 round-trip straight through.
   if (/^polymarket\/market\/[^/]+\/smart-money$/.test(path)) {
     // Presence is not enough: `{ min_trades: "" }` is the shape a model emits
-    // when it knows the param name but not a value, and it 400s upstream after
-    // settling exactly like the unfiltered call. The orderbooks rule above
-    // already tests usability this way.
+    // when it knows the param name but not a value, and it 400s upstream
+    // exactly like the unfiltered call (unsettled — see the note on money
+    // above). The orderbooks rule above already tests usability this way.
     const hasCriterion = SMART_MONEY_CRITERIA.some((key) => (query[key] ?? "").trim() !== "");
     if (!hasCriterion) {
       const why = "window" in query
@@ -164,9 +191,9 @@ export function validateMarketRequest(
 // anyone who knows the path, withheld from openapi.json and the x402 manifest,
 // and on an upstream 5xx it releases the payment nonce, so nothing settles.
 //
-// Not a pre-payment block like markets/listings above: that one is a 410 sunset
-// and settles before failing, this one is an upstream bug that may recover, and
-// the gateway is the authority on whether it has. What we own is the wording.
+// Not a pre-payment block like markets/listings above: that one is a removed
+// route (a 404 before the 402), this one is an upstream bug that may recover,
+// and the gateway is the authority on whether it has. What we own is the wording.
 // The SDK reduced the gateway's "(payment NOT charged)" body to
 // `API error after payment: 502`, which asserts a charge that did not happen.
 export const DEGRADED_SPORTS_SINCE = "2026-08-04";

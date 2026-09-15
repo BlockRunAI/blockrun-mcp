@@ -39,14 +39,31 @@ test("recordActualSpend books the real settled cost when known", () => {
   assert.equal(b.calls, 1);
 });
 
-test("recordActualSpend falls back to the estimate when actual is unavailable/zero/negative", () => {
+test("recordActualSpend falls back to the estimate when actual is unavailable (null/undefined/NaN/negative)", () => {
   const b = newBudget();
   recordActualSpend(b, null, 0.02, undefined);
-  recordActualSpend(b, 0, 0.02, undefined);
+  recordActualSpend(b, undefined, 0.02, undefined);
   recordActualSpend(b, -5, 0.02, undefined);
   recordActualSpend(b, NaN, 0.02, undefined);
   assert.equal(Math.round(b.spent * 1000) / 1000, 0.08, "4 × $0.02 estimate");
   assert.equal(b.calls, 4);
+});
+
+// ONE contract for a settled zero, shared with api-key-call.ts and raw-call.ts:
+// `x-blockrun-cost-usd: 0.000000` is the gateway saying "this resolved to
+// nothing", and parseCostHeader preserves it as 0 precisely so it can be booked
+// as 0. Until audit round 3 (D33/D40) this function treated 0 like null and
+// booked the ESTIMATE for it — a free-priced account call was recorded at the
+// reserve, so per-agent caps filled with spend the dashboard showed as $0. Null
+// (header absent, or a wallet call with no counter delta) still means "unknown,
+// use the estimate"; only an explicit finite zero is the truth.
+test("recordActualSpend books an explicit settled ZERO as zero, not as the estimate", () => {
+  const b = newBudget();
+  recordActualSpend(b, 0, 0.02, undefined);
+  assert.equal(b.spent, 0, "a settled $0 is $0");
+  assert.equal(b.calls, 1, "…but it was still a call");
+  recordActualSpend(b, null, 0.02, undefined);
+  assert.equal(Math.round(b.spent * 1000) / 1000, 0.02, "null still books the estimate");
 });
 
 test("budget cap holds once ACTUAL frontier cost is booked (the core fix)", () => {

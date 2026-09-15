@@ -1,4 +1,14 @@
 import { getChain } from "./wallet.js";
+import { isApiKeyMode } from "./auth.js";
+import { isExplicitlyUncharged } from "./uncharged.js";
+export { isExplicitlyUncharged };
+
+// Literals rather than PORTAL_CREDITS_URL / PORTAL_ACTIVITY_URL: every handler
+// test that mocks utils/auth.js lists its named exports by hand, and the one
+// name this module cannot do without is isApiKeyMode (in-flight.ts and
+// api-key-call.ts spell their URLs out for the same reason).
+const ACCOUNT_CREDITS_URL = "https://user.blockrun.ai/dashboard/credits";
+const ACCOUNT_ACTIVITY_URL = "https://user.blockrun.ai/dashboard/activity";
 
 /**
  * Pulls a useful message out of any thrown value. For SDK APIError, surfaces
@@ -56,6 +66,23 @@ export function isPaymentRejectionError(message: string): boolean {
 }
 
 /**
+ * Where a status code is allowed to END.
+ *
+ * End of string, or a character that is neither a digit nor a dot — that much
+ * is what keeps "$402.50" and "$1.4020" from reading as status codes, and it is
+ * load-bearing (both are pinned by tests).
+ *
+ * The third alternative is the fix for a real gap: the SDK's ACCOUNT client
+ * writes `BlockRun account API error: 502.` with a sentence-ending period
+ * (@blockrun/llm dist/index.js, `${response.status}.${hint}`), and a dot was
+ * excluded outright — so every account-rail 5xx fell through unclassified and
+ * the caller got no guidance at all, while the identical wallet-rail message
+ * ("API error: 502") got it. A dot NOT followed by a digit is punctuation; a
+ * dot followed by a digit is a decimal point and still disqualifies.
+ */
+const STATUS_END = "(?:$|[^0-9.]|\\.(?!\\d))";
+
+/**
  * True when `message` carries a 5xx that READS as an HTTP status. A bare
  * three-digit match is far too loose: LLM errors are full of incidental
  * 5xx-shaped numbers ("max_tokens 512 is above the limit", "embedding dimension
@@ -69,7 +96,7 @@ export function hasLabelledServerStatus(message: string): boolean {
   const m = message.toLowerCase();
   // "payment" is a label too: the SDK's post-402 prefix is "API error after
   // payment: 502", where the word before the number is "payment", not "error".
-  return /(?:status(?:\s*code)?|http|error|payment)\s*[:=]?\s*5[0-9]{2}(?:$|[^0-9.])/.test(m) ||
+  return new RegExp(`(?:status(?:\\s*code)?|http|error|payment)\\s*[:=]?\\s*5[0-9]{2}${STATUS_END}`).test(m) ||
     /(?:^|[^0-9.])5[0-9]{2}:?\s+(?:internal|server error|bad gateway|service unavailable|gateway time)/.test(m);
 }
 
@@ -79,27 +106,43 @@ export function hasLabelledServerStatus(message: string): boolean {
  * payment/balance). `opts.altModels` lets a tool suggest a SAME-DOMAIN fallback
  * (e.g. video → "bytedance/seedance-2.0") instead of a generic, often-wrong
  * cross-domain one — omit it and no specific model is named.
+ *
+ * `opts.afterPayment` is the caller saying "a request carrying the payment
+ * (a signature, or the account Bearer) had already been sent when this was
+ * thrown". The formatter can read that from the SDK's "API error after
+ * payment" prefix, but an abort or a dropped socket arrives as a bare
+ * "This operation was aborted" / "fetch failed" with no such prefix, and the
+ * text alone cannot tell a paid retry from an unpaid quote probe. Pass it from
+ * a tracker (utils/in-flight.ts `paid.outstanding`) or from settlementOnThrow's
+ * "unknown" verdict; never guess it.
  */
-export function formatError(message: string, opts?: { altModels?: string }): string {
+export function formatError(message: string, opts?: { altModels?: string; afterPayment?: boolean }): string {
   const msgLower = message.toLowerCase();
 
   // Match HTTP status codes as standalone tokens, not substrings — "max 5000
   // characters", "$1.4020", or "$402.50" must not classify as 500/402 errors.
   // The trailing boundary excludes a following digit AND a following dot, so the
   // integer part of a decimal amount ($402.50) is not misread as a status code.
-  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}($|[^0-9.])`).test(msgLower);
+  const hasStatus = (code: string) => new RegExp(`(^|[^0-9.])${code}${STATUS_END}`).test(msgLower);
 
   const isPostPaymentClientError = msgLower.includes("api error after payment") &&
     /(^|[^0-9.])4[0-9]{2}($|[^0-9.])/.test(msgLower);
-  const explicitlyUncharged =
-    msgLower.includes("no payment was made") ||
-    msgLower.includes("no charge was made") ||
-    msgLower.includes("not charged");
-  const isPaymentError = !isPostPaymentClientError && (
+  const explicitlyUncharged = isExplicitlyUncharged(message);
+  // …and it gates the WHOLE funding branch, not just the "payment" keyword.
+  // It used to gate only that sub-clause, so a message carrying a bare 402, the
+  // word "balance", or "insufficient" still earned "your wallet needs funding"
+  // while saying in the same breath that nothing was charged. Two of this
+  // repo's own messages did exactly that: the video tool's unreadable-quote
+  // refusal ("Refusing to sign a payment for an amount that could not be
+  // validated — no charge was made") matched the bare 402 and told a wallet
+  // holding $1,000 to top up, and RealFace's "No payment taken" was not even in
+  // the marker list. Telling someone to fund a wallet that was never debited is
+  // the same class of wrong as #132, pointed the other way.
+  const isPaymentError = !isPostPaymentClientError && !explicitlyUncharged && (
     hasStatus("402") ||
     msgLower.includes("balance") ||
     msgLower.includes("insufficient") ||
-    (msgLower.includes("payment") && !hasStatus("500") && !explicitlyUncharged)
+    (msgLower.includes("payment") && !hasStatus("500"))
   );
 
   // Upstream model/provider availability, e.g. token360 returns
@@ -133,9 +176,33 @@ export function formatError(message: string, opts?: { altModels?: string }): str
   // gateway settled and then upstream refused, and this formatter has no
   // endpoint context to know whether the nonce was released.
   const isNotServed =
-    /(?:status(?:\s*code)?|http|error|payment)\s*[:=]?\s*501(?:$|[^0-9.])/.test(msgLower) ||
+    new RegExp(`(?:status(?:\\s*code)?|http|error|payment)\\s*[:=]?\\s*501${STATUS_END}`).test(msgLower) ||
     /(?:^|[^0-9.])501:?\s+not implemented/.test(msgLower);
   const isNotServedPrePayment = isNotServed && !msgLower.includes("api error after payment");
+
+  // Had a request CARRYING THE PAYMENT already left the machine when this was
+  // thrown? On the wallet rails the SDK says so in the prefix of every failure
+  // on its paid retry. On the account rail the credential rides every request,
+  // so any answer from the gateway is "after payment" by construction — the
+  // 4xx refusals are excluded below because the gateway answers those before
+  // billing. A caller that watched the wire can also say so (`afterPayment`).
+  const afterPayment = opts?.afterPayment === true ||
+    msgLower.includes("api error after payment") ||
+    (isApiKeyMode() && has5xxStatus);
+  // No status, no prefix, no verdict: the request went out and nothing came
+  // back. Same shape settlementOnThrow (chat-stream.ts) classifies as "unknown"
+  // — an abort of the paid retry, an idle timeout, a socket reset mid-flight.
+  const isTransportFailure =
+    /aborted|timed out|timeout|fetch failed|socket hang up|econnreset|etimedout|epipe|terminated/.test(msgLower);
+  // The one sentence this branch exists for. The gateway's catch-all 500 does
+  // not release the payment nonce (settlement ran in the same try), a 504 after
+  // settlement carries no body at all, and a client that aborted the paid retry
+  // never sees the answer — in all three the USDC may be gone. Until audit
+  // round 3 this read as "temporary API issue, try again in a few minutes",
+  // the ledger booked nothing, and the retry paid again (C38). Only the
+  // gateway's own marker (`explicitlyUncharged`) is allowed to overrule it.
+  const mayHaveSettled = afterPayment && !explicitlyUncharged && !isPostPaymentClientError &&
+    (isServerError || (opts?.afterPayment === true && isTransportFailure));
 
   const altHint = opts?.altModels ? ` (e.g. ${opts.altModels})` : "";
   let errorText = `Error: ${message}`;
@@ -151,6 +218,22 @@ export function formatError(message: string, opts?: { altModels?: string }): str
       (isNotServedPrePayment
         ? `, and nothing was charged.`
         : `. Check blockrun_wallet action:"report" to see whether this call settled.`);
+  } else if (mayHaveSettled) {
+    // Tested BEFORE the generic outage branch: the retry advice there is the
+    // wrong advice for a call that may already have paid. Say what is known
+    // (the payment went out), what is not (whether it settled), and where to
+    // look — never "nothing was charged" and never "the charge stands".
+    const account = isApiKeyMode();
+    const carrying = account ? "the account key" : "the payment signature";
+    const failure = isServerError
+      ? `The gateway failed AFTER the request carrying ${carrying} was sent, and did not say whether this call was billed`
+      : `No response came back, and the request carrying ${carrying} had already been sent`;
+    const where = account
+      ? `check blockrun_wallet action:"report" and ${ACCOUNT_ACTIVITY_URL}`
+      : `check blockrun_wallet action:"report" and the wallet's recent transactions`;
+    errorText += `\n\n${failure} — the charge MAY have gone through (the gateway settles on its own clock and ` +
+      `does not stop because this client saw an error). Before retrying, ${where}: a retry pays again if it did.` +
+      (opts?.altModels ? ` If it did not, a different model${altHint} may be healthier.` : ``);
   } else if (isServerError) {
     errorText += `\n\nThis is a temporary API issue. The API may be experiencing problems.` +
       `\nTry again in a few minutes` +
@@ -167,12 +250,59 @@ export function formatError(message: string, opts?: { altModels?: string }): str
       errorText += `\nThe gateway reported that this call was not settled — nothing was charged.`;
     }
   } else if (isPaymentError) {
-    const chain = getChain();
-    const network = chain === "solana" ? "Solana" : "Base";
-    errorText += `\n\nThis error usually means your wallet needs funding.\n` +
-      `Run blockrun_wallet with action: "setup" to get funding instructions.\n\n` +
-      `Quick fix: Send USDC to your wallet on ${network} network.`;
+    // The rail decides what "payment required" means. On the account rail a
+    // 402 is the gateway saying the prepaid credit is gone; there is no wallet
+    // to fund, and telling the agent to run action:"setup" sends it to
+    // requireWalletMode ("unset BLOCKRUN_API_KEY …") — off the rail the user
+    // chose. Tested first so the branch never reaches getChain(), which on an
+    // account-only machine is a session-file/keychain probe for nothing (C28).
+    if (isApiKeyMode()) {
+      errorText += `\n\nYour BlockRun account is out of credit. Top up at ${ACCOUNT_CREDITS_URL} ` +
+        `(the API key stays the same).`;
+    } else {
+      const chain = getChain();
+      const network = chain === "solana" ? "Solana" : "Base";
+      errorText += `\n\nThis error usually means your wallet needs funding.\n` +
+        `Run blockrun_wallet with action: "setup" to get funding instructions.\n\n` +
+        `Quick fix: Send USDC to your wallet on ${network} network.`;
+    }
   }
 
   return errorText;
+}
+
+// The SDK's text for ANY post-payment 402, body discarded (@blockrun/llm
+// dist/index.js, handlePaymentAndRetryRaw). On the Base rail it has two causes
+// the tool cannot tell apart:
+//
+//   - the wallet really was refused (balance, allowance);
+//   - the upstream answered 5xx, the gateway route returned 502 "Payment was
+//     NOT charged" WITHOUT releasing the payment nonce (the pm route releases;
+//     the exa and defillama routes do not — blockrun src/app/api/v1/exa/
+//     [...path]/route.ts and defillama/[...path]/route.ts), the SDK slept 1s
+//     and re-sent the SAME PAYMENT-SIGNATURE, and rejectReplay answered 402
+//     {code: PAYMENT_REPLAY}. Nothing settled.
+//
+// formatError sees "balance" and prescribes funding, so a 30-second upstream
+// blip told a $50 wallet to top up. The Solana client has no 502 retry and the
+// account rail has no nonce, so the ambiguity is Base-only — and so is the
+// hedge: on Base the SDK's words stay (it MAY be a real rejection) with the
+// second reading added; elsewhere the sentence means what it says. The real
+// fix is upstream (release the nonce on 5xx, as pm does) or in the SDK
+// (surface the 402 `code`); this is the honest message until then. Shared so
+// exa and defi cannot drift apart on the wording.
+export const SDK_POST_PAYMENT_REJECTION = "Payment was rejected. Check your wallet balance.";
+
+/**
+ * The Base-only second reading of the SDK's post-payment rejection, or "" when
+ * the message is anything else, the rail is not Base, or the process bills an
+ * account. Append it AFTER formatError's output. `upstream` names the vendor
+ * behind the route ("Exa", "DefiLlama") so the sentence says who failed.
+ */
+export function basePaymentReplayHedge(message: string, upstream: string): string {
+  if (message.trim() !== SDK_POST_PAYMENT_REJECTION) return "";
+  if (isApiKeyMode() || getChain() !== "base") return "";
+  return `\n\nOn Base this exact rejection is also what the gateway returns when ${upstream} itself failed (5xx) and the SDK ` +
+    "re-sent the same payment header: in that case nothing was settled and the wallet was never the problem. " +
+    "Check blockrun_wallet action:\"status\" — if it shows funds, retry the call once before topping up.";
 }

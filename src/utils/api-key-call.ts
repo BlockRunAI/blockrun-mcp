@@ -16,7 +16,7 @@
 // it needs its own module rather than a flag threaded through the 402 code.
 
 import { fetchWithTimeout } from "./http.js";
-import { pollTimeoutFor } from "./poll.js";
+import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { apiAuthHeaders } from "./auth.js";
 import { getApiBase, resolveGatewayUrl } from "./wallet.js";
 
@@ -181,8 +181,25 @@ function statusErrorMessage(response: Response, what: string, body: Record<strin
   return `API error ${response.status}: ${JSON.stringify(body)}`;
 }
 
+/**
+ * A non-OK answer from the account API, carrying its status the way the SDK's
+ * APIError does (`statusCode`). The path tools' shared catch
+ * (utils/path-tool-catch.ts) reads it through settlementOnThrow to tell an edge
+ * 502/504 — the origin may still be running and billing the call — from a
+ * refusal the gateway itself authored; a bare Error hid the status inside the
+ * message and every account-rail 5xx read as "nothing could have settled".
+ */
+export class AccountApiError extends Error {
+  readonly statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "AccountApiError";
+    this.statusCode = statusCode;
+  }
+}
+
 async function throwForStatus(response: Response, what: string): Promise<never> {
-  throw new Error(statusErrorMessage(response, what, await readJson(response)));
+  throw new AccountApiError(statusErrorMessage(response, what, await readJson(response)), response.status);
 }
 
 /** POST an endpoint that answers inline. `endpoint` is rooted, e.g. "/v1/audio/speech". */
@@ -293,7 +310,17 @@ export async function apiKeyAsyncPost(
     return { data: submitted, paidUsd: costFrom(submit), txHash: receiptFrom(submit), jobId };
   }
   if (!pollUrl) {
-    throw new Error(`Async submit missing poll_url: ${JSON.stringify(submitted)}`);
+    // A 202 IS the acceptance, and this rail bills on acceptance. A malformed
+    // envelope is a billed job this client cannot poll — typed as such, so the
+    // tool books it and names the job, instead of the plain Error that the
+    // callers' comments ("every post-submit exit is a BilledJobError") were
+    // wrong about until audit round 4.
+    throw new BilledJobError(
+      `Async submit answered 202 without a poll_url (${JSON.stringify(submitted)}), so the job cannot be polled from here. ` +
+        `It has already been billed to the account${jobId ? `; job id ${jobId}` : ""} — ` +
+        `check https://user.blockrun.ai/dashboard/activity before submitting again.`,
+      { paidUsd: submitCost, jobId, billing: "billed" },
+    );
   }
 
   const absolutePollUrl = resolveGatewayUrl(pollUrl);
@@ -339,7 +366,9 @@ export async function apiKeyAsyncPost(
       const note = typeof data.note === "string" ? data.note : undefined;
       const failed = `Upstream generation failed: ${String(data.error ?? "unknown")}.`;
       if (paymentStatus === "not_charged") {
-        throw new Error(`${failed} ${note ?? "No payment was taken."}`);
+        // Typed: the upstream text rides along verbatim and can say "timeout"
+        // or "aborted" — none of it is a verdict on the money. The type is.
+        throw new JobFailedError(`${failed} ${note ?? "No payment was taken."}`, { jobId });
       }
       // Anything short of an observed refund is bookable: an explicit charged
       // status is certain, an absent one is unknown — and unknown books too,

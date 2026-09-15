@@ -37,19 +37,19 @@ Two ways to expose a new API. Pick the right one:
 - The API is core to BlockRun value-prop (chat, image, wallet)
 
 **Add a skill** when:
-- The API is path-based passthrough (mirrors `blockrun_markets` / `blockrun_surf`)
+- The API is path-based passthrough (mirrors `blockrun_markets` / `blockrun_exa`)
 - The endpoint catalog is large (≥10 endpoints) and benefits from a Quick Decision Table
 - LLM routing needs trigger keywords beyond what tool descriptions can carry
 
 Reference examples in the repo:
-- Path-based tool: `src/tools/surf.ts` — 57 lines, exposes 84 endpoints behind it
-- Long-tail skill: `skills/surf/SKILL.md` — full endpoint catalog + 7 worked examples
+- Path-based tool: `src/tools/markets.ts` — 154 lines, one `path` parameter in front of the whole Predexon catalog
+- Long-tail skill: `skills/prediction-markets/SKILL.md` — endpoint catalog, Quick Decision Table, worked examples
 - Async payment-on-completion: `src/tools/video.ts` — submit + poll + settle-on-complete
 - Typed structured tool: `src/tools/chat.ts` — multi-mode routing + budget gating + multi-turn
 
 ## Adding a new MCP tool
 
-1. Copy `src/tools/surf.ts` as a starting template
+1. Copy `src/tools/markets.ts` as a starting template for a path-based tool, or `src/tools/exa.ts` for a single-endpoint one
 2. Use `getClient()` from `src/utils/wallet.ts` — it auto-routes Base vs Solana
 3. Keep tool description ≤ 30 lines. Long endpoint catalogs belong in `skills/<name>/SKILL.md`, not in the tool description
 4. Register in `src/mcp-handler.ts` (one import + one `register*Tool()` call)
@@ -70,8 +70,8 @@ Reference examples in the repo:
    ---
    ```
 
-2. Mirror the structure of `skills/surf/SKILL.md`: Quick Decision Table → Worked Examples → Full Reference (organized by category)
-3. Triggers should cover the long tail. Users won't always say "Surf" or "BlockRun" — they'll say "wallet labels", "on-chain SQL", "mindshare". Cover the synonyms
+2. Mirror the structure of `skills/prediction-markets/SKILL.md`: Quick Decision Table → Worked Examples → Full Reference (organized by category). `skills/surf/SKILL.md` is NOT a template — it is a retirement map for a removed tool
+3. Triggers should cover the long tail. Users won't always say the vendor's name or "BlockRun" — for prediction markets they'll say "odds", "will X happen", "betting line". Cover the synonyms
 
 ## Chain-aware code
 
@@ -83,7 +83,9 @@ Never hardcode chain ID, RPC URL, or address format. Use:
 
 Two flavors. Pick the right one:
 
-- **Sync, single-call**: use `client.getWithPaymentRaw(endpoint, params)` (GET) or `client.requestWithPaymentRaw(endpoint, body)` (POST). One signature, one settlement. See `src/tools/surf.ts`, `src/tools/exa.ts`.
+- **Sync, single-call**: use `rawGet(client, endpoint, params)` (GET) or `rawPost(client, endpoint, body)` (POST) from `src/utils/raw-call.ts`. See `src/tools/markets.ts`, `src/tools/exa.ts`.
+
+  Do **not** reach for `client.getWithPaymentRaw` / `client.requestWithPaymentRaw` directly. There are three payment rails (Base wallet, Solana wallet, account API key) and the SDK only knows about the two wallet ones — on the account rail it degrades to a plain Bearer fetch and throws away the `x-blockrun-cost-usd` header, so the call cannot report what it cost. `raw-call.ts` exists so no tool picks a rail for itself, and book the ledger with its `ledgerFallback()` rather than the reserved amount: the gate and the ledger are deliberately different numbers, and Solana has no gateway transaction fee at all.
 - **Async, payment-on-completion**: copy the `src/tools/video.ts` pattern — submit → 402 → sign → poll the same URL with the same `PAYMENT-SIGNATURE` header → settle on the first `completed` response. Upstream failures or client-side timeout = no charge. See `src/tools/music.ts` for the simpler synchronous-blocking variant.
 
 ## CHANGELOG

@@ -5,8 +5,9 @@ import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawGet, rawPost } from "../utils/raw-call.js";
-import { extractErrorMessage, formatError } from "../utils/errors.js";
+import { ledgerFallback, rawGet, rawPost, type RawClient } from "../utils/raw-call.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
@@ -37,7 +38,7 @@ export function registerMarketsTool(server: McpServer, budget: BudgetState): voi
 
 POLYMARKET (Tier 1):
 - polymarket/events, polymarket/markets — list events/markets (filter, sort, paginate)
-- polymarket/markets/keyset, polymarket/events/keyset — same data, cursor-based keyset pagination (use ?pagination_key=)
+- polymarket/markets/keyset, polymarket/events/keyset — same data, cursor-based keyset pagination (params: { pagination_key })
 - polymarket/crypto-updown — crypto up/down markets
 - polymarket/market-price/:token_id — current/historical price
 - polymarket/candlesticks/:condition_id — OHLCV by market
@@ -54,7 +55,7 @@ POLYMARKET (Tier 2 — wallet/smart-money analytics):
 - polymarket/wallet/:wallet — full smart-wallet profile
 - polymarket/wallet/:wallet/markets, .../similar
 - polymarket/wallet/pnl/:wallet, .../positions/:wallet, .../volume-chart/:wallet
-- polymarket/wallets/profiles, polymarket/wallets/filter — batch + AND/OR filter
+- polymarket/wallets/profiles — batch profiles, GET with params: { addresses } (POST 404s); polymarket/wallets/filter — AND/OR filter
 - polymarket/market/:condition_id/smart-money, polymarket/markets/smart-activity
 
 WALLET IDENTITY & CLUSTERING (Tier 2) — cross-context labels + on-chain relationship graph:
@@ -78,16 +79,23 @@ REQUEST CONTRACTS:
 - polymarket/orderbooks requires token_id plus start_time/end_time in Unix milliseconds.
 - Smart-money needs a smart-wallet CRITERION (min_trades, min_volume, min_roi, min_*_pnl, min_win_rate, min_profit_factor). "window" only scopes time and is NOT sufficient on its own. Default: { window: "30d", min_trades: "100" }.
 
-Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
+Pass query params via 'params' (GET) — a '?' in 'path' is refused before payment, because path-carried values bypass the pre-payment checks above. Use 'body' only for POST endpoints (e.g. polymarket/wallet/identities).`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
       inputSchema: {
-        path: z.string().describe("Endpoint path, e.g. 'polymarket/events', 'kalshi/markets/KXBTC-25MAR14', 'polymarket/wallet/0xabc...', 'markets/search'"),
+        // Bare route only. 'kalshi/markets/KXBTC-25MAR14' used to be the example
+        // here; the registry has only the 2-segment 'kalshi/markets' and the
+        // gateway 404s on a segment-count mismatch (probed unauthenticated
+        // 2026-09-13), so copying it cost a wasted turn. Filters go in params.
+        path: z.string().describe("Endpoint path, no query string, e.g. 'polymarket/events', 'kalshi/markets' (filter via params: { ticker: 'KXBTC-25MAR14' }), 'polymarket/wallet/0xabc...', 'markets/search'"),
         params: z.record(z.string(), z.string()).optional().describe("Query parameters for GET requests (e.g. markets/search uses { q: 'Bitcoin', status: 'open', venue: 'polymarket', limit: '20' })"),
         body: z.any().optional().describe("JSON body for POST queries (triggers pmQuery — most endpoints are GET)"),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
     async ({ path, params, body, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawGet/rawPost, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         body = coerceBody(body);
         // `path` is forwarded verbatim into /v1/pm/${path}; a `..` segment would
@@ -126,10 +134,11 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           // settled `x-blockrun-cost-usd` instead of discarding the response.
           const llm = getClient() as unknown as RawClient;
           const endpoint = `/v1/pm/${path}`;
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = body !== undefined
             ? await rawPost(llm, endpoint, body)
             : await rawGet(llm, endpoint, params);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
 
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -139,15 +148,17 @@ Pass query params via 'params' (GET). Use 'body' only for POST endpoints (e.g. p
           gate.release();
         }
       } catch (err) {
-        const message = extractErrorMessage(err);
-        // A sports/* 5xx is the known Predexon outage, not a blip, and the
-        // gateway released the payment — say so instead of "after payment …
-        // try again in a few minutes" (blockrun-mcp#132).
-        const degraded = describeDegradedSportsFailure(path, message);
-        return {
-          content: [{ type: "text", text: degraded ?? formatError(message) }],
-          isError: true,
-        };
+        // Books the reserve when the payment went out and no origin answer came
+        // back (utils/path-tool-catch.ts). A sports/* 5xx is the known Predexon
+        // outage, not a blip, and the gateway released the payment — say so
+        // instead of "after payment … try again in a few minutes"
+        // (blockrun-mcp#132); the bespoke text replaces formatError's only.
+        return pathToolFailure(err, {
+          budget,
+          agentId: agent_id,
+          sentUsd,
+          describe: (message) => describeDegradedSportsFailure(path, message),
+        });
       }
     }
   );

@@ -55,6 +55,15 @@ export interface PolymarketState {
    * while this is set and unresolved. Cleared on confirm/failure.
    */
   pendingWithdraw?: { transactionID: string; deadline: number };
+  /**
+   * A funding call whose gateway response was lost, 5xx, or success:false
+   * after the signed EIP-3009 authorization had already been POSTed. The
+   * authorization stays executable by the facilitator until `deadline` (unix
+   * seconds), so a fresh one signed before then can DOUBLE-SEND the full
+   * amount — fund refuses to sign while this is set and unexpired. Cleared on
+   * a confirmed submit or a definite 4xx rejection.
+   */
+  pendingFund?: { amountUsd: number; deadline: number };
 }
 
 function readJsonFile<T>(file: string): T | null {

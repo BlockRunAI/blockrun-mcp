@@ -105,11 +105,19 @@ function renderStatus(s: Status): void {
     );
   };
 
-  const buy = el("button", { class: "primary" }, "Buy USDC with card") as HTMLButtonElement;
+  // Card top-up is Base-only (utils/onramp.ts returns address+QR guidance on
+  // Solana, with no link). The primary CTA read "Buy USDC with card" on both
+  // chains, so a Solana user clicked it, watched "Minting link…", and landed on
+  // a plain-text fallback explaining it is not available. Say what this chain
+  // can actually do.
+  const onSolana = s.activeChain === "solana";
+  const buyLabel = onSolana ? "Fund with USDC (SPL)" : "Buy USDC with card";
+  const buy = el("button", { class: "primary" }, buyLabel) as HTMLButtonElement;
+  if (onSolana) buy.title = "Card top-up is Base-only — this shows your Solana address and QR to send USDC (SPL) to.";
   buy.addEventListener("click", async () => {
-    setBusy(buy, true, "Minting link…");
+    setBusy(buy, true, onSolana ? "Fetching address…" : "Minting link…");
     try { render(await call({ action: "deposit" })); } catch (e) { note.hidden = false; note.className = "note err"; note.textContent = String((e as Error).message ?? e); }
-    finally { setBusy(buy, false, "Buy USDC with card"); }
+    finally { setBusy(buy, false, buyLabel); }
   });
   const explorer = el("button", { class: "small" }, s.explorerLabel || "Explorer") as HTMLButtonElement;
   explorer.addEventListener("click", () => { void app.openLink({ url: s.explorerUrl }); });

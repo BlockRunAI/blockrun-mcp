@@ -15,10 +15,40 @@ import { getPolymarketAccount } from "./client.js";
 import { BASE_CHAIN_ID, BRIDGE_API_HOST, getMaxFundUsd, getSigType } from "./constants.js";
 import { getFundsAddress } from "./positions.js";
 import { getPublicClient } from "./setup.js";
-import type { ToolResult } from "./orders.js";
+import { loadState, saveState } from "./creds.js";
+import { declinedResult, type SpendGate, type ToolResult } from "./transactions.js";
+import type { BudgetState } from "../../types.js";
+import { recordActualSpend, reserveBudget } from "../budget.js";
 
 const FUND_FEE_USD = 0.01;
 const USDC_DECIMALS = 6;
+/**
+ * How long the signed EIP-3009 authorization stays executable, in seconds.
+ * Passed to createPaymentPayload explicitly (its default is the same 300s) so
+ * the pendingFund deadline below and the signature's validBefore cannot drift.
+ * Exported for tests.
+ */
+export const FUND_AUTH_VALIDITY_SECS = 300;
+/** The facilitator can broadcast right at validBefore; don't race it. */
+const FUND_GUARD_GRACE_SECS = 60;
+
+const FUND_GUIDANCE =
+  "check your Base wallet's USDC balance (blockrun_wallet action:\"status\", or basescan) and the vault's pUSD " +
+  "with action:\"setup\" before ANY retry — a resubmitted funding call signs a SECOND full transfer and can double-send";
+
+/**
+ * True when a thrown gateway error PROVES the deposit authorization was never
+ * forwarded: a 4xx from @blockrun/llm's APIError (`statusCode`), or its
+ * PaymentError (the x402 FEE payment was refused before the request body was
+ * processed). A timeout, a dropped socket, a 5xx, or a success:false body all
+ * arrive after the gateway may have handed the authorization to the
+ * facilitator — outcome unknown.
+ */
+function isDefiniteFundRejection(err: unknown): boolean {
+  const e = err as { name?: string; statusCode?: unknown } | undefined;
+  if (e?.name === "PaymentError") return true;
+  return typeof e?.statusCode === "number" && e.statusCode >= 400 && e.statusCode < 500;
+}
 // The Polymarket bridge does NOT process Base-USDC deposits below this — a
 // smaller amount lands at the bridge address but is never wrapped/delivered to
 // the vault (verified live: a $0.10 deposit confirmed on Base but never reached
@@ -37,7 +67,20 @@ async function bridgeAddressFor(vault: string): Promise<string> {
   return evm;
 }
 
-export async function fundVault(input: { amount_usd?: number; confirm?: boolean }): Promise<ToolResult> {
+export async function fundVault(input: {
+  amount_usd?: number;
+  confirm?: boolean;
+  askUser?: SpendGate;
+  /**
+   * The x402 budget ledger. The DEPOSIT is the user's own USDC into a vault
+   * only the same key controls and stays outside the ledger, but the $0.01
+   * gateway fee is BlockRun API spend from the Base wallet — the thing the
+   * ledger meters. Absent (legacy wiring), the fee is neither reserved nor
+   * booked, as before.
+   */
+  budget?: BudgetState;
+  agent_id?: string;
+}): Promise<ToolResult> {
   if (input.amount_usd === undefined || input.amount_usd <= 0) {
     return { text: `Pass amount_usd — the USDC amount to move from your Base wallet into your Polymarket vault (e.g. amount_usd:5).`, isError: true };
   }
@@ -113,6 +156,16 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
 
     const bridge = await bridgeAddressFor(vault);
 
+    // An earlier funding call whose outcome is unknown: its authorization may
+    // still be executed by the facilitator until its deadline, and a second
+    // one signed on top of it double-sends the full amount. Refuse to sign
+    // until the window has passed (the balance reads then show what
+    // happened); the dry-run only warns. Mirrors withdraw's pendingWithdraw.
+    const pending = loadState().pendingFund;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const pendingWaitSecs = pending ? pending.deadline + FUND_GUARD_GRACE_SECS - nowSec : 0;
+    if (pending && pendingWaitSecs <= 0) saveState({ pendingFund: undefined }); // expired — safe
+
     if (input.confirm !== true) {
       return {
         text: [
@@ -122,67 +175,151 @@ export async function fundVault(input: { amount_usd?: number; confirm?: boolean 
           `  → bridge:         ${bridge}`,
           `  → wraps to pUSD in your vault: ${vault}`,
           `  fee: $${FUND_FEE_USD} (BlockRun pays the Base gas; you need no ETH)`,
+          ...(pending && pendingWaitSecs > 0
+            ? [
+                ``,
+                `⚠️ A previous funding call for $${pending.amountUsd.toFixed(2)} has an UNKNOWN outcome and its signed ` +
+                  `authorization may still execute for ~${pendingWaitSecs}s. confirm:true is refused until then — ${FUND_GUIDANCE}.`,
+              ]
+            : []),
           ``,
           `Re-call with confirm:true to sign and submit.`,
         ].join("\n"),
-        structured: { dryRun: true, amountUsd, agent, bridge, vault, feeUsd: FUND_FEE_USD },
+        structured: { dryRun: true, amountUsd, agent, bridge, vault, feeUsd: FUND_FEE_USD, ...(pending && pendingWaitSecs > 0 ? { pendingFund: pending } : {}) },
       };
     }
 
-    // Sign the EIP-3009 deposit authorization: Base USDC → bridge address.
-    const privateKey = getOrCreateWalletKey();
-    const amountMicro = String(Math.floor(amountUsd * 10 ** USDC_DECIMALS));
-    const depositAuthorization = await createPaymentPayload(
-      privateKey, agent, bridge, amountMicro, `eip155:${BASE_CHAIN_ID}`,
-    );
-
-    // Call the gateway fund endpoint — it charges $0.01 via x402 automatically
-    // and relays the deposit authorization to the CDP facilitator (pays gas).
-    const client = new BlockrunClient({ privateKey });
-    const result = (await client.post("/v1/polymarket/fund", {
-      depositWallet: vault,
-      recipient: bridge,
-      amountMicro,
-      depositAuthorization,
-    })) as {
-      success?: boolean;
-      funded?: boolean;
-      creditPending?: boolean;
-      deposit?: { txHash?: string; amountUsd?: number };
-      fee?: { txHash?: string };
-      error?: string;
-    };
-
-    if (!result?.success) {
-      return { text: `Funding failed: ${result?.error ?? JSON.stringify(result)}`, isError: true };
+    if (pending && pendingWaitSecs > 0) {
+      return {
+        text: `Refusing to sign: a previous funding call for $${pending.amountUsd.toFixed(2)} has an UNKNOWN outcome — ` +
+          `its signed USDC authorization may still execute for up to ~${pendingWaitSecs}s more, and signing another ` +
+          `now could double-send. Nothing was signed. Re-run after that window; meanwhile ${FUND_GUIDANCE}.`,
+        isError: true,
+        structured: { refused: "pending_fund", pendingFund: pending },
+      };
     }
 
-    // success:true = the deposit was SUBMITTED to the bridge + fee charged on
-    // Base. It does NOT mean the vault is funded: the Polymarket bridge credits
-    // pUSD on Polygon asynchronously (usually minutes, occasionally 30+),
-    // off-chain and un-pollable here — don't claim "Funded" (issue #226).
-    return {
-      text: [
-        `✅ Deposit of $${amountUsd.toFixed(2)} USDC submitted to the Polymarket bridge (gasless).`,
-        `  from Base wallet: ${agent}`,
-        ...(result.deposit?.txHash ? [`  deposit tx: https://basescan.org/tx/${result.deposit.txHash}`] : []),
-        `  ⏳ pUSD credit to your vault ${vault} is PENDING — the bridge settles on Polygon`,
-        `     asynchronously (usually minutes, occasionally 30+). Re-run action:"setup"`,
-        `     and watch for the pUSD balance; it is not instant.`,
-        `  Fee charged: $${FUND_FEE_USD}.`,
-      ].join("\n"),
-      structured: {
-        success: true,
-        funded: false,
-        creditPending: true,
-        amountUsd,
-        agent,
-        bridge,
-        vault,
-        deposit: result.deposit,
-        fee: result.fee,
-      },
-    };
+    // Reserve the gateway fee against the x402 budget BEFORE the dialog and
+    // the signature, like every other paid tool: a cap the fee would cross
+    // refuses here, with nothing signed. Released in the finally below —
+    // recordActualSpend books the settled figure on the paths that paid.
+    const feeGate = input.budget ? reserveBudget(input.budget, input.agent_id, FUND_FEE_USD) : null;
+    if (feeGate && !feeGate.allowed) {
+      return {
+        text: `${feeGate.reason}. The $${FUND_FEE_USD} funding fee is BlockRun API spend and counts against the budget cap ` +
+          `(blockrun_wallet action:"report" / action:"delegate"). Nothing was signed.`,
+        isError: true,
+      };
+    }
+    try {
+      // The user's word before the signature, when the operator asked for it
+      // (BLOCKRUN_CONFIRM_SPEND=on): the full amount plus the fee leaves the
+      // Base wallet on this signature.
+      if (input.askUser) {
+        const gate = await input.askUser(amountUsd + FUND_FEE_USD, `polymarket · fund vault ${vault} from ${agent}`);
+        if (!gate.ok) return declinedResult(`the $${amountUsd.toFixed(2)} funding authorization`);
+      }
+
+      // Sign the EIP-3009 deposit authorization: Base USDC → bridge address.
+      const privateKey = getOrCreateWalletKey();
+      const amountMicro = String(Math.floor(amountUsd * 10 ** USDC_DECIMALS));
+      const deadline = Math.floor(Date.now() / 1000) + FUND_AUTH_VALIDITY_SECS;
+      const depositAuthorization = await createPaymentPayload(
+        privateKey, agent, bridge, amountMicro, `eip155:${BASE_CHAIN_ID}`,
+        { maxTimeoutSeconds: FUND_AUTH_VALIDITY_SECS },
+      );
+
+      // Call the gateway fund endpoint — it charges $0.01 via x402 automatically
+      // and relays the deposit authorization to the CDP facilitator (pays gas).
+      // Arm the guard BEFORE the POST: a crash mid-request must leave it set.
+      saveState({ pendingFund: { amountUsd, deadline } });
+      const client = new BlockrunClient({ privateKey });
+      let result: {
+        success?: boolean;
+        funded?: boolean;
+        creditPending?: boolean;
+        deposit?: { txHash?: string; amountUsd?: number };
+        fee?: { txHash?: string };
+        error?: string;
+      };
+      // What "failed" means depends on WHEN it failed. A definite 4xx (or a
+      // refused fee payment) proves the authorization was never forwarded —
+      // plain failure, guard cleared. Anything else — timeout, dropped socket,
+      // 5xx, or a success:false body — arrives after the gateway may already
+      // have handed the authorization to the facilitator, and the old bare
+      // "Funding failed" invited the retry that signs a second $amount.
+      const outcomeUnknown = (detail: string): ToolResult => ({
+        text: `⚠️ Funding outcome UNKNOWN — the gateway did not confirm the $${amountUsd.toFixed(2)} deposit (${detail}). ` +
+          `The signed USDC authorization MAY already have been forwarded and broadcast on Base. Do NOT retry yet: ` +
+          `${FUND_GUIDANCE}. This tool refuses to re-sign for ~${FUND_AUTH_VALIDITY_SECS + FUND_GUARD_GRACE_SECS}s ` +
+          `(the authorization's validity window) so a retry cannot double-send.`,
+        isError: true,
+        structured: { outcome: "unknown", amountUsd, agent, bridge, vault, pendingFund: { amountUsd, deadline } },
+      });
+      try {
+        result = (await client.post("/v1/polymarket/fund", {
+          depositWallet: vault,
+          recipient: bridge,
+          amountMicro,
+          depositAuthorization,
+        })) as typeof result;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isDefiniteFundRejection(err)) {
+          saveState({ pendingFund: undefined });
+          return { text: `Funding failed: ${msg}. The gateway rejected the request before forwarding it — nothing moved.`, isError: true };
+        }
+        // The fee payment left with the request; book the estimate rather than
+        // under-count a charge that may have settled (the same trade-off the
+        // other paid tools make on a lost response).
+        if (input.budget) recordActualSpend(input.budget, null, FUND_FEE_USD, input.agent_id);
+        return outcomeUnknown(msg);
+      }
+
+      // The SDK settles the 402 quote into its session spend on a 2xx — the fee
+      // the gateway actually charged, whatever the route is priced at today.
+      // getSpending throws in account mode, which cannot reach here (Polymarket
+      // is wallet-only) — guarded anyway so a booking never masks a success.
+      if (input.budget) {
+        let observed: number | null = null;
+        try { observed = client.getSpending().totalUsd; } catch { observed = null; }
+        recordActualSpend(input.budget, observed && observed > 0 ? observed : null, FUND_FEE_USD, input.agent_id);
+      }
+
+      if (!result?.success) {
+        return outcomeUnknown(`gateway said success:false — ${result?.error ?? JSON.stringify(result)}`);
+      }
+      saveState({ pendingFund: undefined });
+
+      // success:true = the deposit was SUBMITTED to the bridge + fee charged on
+      // Base. It does NOT mean the vault is funded: the Polymarket bridge credits
+      // pUSD on Polygon asynchronously (usually minutes, occasionally 30+),
+      // off-chain and un-pollable here — don't claim "Funded" (issue #226).
+      return {
+        text: [
+          `✅ Deposit of $${amountUsd.toFixed(2)} USDC submitted to the Polymarket bridge (gasless).`,
+          `  from Base wallet: ${agent}`,
+          ...(result.deposit?.txHash ? [`  deposit tx: https://basescan.org/tx/${result.deposit.txHash}`] : []),
+          `  ⏳ pUSD credit to your vault ${vault} is PENDING — the bridge settles on Polygon`,
+          `     asynchronously (usually minutes, occasionally 30+). Re-run action:"setup"`,
+          `     and watch for the pUSD balance; it is not instant.`,
+          `  Fee charged: $${FUND_FEE_USD}.`,
+        ].join("\n"),
+        structured: {
+          success: true,
+          funded: false,
+          creditPending: true,
+          amountUsd,
+          agent,
+          bridge,
+          vault,
+          deposit: result.deposit,
+          fee: result.fee,
+        },
+      };
+    } finally {
+      feeGate?.release();
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { text: `Funding error: ${msg}`, isError: true };

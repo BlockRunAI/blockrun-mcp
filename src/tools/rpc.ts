@@ -15,13 +15,14 @@ import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost } from "../utils/raw-call.js";
-import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { isValidNetworkSlug } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
 
-const RPC_PRICE_USD = 0.002;
+export const RPC_PRICE_USD = 0.002;
 
 export function registerRpcTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
@@ -51,6 +52,9 @@ Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they co
       },
     },
     async ({ network, method, params, body, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawPost, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         body = coerceBody(body);
         if (body === undefined) {
@@ -95,8 +99,9 @@ Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they co
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `rpc · ${cleanNetwork}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, `/v1/rpc/${cleanNetwork}`, body);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
@@ -107,10 +112,9 @@ Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they co
           gate.release();
         }
       } catch (err) {
-        return {
-          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
-          isError: true,
-        };
+        // Books the reserve when the payment went out and no origin answer came
+        // back (utils/path-tool-catch.ts).
+        return pathToolFailure(err, { budget, agentId: agent_id, sentUsd });
       }
     }
   );

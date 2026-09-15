@@ -8,10 +8,22 @@ import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { formatError } from "../utils/errors.js";
+import { delegateAgent, listRevokedAgents, revokeAgent, sealOperatorCeiling } from "../utils/budget.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
+  // The limit this ledger was BORN with is the operator's BLOCKRUN_BUDGET_LIMIT
+  // (initializeMcpServer seeds it from the env and registers tools right
+  // after). It is sealed here, before the model can call anything, and the
+  // budget/delegate branches below treat it as a ceiling the session may
+  // lower but never clear or exceed — see budget.ts for the failure this
+  // prevents. Null means the server started unlimited and set/clear keep
+  // their original, unrestricted meaning.
+  const ceiling = sealOperatorCeiling(budget);
+  const ceilingStr = ceiling !== null ? `$${ceiling.toFixed(2)}` : null;
+  const restartHint = `Only a restart with a higher BLOCKRUN_BUDGET_LIMIT raises it.`;
+
   server.registerTool(
     "blockrun_wallet",
     {
@@ -46,11 +58,15 @@ Actions:
 
 Budget controls:
 - budget + budget_action:"set" + budget_amount:1.00 → Set global spend cap
-- budget + budget_action:"clear" → Remove global spend cap
+- budget + budget_action:"check" (the default) → Report the cap, spend and remaining
+- budget + budget_action:"clear" → Remove a cap set here
+If the operator started the server with BLOCKRUN_BUDGET_LIMIT, that value is a
+ceiling this tool can only lower: set above it is clamped, clear restores it,
+and agent_limit is clamped to it. Only a restart with a new env raises it.
 
 Multi-agent orchestration:
 - delegate + agent_id:"research" + agent_limit:2.00 → Allocate $2 to a child agent
-- revoke + agent_id:"research" → Remove a child agent's budget
+- revoke + agent_id:"research" → Remove a child agent's cap (its spend is kept; re-delegating the id carries it)
 - report → See per-agent spending breakdown
 
 Usage pattern for multi-agent systems:
@@ -65,7 +81,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       inputSchema: {
         action: z.enum(["status", "deposit", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
         chain: z.enum(["base", "solana"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),
-        budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget')"),
+        budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget'). Defaults to 'check', which only reports."),
         budget_amount: z.number().optional().describe("Budget limit in USD (for budget_action='set')"),
         agent_id: z.string().optional().describe("Agent identifier for delegate/revoke/report actions"),
         agent_limit: z.number().optional().describe("Budget limit in USD for this agent (required for delegate action)"),
@@ -75,6 +91,13 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       // Handle budget action
       if (action === "budget") {
         const budgetAct = budget_action || "check";
+        // What the call did, in the model's own terms. A clamp or a restored
+        // ceiling is NOT an error — the state changed, just not to what was
+        // asked — but the reason has to be in the text, because the next thing
+        // an agent does after "Set to $2.00" when it asked for $1000 is ask
+        // again.
+        let outcome = "";
+        let clamped = false;
 
         if (budgetAct === "set") {
           if (budget_amount === undefined || budget_amount <= 0) {
@@ -83,9 +106,24 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
               isError: true,
             };
           }
-          budget.limit = budget_amount;
+          if (ceiling !== null && budget_amount > ceiling) {
+            clamped = true;
+            budget.limit = ceiling;
+            outcome = ` | Requested $${budget_amount.toFixed(2)}, clamped to ${ceilingStr}: the operator set BLOCKRUN_BUDGET_LIMIT=${ceilingStr} as this process's ceiling and it cannot be raised from inside the session. ${restartHint}`;
+          } else {
+            budget.limit = budget_amount;
+            outcome = ` | Set to $${budget_amount.toFixed(2)}`;
+          }
         } else if (budgetAct === "clear") {
-          budget.limit = null;
+          if (ceiling !== null) {
+            budget.limit = ceiling;
+            outcome = ` | Restored to the operator ceiling ${ceilingStr} (BLOCKRUN_BUDGET_LIMIT); that cap cannot be removed from inside the session. ${restartHint}`;
+          } else {
+            budget.limit = null;
+            outcome = " | Limit removed";
+          }
+        } else if (ceiling !== null) {
+          outcome = ` | Ceiling: ${ceilingStr} (BLOCKRUN_BUDGET_LIMIT, operator-set; this tool can only lower it)`;
         }
 
         const remaining = budget.limit !== null ? budget.limit - budget.spent : null;
@@ -93,9 +131,11 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
         const remainingStr = remaining !== null ? `$${remaining.toFixed(4)}` : "N/A";
 
         return {
-          content: [{ type: "text", text: `Session Budget: ${limitStr} | Spent: $${budget.spent.toFixed(4)} | Calls: ${budget.calls} | Remaining: ${remainingStr}${budgetAct === "set" ? ` | Set to $${budget_amount?.toFixed(2)}` : ""}${budgetAct === "clear" ? " | Limit removed" : ""}` }],
+          content: [{ type: "text", text: `Session Budget: ${limitStr} | Spent: $${budget.spent.toFixed(4)} | Calls: ${budget.calls} | Remaining: ${remainingStr}${outcome}` }],
           structuredContent: {
             limit: budget.limit,
+            ceiling,
+            clamped,
             spent: budget.spent,
             calls: budget.calls,
             remaining,
@@ -111,20 +151,60 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
         if (!agent_limit || agent_limit <= 0) {
           return { content: [{ type: "text", text: formatError("agent_limit (USD > 0) required for delegate action") }], isError: true };
         }
-        budget.agents.set(agent_id, { limit: agent_limit, spent: 0, calls: 0 });
+        // A child's cap cannot exceed the operator's. The global cap would
+        // stop the spend anyway; what a $50 allocation under a $2 ceiling
+        // gets wrong is the REPORT — an agent told it has $48 remaining plans
+        // for $48.
+        const requested = agent_limit;
+        const limit = ceiling !== null && agent_limit > ceiling ? ceiling : agent_limit;
+        // Carry the LEDGER across a re-delegation (and across a revoke — see
+        // delegateAgent). This used to write `spent: 0` unconditionally, so an
+        // agent that had exhausted its cap could refill itself by calling
+        // delegate again with the same id — and delegate is a tool the model
+        // can call. A limit is a policy the operator may raise or lower at
+        // will; spend already happened and is not the operator's to erase.
+        // The entry is mutated in place rather than replaced: a paid call
+        // that reserved against it before this re-delegation must release
+        // against the same object afterwards, or the estimate is stranded on
+        // the ledger for the rest of the process.
+        const { entry, carried } = delegateAgent(budget, agent_id, limit);
+        const { spent, calls } = entry;
+        // USDC has six decimals, and float subtraction does not: 1 - 0.9 is
+        // 0.09999999999999998, which would surface verbatim in the report and
+        // in structuredContent. Round the DERIVED figure; `spent` stays exact.
+        const remaining = Math.round(Math.max(0, limit - spent) * 1e6) / 1e6;
+        const lines = [`Agent "${agent_id}" allocated $${limit.toFixed(2)} budget.`];
+        if (limit !== requested) {
+          lines.push(
+            `Requested $${requested.toFixed(2)}, clamped to ${ceilingStr}: the operator set BLOCKRUN_BUDGET_LIMIT=${ceilingStr} ` +
+            `as this process's ceiling and no agent can be allocated more than that. ${restartHint}`,
+          );
+        }
+        if (carried) {
+          lines.push(
+            `Carried over from the previous allocation: $${spent.toFixed(4)} spent across ${calls} call${calls === 1 ? "" : "s"} — ` +
+            `$${remaining.toFixed(4)} remains under the new limit.` +
+            (remaining === 0 ? ` This agent is already at its cap; raise agent_limit above $${spent.toFixed(4)} to give it room.` : ""),
+          );
+        }
+        if (budget.limit !== null && limit > budget.limit) {
+          lines.push(`Note: the session cap is $${budget.limit.toFixed(2)}, so this agent cannot actually spend more than that.`);
+        }
+        lines.push(`Pass agent_id: "${agent_id}" in any blockrun_* tool call to track and enforce this limit.`);
         return {
-          content: [{ type: "text", text: `Agent "${agent_id}" allocated $${agent_limit.toFixed(2)} budget.\nPass agent_id: "${agent_id}" in any blockrun_* tool call to track and enforce this limit.` }],
-          structuredContent: { agent_id, limit: agent_limit, spent: 0, calls: 0 },
+          content: [{ type: "text", text: lines.join("\n") }],
+          structuredContent: { agent_id, limit, spent, calls, remaining },
         };
       }
 
-      // Revoke: remove an agent's budget allocation
+      // Revoke: remove an agent's cap. The ledger is kept — revoke + delegate
+      // is two model-callable calls, and letting them reset `spent` would be
+      // the refill the carry-over above exists to prevent.
       if (action === "revoke") {
         if (!agent_id) {
           return { content: [{ type: "text", text: formatError("agent_id required for revoke action") }], isError: true };
         }
-        const existed = budget.agents.has(agent_id);
-        budget.agents.delete(agent_id);
+        const existed = revokeAgent(budget, agent_id);
         return {
           content: [{ type: "text", text: existed ? `Agent "${agent_id}" budget revoked.` : `Agent "${agent_id}" had no budget entry.` }],
           structuredContent: { agent_id, revoked: existed },
@@ -133,7 +213,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
 
       // Report: show spending breakdown by agent
       if (action === "report") {
-        const agentRows: Record<string, { limit: number; spent: number; calls: number; remaining: number }> = {};
+        const agentRows: Record<string, { limit: number | null; spent: number; calls: number; remaining: number | null; revoked?: true }> = {};
         for (const [id, ab] of budget.agents.entries()) {
           agentRows[id] = {
             limit: ab.limit,
@@ -142,18 +222,26 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
             remaining: Math.max(0, ab.limit - ab.spent),
           };
         }
+        // Revoked ids keep their ledger (the next delegate carries it); the
+        // report shows it, because "its spend is kept" is what the
+        // description promises and a tombstone nobody can read is not kept.
+        for (const [id, ab] of listRevokedAgents(budget)) {
+          if (!(id in agentRows)) agentRows[id] = { limit: null, spent: ab.spent, calls: ab.calls, remaining: null, revoked: true };
+        }
         const agentLines = Object.entries(agentRows).map(
-          ([id, ab]) => `  ${id}: $${ab.spent.toFixed(4)}/$${ab.limit.toFixed(2)} (${ab.calls} calls, $${ab.remaining.toFixed(4)} remaining)`
+          ([id, ab]) => ab.revoked
+            ? `  ${id}: $${ab.spent.toFixed(4)} (${ab.calls} calls, revoked — no cap; re-delegating carries this spend)`
+            : `  ${id}: $${ab.spent.toFixed(4)}/$${(ab.limit as number).toFixed(2)} (${ab.calls} calls, $${(ab.remaining as number).toFixed(4)} remaining)`
         );
         const lines = [
-          `Global: $${budget.spent.toFixed(4)} spent${budget.limit ? ` / $${budget.limit.toFixed(2)} limit` : " (no limit)"} — ${budget.calls} calls`,
+          `Global: $${budget.spent.toFixed(4)} spent${budget.limit ? ` / $${budget.limit.toFixed(2)} limit` : " (no limit)"} — ${budget.calls} calls${ceiling !== null ? ` (operator ceiling ${ceilingStr} via BLOCKRUN_BUDGET_LIMIT)` : ""}`,
           ``,
           `Per-agent budgets (${budget.agents.size} active):`,
           ...(agentLines.length > 0 ? agentLines : ["  (none delegated)"]),
         ];
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          structuredContent: { global: { limit: budget.limit, spent: budget.spent, calls: budget.calls }, agents: agentRows },
+          structuredContent: { global: { limit: budget.limit, ceiling, spent: budget.spent, calls: budget.calls }, agents: agentRows },
         };
       }
 
@@ -404,6 +492,12 @@ SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves yo
       const envNote = envIgnored
         ? `\n\n⚠️  SOLANA_WALLET_KEY is set but the active chain is BASE — a stored chain preference outranks it. Run action:"chain" chain:"solana" to switch (that also clears the stored preference).`
         : "";
+      // The description promises "session spending" from status, and tells
+      // the model to check here before an expensive call. The balance alone
+      // answers "can the wallet pay?" — not "am I still inside my cap?", which
+      // is the question an agent on a $1 allotment is actually asking. Same
+      // line and fields as the api-key branch, so a client renders one shape.
+      const session = `$${budget.spent.toFixed(4)}${budget.limit ? ` / $${budget.limit.toFixed(2)} local cap` : ""} — ${budget.calls} calls`;
       const text = `Active chain: ${chain.toUpperCase()}   (switch with action:"chain" chain:"base"|"solana")
 
 ${mark("base")} Base:   ${both.base.address}
@@ -411,6 +505,7 @@ ${mark("base")} Base:   ${both.base.address}
 ${mark("solana")} Solana: ${both.solana.address}
             ${fmt(solBal)}${solBal !== null && solBal < 1 ? "  (low)" : ""}
 
+This session: ${session}
 Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLET on active chain — run action:'setup' for funding instructions" : ""}${envNote}`;
 
       return {
@@ -424,6 +519,9 @@ Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLE
           isNew: info.isNew,
           explorerUrl: info.explorerUrl,
           explorerLabel,
+          sessionSpend: budget.spent,
+          calls: budget.calls,
+          limit: budget.limit,
           wallets: {
             base: { address: both.base.address, balance: baseBal },
             solana: { address: both.solana.address, balance: solBal },

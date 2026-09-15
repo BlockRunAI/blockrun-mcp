@@ -15,11 +15,12 @@
  * that merely *contain* a dot (e.g. `coingecko:ethereum`, `base:0x...`) are
  * legitimate and NOT flagged — only an exact `.`/`..` segment is.
  *
- * Decode once and split on both `/` and `\` first: the WHATWG URL parser (which
- * runs on the concatenated endpoint before fetch) treats `%2e`/`%2E` as `.` and
- * `\` as `/`, so `%2e%2e/...`, `.%2e/...`, and `..\..\...` normalize into
- * traversal too. A single decode matches the parser (it does not double-decode
- * `%252e`); a malformed `%` is left as-is rather than throwing.
+ * Split on both `/` and `\` and decode each segment once: the WHATWG URL parser
+ * (which runs on the concatenated endpoint before fetch) treats `%2e`/`%2E` as
+ * `.` and `\` as `/`, so `%2e%2e/...`, `.%2e/...`, and `..\..\...` normalize
+ * into traversal too. A single decode matches the parser (it does not
+ * double-decode `%252e`); a malformed escape in the route part is REFUSED (see
+ * below for why the old "leave it as-is" fallback was the hole).
  *
  * STRIP TAB/LF/CR FIRST. Per the URL spec the parser *removes* every ASCII tab
  * (U+0009), newline (U+000A) and carriage return (U+000D) from its input before
@@ -50,13 +51,70 @@ export function hasPathTraversal(path: string): boolean {
   // /api/v1/phone/numbers/buy and quoted $5.001 against its $0.0095 reserve,
   // and escapes profile scoping on the way. Each transformation was tested
   // alone and passed; only the composition was broken.
-  const asSent = path.replace(/[\t\n\r]/g, "");
-  let decoded = asSent;
-  try { decoded = decodeURIComponent(asSent); } catch { /* malformed %: check as-sent */ }
-  // Strip again after decoding: an ENCODED %09 decodes to a literal tab, which
-  // the far side does not delete. Over-blocking is the safe direction here.
-  const asParsed = decoded.replace(/[\t\n\r]/g, "");
-  return asParsed.split(/[/\\]/).some((seg) => seg === ".." || seg === ".");
+  //
+  // DECODE PER SEGMENT, NEVER THE WHOLE STRING. Until 0.50.0 the strip above
+  // was followed by ONE decodeURIComponent over the entire caller string, with
+  // a catch that fell back to the raw string. So a single malformed `%`
+  // anywhere — trivially a lone `%` after `?` or `#`, which the parser assigns
+  // to the query/fragment and never decodes — threw, the fallback kept the
+  // literal segment `%2e%2e`, and the equality check below said "not `..`".
+  // The parser, meanwhile, resolves `%2e%2e` / `.%2e` / `%2e.` as dot-segments
+  // NATIVELY (no decode needed) and ends the path at `?`/`#`. Probed on the
+  // pure pipeline 2026-09-13:
+  //
+  //   blockrun_modal({ path: "%2e%2e/phone/numbers/buy#%" })
+  //     -> guard false, priced as a $0.003 modal op, POSTs /v1/phone/numbers/buy ($5.001)
+  //   blockrun_phone({ path: "phone/%2e%2e/modal/sandbox/create#%", body: { gpu: "H100", timeout: 86400 } })
+  //     -> guard false, passes the phone/ namespace pin, reserves $0.012, buys a $192 sandbox
+  //
+  // Same composition class as the tab-in-escape hole above: each transformation
+  // was tested alone and passed. So, in parser order: drop the query/fragment
+  // (the parser never routes on it; a `..` right before the `?` still counts),
+  // split on `/` and `\`, read `%2e` as `.` the way the parser does, then decode
+  // each segment ON ITS OWN so one bad escape cannot blind the check to another
+  // — and a malformed escape in the route part is refused outright rather than
+  // waved through: fetch sends it verbatim, the gateway's router cannot decode
+  // it and 4xxs before payment, so nothing legitimate is lost by refusing.
+  const asSent = cutQueryAndControls(path);
+  return asSent.split(/[/\\]/).some((seg) => {
+    if (isDotSegment(seg)) return true;
+    let decoded: string;
+    try { decoded = decodeURIComponent(seg); } catch { return true; /* malformed escape: refuse */ }
+    // Strip again after decoding: an ENCODED %09 decodes to a literal tab, which
+    // the far side does not delete. Over-blocking is the safe direction here.
+    // Split again too: `phone%2F..%2Fmodal` decodes to phone/../modal, and the
+    // gateway routes on the decoded form.
+    return decoded.replace(/[\t\n\r]/g, "").split(/[/\\]/).some(isDotSegment);
+  });
+}
+
+/**
+ * The parser's own dot-segment test: `.`, `..`, and the percent-encoded forms
+ * `%2e`, `.%2e`, `%2e.`, `%2e%2e` (any case) are all single/double-dot segments
+ * to the WHATWG path parser — no decode step is involved, which is why a guard
+ * that only looked after decodeURIComponent could be blinded.
+ */
+function isDotSegment(seg: string): boolean {
+  const dotted = seg.replace(/%2e/gi, ".");
+  return dotted === ".." || dotted === ".";
+}
+
+/**
+ * The two things fetch's URL parser does to a caller string BEFORE routing is
+ * decided, in the order it does them: delete every tab/LF/CR, then end the path
+ * at the first `?` or `#`. Shared by hasPathTraversal and normalizeClassifyPath
+ * so the two guards cannot drift apart again.
+ *
+ * `[\s\S]` and not `.`: JS `.` never matches LF, CR, U+2028 or U+2029, and `$`
+ * without the `m` flag is end-of-input only — so the old `[?#].*$` cut simply
+ * failed to match when a line terminator followed the `?`, and
+ * `phone/numbers/buy?\n` reached the price table as `phone/numbers/buy?`
+ * ($0.012 unknown) while the parser sent `/v1/phone/numbers/buy` ($5.001).
+ * Cutting after the control strip rather than before it is the same order
+ * discipline as everything else in this file.
+ */
+function cutQueryAndControls(path: string): string {
+  return path.replace(/[\t\n\r]/g, "").replace(/[?#][\s\S]*$/, "");
 }
 
 /**
@@ -100,7 +158,10 @@ export function normalizeClassifyPath(path: string): string {
   // reason as hasPathTraversal above: `phone/numbers/%<TAB>62uy` is sent as
   // `%62uy`, which the gateway decodes to `buy` ($5.001), while a decode-first
   // classifier throws on the split escape and prices it as the $0.012 unknown.
-  const asSent = path.replace(/[?#].*$/, "").replace(/[\t\n\r]/g, "");
+  // The query cut itself lives in cutQueryAndControls, with hasPathTraversal —
+  // its `[?#].*$` predecessor did not cross a line terminator, so
+  // `phone/numbers/buy?\n` kept its `?` and priced as the $0.012 unknown.
+  const asSent = cutQueryAndControls(path);
   let decoded = asSent;
   try { decoded = decodeURIComponent(asSent); } catch { /* malformed %: classify as-sent */ }
   return decoded

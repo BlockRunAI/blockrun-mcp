@@ -12,8 +12,9 @@ import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budge
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost } from "../utils/raw-call.js";
-import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
@@ -62,16 +63,43 @@ export function estimateSearchCost(body: unknown): number {
   return reserve(max);
 }
 
+// The gateway's `sources` enum. X/Twitter was dropped upstream on 2026-07-05
+// (blockrun commit edefa8eb, `z.array(z.enum(["web","news"])).optional()
+// .default(["web"])`) and this tool went on advertising `["web","x","news"]`
+// as its Common shape for two months. Following it to the letter reserved
+// $0.2645, sat through the confirm dialog and came back as `API error: 400 /
+// Invalid request body` — the SDK strips the zod issues, so the field was
+// never named and the agent had no way to self-correct. Unpaid probe
+// 2026-09-13: `["web","x","news"]` 400s on both gateways, `["web","news"]`
+// quotes a 402. Only the NAMES are ours to check; a non-array `sources` is a
+// shape error the gateway reports unpaid.
+const SEARCH_SOURCES = ["web", "news"] as const;
+
+/** Exported for tests. The refusal for a `sources` entry the gateway no longer serves, or null. */
+export function unsupportedSearchSource(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const sources = (body as { sources?: unknown }).sources;
+  if (!Array.isArray(sources)) return null;
+  const bad = sources.filter((s) => !(SEARCH_SOURCES as readonly unknown[]).includes(s));
+  if (bad.length === 0) return null;
+  const xTwitter = bad.some((s) => typeof s === "string" && /^(x|twitter)$/i.test(s));
+  return `body.sources ${JSON.stringify(bad)} is not served: the gateway accepts only ["web","news"] (default ["web"]). ` +
+    (xTwitter
+      ? `The X/Twitter source was removed upstream on 2026-07-05 and there is no live X route in this server — do not retry with "x". `
+      : "") +
+    `Retry with sources: ["web","news"] or omit it. No payment was made.`;
+}
+
 export function registerSearchTool(server: McpServer, budget: BudgetState): void {
   server.registerTool(
     "blockrun_search",
     {
-      description: `Grok Live Search — real-time web + X/Twitter + news with AI-summarized results and citations. PRICED PER SOURCE and expensive by default: $0.025 × max_results, +5% gateway buffer — default max_results=10 settles ~$0.26 (max_results=50 → ~$1.31). Pass a smaller max_results to cap spend; for a plain fact, 3 sources (~$0.08) is usually enough.
+      description: `Grok Live Search — real-time web + news with AI-summarized results and citations. PRICED PER SOURCE and expensive by default: $0.025 × max_results, +5% gateway buffer — default max_results=10 settles ~$0.26 (max_results=50 → ~$1.31). Pass a smaller max_results to cap spend; for a plain fact, 3 sources (~$0.08) is usually enough.
 
 Common shape:
-- body: { query: "...", sources: ["web","x","news"], max_results: 10, from_date: "YYYY-MM-DD", to_date: "YYYY-MM-DD" }
+- body: { query: "...", sources: ["web","news"], max_results: 10, from_date: "YYYY-MM-DD", to_date: "YYYY-MM-DD" }
 
-\`sources\` accepts any subset of ["web","x","news"] (defaults to all three). For tweet-only searches, use ["x"]. \`max_results\` is 1–50 (default 10) and drives the price — pass a smaller value if you want to cap spend.
+\`sources\` accepts any subset of ["web","news"] (default ["web"] — pass both for news coverage). There is no X/Twitter source (removed upstream 2026-07-05; asking for it is refused before payment). \`max_results\` is 1–50 (default 10) and drives the price — pass a smaller value if you want to cap spend.
 
 Full request shape + worked examples in the \`search\` skill (\`skills/search/SKILL.md\`).`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,
@@ -82,11 +110,21 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
       },
     },
     async ({ path, body, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawPost, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         body = coerceBody(body);
         const cleanPath = (path ?? "").replace(/^\/+/, "").replace(/^v1\/search\/?/, "");
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
+        }
+        // Before the reserve and the confirm dialog: a source the gateway no
+        // longer serves would 400 unpaid anyway, but as an opaque "Invalid
+        // request body" — name the field and the live values instead.
+        const badSource = unsupportedSearchSource(body);
+        if (badSource) {
+          return { content: [{ type: "text", text: formatError(badSource) }], isError: true };
         }
         const estimatedCost = estimateSearchCost(body);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
@@ -104,8 +142,9 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: asStructuredContent(result),
@@ -114,7 +153,10 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
           gate.release();
         }
       } catch (err) {
-        return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
+        // Books the reserve only when the payment went out and no ORIGIN answer
+        // came back (utils/path-tool-catch.ts). The search route calls Grok
+        // BEFORE it settles, so its bare 500 is pre-settle and books nothing.
+        return pathToolFailure(err, { budget, agentId: agent_id, sentUsd });
       }
     }
   );

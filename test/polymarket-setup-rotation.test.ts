@@ -134,3 +134,38 @@ test("same signer, same vault: the persisted flag is still trusted (no extra rel
   assert.ok(!saveStateCalls.some((p) => p.deployed === false), "the flag must not be reset for the same vault");
   assert.equal(stateFile.deployed, true);
 });
+
+// --- the size of the grant is stated before the signature, not after ---
+//
+// The prompt said what the approvals are FOR ("settle YOUR signed orders") and
+// never what they are WORTH: the default is an unlimited pUSD allowance to four
+// spenders. POLYMARKET_BOUNDED_APPROVALS could always cap it; nothing surfaced
+// that at the moment of consent.
+
+test("the pending-approval prompt states the allowance amount and how to bound it", async () => {
+  const { getBoundedApprovalsUsd } = await import("../src/utils/polymarket/constants.js");
+  const saved = process.env.POLYMARKET_BOUNDED_APPROVALS;
+  try {
+    delete process.env.POLYMARKET_BOUNDED_APPROVALS;
+    assert.equal(getBoundedApprovalsUsd(), null, "unset means unlimited — the default this text must disclose");
+
+    process.env.POLYMARKET_BOUNDED_APPROVALS = "250";
+    assert.equal(getBoundedApprovalsUsd(), 250);
+
+    // Garbage must not silently read as a bound the prompt would then claim.
+    for (const bad of ["0", "-5", "abc", ""]) {
+      process.env.POLYMARKET_BOUNDED_APPROVALS = bad;
+      assert.equal(getBoundedApprovalsUsd(), null, `"${bad}" must fall back to unlimited`);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.POLYMARKET_BOUNDED_APPROVALS;
+    else process.env.POLYMARKET_BOUNDED_APPROVALS = saved;
+  }
+
+  // The disclosure itself lives in the setup report; pin both branches' wording
+  // so a future edit cannot quietly drop the amount again.
+  const src = await import("node:fs").then(fs => fs.readFileSync(new URL("../src/utils/polymarket/setup.ts", import.meta.url), "utf8"));
+  assert.match(src, /UNLIMITED pUSD allowance/, "the unlimited branch must name it");
+  assert.match(src, /POLYMARKET_BOUNDED_APPROVALS=<usd> to cap/, "and point at the bound");
+  assert.match(src, /capped at \$\$\{boundedApprovalUsd\.toFixed\(2\)\} per spender/, "the bounded branch must state the cap");
+});

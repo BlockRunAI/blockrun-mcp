@@ -6,7 +6,7 @@
 // Usage: node scripts/changelog-section.mjs 0.32.2
 // Exits 1 with nothing on stdout when the version has no section, so the
 // workflow can fall back to a generic note instead of publishing an empty one.
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,7 +40,16 @@ export function extractSection(changelog, version) {
 }
 
 // Only run as a CLI when invoked directly, so the test can import it.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+//
+// realpath BOTH sides. Node realpaths the ESM main entry but leaves
+// process.argv[1] as resolve(cwd, arg), so a checkout reached through a
+// symlink (macOS /tmp -> /private/tmp, npm link, a symlinked working dir) made
+// these differ and this block silently did nothing at exit 0. publish.yml
+// guards on `if ! node scripts/changelog-section.mjs "$VERSION" > notes.md`,
+// so exit 0 with empty stdout skips the generic fallback and publishes a
+// release with an EMPTY body -- the one thing the header above promises
+// cannot happen.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   const version = process.argv[2];
   if (!version) {
     console.error("usage: node scripts/changelog-section.mjs <version>");

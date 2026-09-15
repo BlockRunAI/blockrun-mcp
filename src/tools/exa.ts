@@ -12,8 +12,9 @@ import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { getClient } from "../utils/wallet.js";
-import { type RawClient, rawPost } from "../utils/raw-call.js";
-import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { hasPathTraversal, normalizeClassifyPath } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
@@ -61,6 +62,9 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
       },
     },
     async ({ path, body, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawPost, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         body = coerceBody(body);
         const cleanPath = path.replace(/^\/+/, "").replace(/^v1\/exa\//, "");
@@ -83,8 +87,9 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
           const client = getClient() as unknown as RawClient;
           const endpoint = `/v1/exa/${cleanPath}`;
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: asStructuredContent(result),
@@ -93,7 +98,14 @@ Full request/response shapes + worked research workflows in the \`exa-research\`
           gate.release();
         }
       } catch (err) {
-        return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
+        // Books the reserve when the payment went out and no origin answer came
+        // back (utils/path-tool-catch.ts). replayUpstream: the gateway's exa
+        // route answers an Exa 5xx with "Payment was NOT charged" WITHOUT
+        // releasing the payment nonce, so on Base the SDK's same-header retry
+        // is refused as a replay and surfaces as the SDK's "Payment was
+        // rejected. Check your wallet balance." — the hedge in utils/errors.ts
+        // adds that second reading on Base only.
+        return pathToolFailure(err, { budget, agentId: agent_id, sentUsd, replayUpstream: "Exa" });
       }
     }
   );

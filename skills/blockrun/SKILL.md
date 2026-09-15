@@ -2,7 +2,7 @@
 name: blockrun
 description: |
   Pay-per-call access to AI models, real-time data, media generation and multi-chain RPC over
-  x402 micropayments (USDC on Base or Solana). No API keys, no accounts, no subscriptions.
+  x402 micropayments (USDC on Base or Solana), or a BlockRun account API key. No subscriptions.
   Start here when you have the BlockRun MCP installed and need to know WHICH tool answers a
   question, how the wallet works, or how to make a first call for free.
   TOOLS: blockrun_chat, blockrun_image, blockrun_video, blockrun_music, blockrun_speech,

@@ -2,13 +2,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
-import { formatError, isPaymentRejectionError } from "../utils/errors.js";
+import { formatError, hasLabelledServerStatus } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
-import { pollDeadline, pollTimeoutFor } from "../utils/poll.js";
+import { JobFailedError, pollDeadline, pollTimeoutFor } from "../utils/poll.js";
+import { sendPaid, settleGiveUp, trackPaidRequest } from "../utils/in-flight.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
@@ -28,6 +29,16 @@ const MUSIC_COST = withTxFee(0.1575);
 const MUSIC_POLL_INTERVAL_MS = 5_000;
 export const MUSIC_POLL_BUDGET_MS = 240_000; // 4 min polling budget, measured from submit
 export const MUSIC_POLL_TIMEOUT_MS = 90_000;
+// The paid submit on EVERY rail. The audio route races generation against a
+// 60s inline window (blockrun src/app/api/v1/audio/generations/route.ts,
+// inlineGenTimeoutMs) and only then answers 202 + poll_url; fast tracks come
+// back 200 inline, after the GCS backup. The Solana route does the same and
+// settles the SPL transfer at POST regardless of what the client does next —
+// so its 30s helper default (sized for the always-202 video route) aborted
+// every track slower than 30s after the money had moved, with no job id to
+// reclaim it by (audit round 3, C15). One constant, shared, so the rails
+// cannot drift again; music-cost.test.ts pins it against the auth window.
+export const MUSIC_SUBMIT_TIMEOUT_MS = 95_000;
 // Lifetime of the signed payment authorization, in seconds, counted from the
 // moment createPaymentPayload() signs. The polling budget above is measured
 // from a LATER instant (after submit), so the two are not directly comparable —
@@ -92,10 +103,13 @@ export function registerMusicTool(server: McpServer, budget: BudgetState): void 
       description: `Generate music tracks via BlockRun x402 (async, client-polled).
 
 Generates a full-length ~3 minute MP3 track. Takes 1-3 minutes to complete. The
-tool submits the job and, for slower tracks, polls until it is ready; payment
-settles only when a finished track is returned — if it fails you are not
-charged; if this client gives up while a paid request is still in flight the
-gateway may still settle, and the error text says so.
+tool submits the job and, for slower tracks, polls until it is ready. On Base
+and the account rail payment settles only when a finished track is returned —
+if the job fails you are not charged; if this client gives up while a paid
+request is still in flight the gateway may still settle, and the error text
+says so. On Solana the gateway settles the payment when it ACCEPTS the job, so
+a job that later fails or outlives the poll budget is still charged — the error
+text says so and names the job, which stays claimable for ~48h.
 
 Model: minimax/music-2.5+ ($0.1575/track, up to ~4 min)
 
@@ -123,11 +137,23 @@ Returns a permanent BlockRun-hosted URL.`,
       // flight can still settle server-side. Every give-up also names the job.
       let jobId: string | undefined;
       let quotedUsd: number | null = null;
-      // True while a Base request carrying the payment header — the submit,
-      // which can settle inline, or a poll — has been issued and has not
-      // answered. A poll that rejects leaves it true: that request may still be
-      // settling on the gateway, which does not stop on disconnect.
-      let paidRequestInFlight = false;
+      // Whether a request carrying the payment is outstanding, per call. Armed
+      // the moment a signed request is about to leave — the submit, which can
+      // settle inline, or a poll — never around the unpaid quote; settled on
+      // every answer. utils/in-flight.ts explains why the hand-rolled boolean
+      // this replaces was wrong on every rail.
+      const paid = trackPaidRequest();
+      // Set once a request carrying the payment has left at all (formatError's
+      // afterPayment: a 5xx that came back is an answer, not a verdict).
+      let paidRequestSent = false;
+      // The amount booked once settlement was OBSERVED. Read by the catch: an
+      // error after this point is a real charge with an unusable result, and
+      // the message must say the charge stands rather than "failed" (D13).
+      let bookedUsd: number | null = null;
+      const book = (paidUsd: number | null) => {
+        recordActualSpend(budget, paidUsd, MUSIC_COST, agent_id);
+        bookedUsd = paidUsd ?? MUSIC_COST;
+      };
       try {
         // NO CHAIN GUARD. This tool refused every Solana call until 2026-09-05
         // ("settles on Base only"), which stopped being true well before that:
@@ -161,12 +187,18 @@ Returns a permanent BlockRun-hosted URL.`,
 
         // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
         if (isApiKeyMode()) {
+          // Not wrapped in sendPaid: this rail bills at SUBMIT and the helper
+          // classifies every post-submit exit as a BilledJobError itself.
+          // Arming here would make a not_charged terminal failure whose
+          // upstream text says "timeout" read as "may have settled".
+          paidRequestSent = true;
           const { data, paidUsd, txHash } = await apiKeyAsyncPost("/v1/audio/generations", body, {
             pollBudgetMs: MUSIC_POLL_BUDGET_MS,
             pollIntervalMs: MUSIC_POLL_INTERVAL_MS,
+            submitTimeoutMs: MUSIC_SUBMIT_TIMEOUT_MS,
             pollTimeoutMs: MUSIC_POLL_TIMEOUT_MS,
           });
-          recordActualSpend(budget, paidUsd, MUSIC_COST, agent_id);
+          book(paidUsd);
           const t = (data as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }> }).data?.[0];
           if (!t?.url) throw new Error("Completed response missing track URL");
           // Estimated only when the rail gave us nothing to settle against.
@@ -174,14 +206,52 @@ Returns a permanent BlockRun-hosted URL.`,
         }
 
         // ---- Rail 2: Solana wallet. Same reusable helper blockrun_video uses. ----
+        // sol.blockrun.ai settles this route OPTIMISTICALLY at POST (the 202
+        // says payment_status "settled_optimistic"); the helper reads that
+        // from the wire and turns every later failure into a BilledJobError,
+        // which the catch books as a certain charge.
         if (getChain() === "solana") {
           const { solanaPaidAsyncPost } = await import("../utils/solana-402.js");
-          const { data, paidUsd, txHash } = await solanaPaidAsyncPost("/v1/audio/generations", body, {
+          const { data, paidUsd, txHash, jobId: solJobId } = await solanaPaidAsyncPost("/v1/audio/generations", body, {
             pollBudgetMs: MUSIC_POLL_BUDGET_MS,
+            submitTimeoutMs: MUSIC_SUBMIT_TIMEOUT_MS,
+            // The helper's messages name their caller; without these a music
+            // give-up said "Video generation did not complete" and told the
+            // agent that re-running blockrun_video would charge a new job.
+            what: "Music generation",
+            tool: "blockrun_music",
+            // The helper offers this hook and music passed nothing, so the
+            // guard fired against no one and the SPL transfer was signed for
+            // whatever the quote said (audit round 2).
+            onQuote: (solQuotedUsd, quoteDetails) => {
+              // Captured for the give-up path: on Solana the quote is only ever
+              // seen inside the helper.
+              quotedUsd = solQuotedUsd;
+              assertQuoteNearEstimate(solQuotedUsd, MUSIC_COST, {
+                what: `${model} music`,
+                quotedFor: quoteDetails?.resource?.description,
+                hint: `Retry on Base (blockrun_wallet action:"chain" chain:"base"), or report the quote.`,
+              });
+              if (solQuotedUsd !== null && solQuotedUsd > MUSIC_COST) {
+                gate?.release();
+                gate = reserveBudget(budget, agent_id, solQuotedUsd);
+                if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+              }
+              // Last: nothing can refuse the quote past this line and the
+              // helper signs next (see video.ts for the residual window).
+              paid.arm(solQuotedUsd);
+            },
+            // Exact edges of every signed request — submit and each poll — so
+            // a deadline reached with the last poll answered books nothing and
+            // one reached with a poll in flight books the quote (C32/C37).
+            onPaidRequest: () => { paidRequestSent = true; paid.arm(quotedUsd); },
+            onPaidResponse: () => paid.settle(),
           });
+          paid.settle();
+          jobId = solJobId;
           // Book before validating the payload: a malformed completed body must
           // not make a settled charge vanish from the local ledger.
-          recordActualSpend(budget, paidUsd, MUSIC_COST, agent_id);
+          book(paidUsd);
           const t = (data as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }> }).data?.[0];
           if (!t?.url) throw new Error("Completed Solana response missing track URL");
           return musicResult(t, (data as { model?: string }).model || model, paidUsd ?? MUSIC_COST, txHash, false);
@@ -211,6 +281,23 @@ Returns a permanent BlockRun-hosted URL.`,
         const details = extractPaymentDetails(paymentRequired);
         quotedUsd = amountToUsd(details.amount);
 
+        // WHAT was quoted, before how much. 0.49.0 added this to video (both
+        // rails) and image (Solana) and left the identical hand-rolled flows
+        // here unguarded — so a gateway that quotes a different product, the
+        // way sol.blockrun.ai quoted azure/sora-2 as Seedance at 2.7x, was
+        // signed unseen. Refusing costs nothing: nothing is signed yet.
+        assertQuoteNearEstimate(quotedUsd, MUSIC_COST, {
+          what: `${model} music`,
+          quotedFor: details.resource?.description,
+          hint: `Retry on Solana (blockrun_wallet action:"chain" chain:"solana"), or report the quote.`,
+        });
+        // And the cap, against the REAL price rather than the estimate.
+        if (quotedUsd !== null && quotedUsd > MUSIC_COST) {
+          gate?.release();
+          gate = reserveBudget(budget, agent_id, quotedUsd);
+          if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+        }
+
         // validBefore is counted from HERE, so the authorization deadline has to
         // be stamped here too — not after submit, which can burn up to 95s.
         const signedAt = Date.now();
@@ -236,19 +323,23 @@ Returns a permanent BlockRun-hosted URL.`,
         // Step 2: submit with payment. Fast tracks complete inline (200); slower
         // ones (MiniMax music is 1-3 min) return 202 + poll_url — the server
         // verified the payment but does NOT settle until a completed poll.
-        paidRequestInFlight = true;
-        const submitResp = await fetchWithTimeout(url, {
+        // Armed for the round trip: an inline 200 IS a settlement, so a submit
+        // that leaves with the signature and never answers is not "no charge".
+        paidRequestSent = true;
+        const submitResp = await sendPaid(paid, () => fetchWithTimeout(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "PAYMENT-SIGNATURE": paymentPayload,
           },
           body: JSON.stringify(body),
-        }, 95_000);
-        paidRequestInFlight = false;
+        }, MUSIC_SUBMIT_TIMEOUT_MS), quotedUsd);
 
         if (submitResp.status === 402) {
-          throw new Error("Payment rejected. Check your wallet balance.");
+          // The one answer that IS a funding problem. Named like the SDK's
+          // class so the catch classifies it by type, not by its words.
+          await submitResp.json().catch(() => ({}));
+          throw Object.assign(new Error("Payment rejected. Check your wallet balance."), { name: "PaymentError" });
         }
         if (!submitResp.ok && submitResp.status !== 202) {
           const errBody = await submitResp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
@@ -295,23 +386,21 @@ Returns a permanent BlockRun-hosted URL.`,
             if (pollTimeoutMs === 0) break;
 
             let pollResp: Response;
-            paidRequestInFlight = true;
             try {
-              pollResp = await fetchWithTimeout(pollAbsoluteUrl, {
+              pollResp = await sendPaid(paid, () => fetchWithTimeout(pollAbsoluteUrl, {
                 method: "GET",
                 headers: { "PAYMENT-SIGNATURE": paymentPayload },
-              }, pollTimeoutMs);
+              }, pollTimeoutMs), quotedUsd);
             } catch {
               // Polling is idempotent and settlement has not been observed. A
               // transient disconnect is safe to retry inside the existing
               // deadline (the EIP-3009 nonce is single-use, so re-sending the
               // same header after a lost-in-flight settlement cannot settle
-              // twice), and one reset must not abandon a paid job.
-              // paidRequestInFlight stays true: the request that never answered
-              // may still be settling server-side.
+              // twice), and one reset must not abandon a paid job. The tracker
+              // stays armed: the request that never answered may still be
+              // settling server-side.
               continue;
             }
-            paidRequestInFlight = false;
 
             const pollData = await pollResp.json().catch(() => ({})) as {
               status?: string;
@@ -329,12 +418,15 @@ Returns a permanent BlockRun-hosted URL.`,
             // a real charge the ledger never saw (the fix video.ts got in
             // 0.39.1, which music did not).
             if (lastStatus === "completed" && !spendBooked) {
-              recordActualSpend(budget, quotedUsd, MUSIC_COST, agent_id);
+              book(quotedUsd);
               spendBooked = true;
             }
 
             if (pollResp.status === 202 && (lastStatus === "queued" || lastStatus === "in_progress")) continue;
-            if (lastStatus === "failed") throw new Error(`Upstream generation failed: ${pollData.error || "unknown"}. No payment taken.`);
+            // Typed: the upstream text rides along verbatim and is not a
+            // verdict on the money; the gateway's contract is that a failed
+            // job on this route is not charged.
+            if (lastStatus === "failed") throw new JobFailedError(`Upstream generation failed: ${pollData.error || "unknown"}. No payment taken.`, { jobId });
             if (pollResp.ok && lastStatus === "completed") {
               const t = pollData.data?.[0];
               if (!t?.url) throw new Error("Completed poll missing track URL");
@@ -349,8 +441,8 @@ Returns a permanent BlockRun-hosted URL.`,
             // 504 on poll = transient upstream poll timeout — retry.
           }
           if (!track) {
-            // Whether money moved depends on paidRequestInFlight, which the
-            // catch reads; the message here states only what was observed.
+            // Whether money moved depends on the tracker, which the catch
+            // reads; the message here states only what was observed.
             throw new Error(`Music generation did not complete within ${Math.round(MUSIC_POLL_BUDGET_MS / 1000)}s (last status: ${lastStatus}).`);
           }
         } else {
@@ -359,7 +451,7 @@ Returns a permanent BlockRun-hosted URL.`,
           // before reading the body (speech.ts does the same): a truncated body
           // or a stripped receipt header must not un-record money that moved.
           txHash = submitResp.headers.get("X-Payment-Receipt") || submitResp.headers.get("x-payment-receipt");
-          recordActualSpend(budget, quotedUsd, MUSIC_COST, agent_id);
+          book(quotedUsd);
           spendBooked = true;
           const data = await submitResp.json().catch(() => null) as { data?: Array<{ url: string; duration_seconds?: number; lyrics?: string }>; model?: string } | null;
           track = data?.data?.[0];
@@ -373,64 +465,79 @@ Returns a permanent BlockRun-hosted URL.`,
         const billedUsd = quotedUsd ?? MUSIC_COST;
         // Backstop only — every reachable path here has already booked at the
         // moment settlement was observed.
-        if (!spendBooked) recordActualSpend(budget, quotedUsd, MUSIC_COST, agent_id);
+        if (!spendBooked) book(quotedUsd);
 
         return musicResult(track, modelReturned || model, billedUsd, txHash, false);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        // The account rail bills at SUBMIT. A failure after that — deadline,
-        // poll error, terminal failure — leaves a charge the ledger must carry
-        // (finally releases the reservation, so without this booking the cap
-        // silently rises by the track price), and the one thing the caller must
-        // not do is "try again": that submits and bills a second job. Checked
-        // before isTimeoutError, which matches the deadline message and would
-        // glue retry advice onto a note saying the job was billed.
-        if (err instanceof BilledJobError) {
-          recordActualSpend(budget, err.paidUsd, MUSIC_COST, agent_id);
-          const what = err.billing === "billed"
-            ? `Music generation did not return a track, but the job was billed to the BlockRun account when the gateway accepted it${err.jobId ? ` (job ${err.jobId})` : ""}.`
-            : `Music generation got no answer to its submit, so the job MAY have been accepted and billed to the BlockRun account.`;
+        const reclaim = jobId ? ` The finished job stays claimable on the gateway for ~48h (job ${jobId}); re-running blockrun_music would start and charge a new job.` : "";
+        // Same classification, same order, on all three rails as video.ts —
+        // every step is something the code observed, never a word in the
+        // message (audit round 3, C13/C32/C36/C37).
+        //
+        // 1. Settlement was observed and booked, then the result could not be
+        //    used. The charge stands; do not run the tool again (D13).
+        if (bookedUsd !== null) {
           return {
-            content: [{ type: "text", text: `${what} Check https://user.blockrun.ai/dashboard/activity before doing anything else — a new blockrun_music call starts and bills a second job.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `Music generation completed and the charge stands — $${bookedUsd.toFixed(4)} was settled${jobId ? ` for job ${jobId}` : ""} and is booked against your budget — but the result could not be used: ${errMsg}${reclaim || " Re-running blockrun_music would start and charge a new job."}\nCheck blockrun_wallet action:"report" before doing anything else.` }],
             isError: true,
           };
         }
-        // "Fund your wallet" is the wrong remedy on the account rail — there is
-        // no wallet, and launchTopUp() would try to provision one to send a card
-        // onramp to. apiKeyAsyncPost already returns the correct message for a
-        // 402 there (top up credit at the portal), so let it through untouched.
-        if (isPaymentRejectionError(errMsg) && !isApiKeyMode()) {
+        // 2. Billed at SUBMIT — the account rail always, and the Solana audio
+        //    route (settled optimistically at POST) via the shared helper — and
+        //    the failure came after. The ledger must carry it, and the one
+        //    thing the caller must not do is "try again".
+        if (err instanceof BilledJobError) {
+          recordActualSpend(budget, err.paidUsd, MUSIC_COST, agent_id);
+          const account = isApiKeyMode();
+          const billedTo = account ? "the BlockRun account" : "the Solana wallet";
+          const what = err.billing === "billed"
+            ? `Music generation did not return a track, but the job was billed to ${billedTo} when the gateway accepted it${err.jobId ? ` (job ${err.jobId})` : ""}.`
+            : `Music generation got no answer to its submit, so the job MAY have been accepted and billed to ${billedTo}.`;
+          const where = account ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report" or the wallet's recent transactions`;
+          return {
+            content: [{ type: "text", text: `${what} Check ${where} before doing anything else — a new blockrun_music call starts and bills a second job.\nError: ${errMsg}` }],
+            isError: true,
+          };
+        }
+        // 3. The wallet refused to pay: a 402 on the signed request, by type.
+        //    "Fund your wallet" is the wrong remedy on the account rail — there
+        //    is no wallet — and apiKeyAsyncPost words its own 402, so this is
+        //    never reached there (the helper throws no PaymentError).
+        if (err instanceof Error && err.name === "PaymentError") {
           return {
             content: [{ type: "text", text: `Music generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
             isError: true,
           };
         }
+        // 4. A request carrying the payment was outstanding and no answer was
+        //    observed: an inline submit can settle (200) and the gateway
+        //    settles a completed poll whether or not we are still connected.
+        //    Booked and said out loud; the tracker decides, not the chain.
+        const giveUp = settleGiveUp(paid, err, { budget, agentId: agent_id, estimateUsd: MUSIC_COST, what: "Music generation", note: reclaim.trim() || undefined });
+        if (giveUp) return { content: [{ type: "text", text: giveUp.text }], isError: true };
+        // 5. The gateway said the job failed and nothing was charged — whatever
+        //    the upstream text says (MiniMax's is "aborted due to timeout").
+        if (err instanceof JobFailedError) {
+          return { content: [{ type: "text", text: formatError(`Music generation failed: ${errMsg}`) }], isError: true };
+        }
+        // 6. A labelled 5xx is an answer, not a timeout, however it reads.
+        if (hasLabelledServerStatus(errMsg)) {
+          return { content: [{ type: "text", text: formatError(`Music generation failed: ${errMsg}`, { afterPayment: paidRequestSent }) + reclaim }], isError: true };
+        }
+        // 7. A timeout with nothing outstanding: the unpaid quote probe, a
+        //    signing failure, or a deadline after the last poll was answered —
+        //    settlement needs a signed request the gateway answers as settled,
+        //    and the last one was not.
         if (isTimeoutError(err)) {
-          const reclaim = jobId ? ` The finished job stays claimable on the gateway for ~48h (job ${jobId}); re-running blockrun_music would start and charge a new job.` : "";
-          if (paidRequestInFlight) {
-            // A submit can settle inline (200) and the gateway settles a
-            // completed poll regardless of whether we are still connected, so
-            // a paid request that never answered is not "no charge". Book the
-            // quote conservatively — over-counting a slow request that settled
-            // nothing is the documented trade-off; under-counting a real charge
-            // is not.
-            recordActualSpend(budget, quotedUsd, MUSIC_COST, agent_id);
-            return {
-              content: [{ type: "text", text: `Music generation timed out while a request carrying the payment signature was still in flight, so the gateway MAY have settled the charge after this client gave up — check blockrun_wallet action:"report" or the wallet's recent transactions before retrying.${reclaim}\nError: ${errMsg}` }],
-              isError: true,
-            };
-          }
-          // On Base, settlement happens only on a response the gateway sends
-          // as settled; the last one was not, so nothing settled. The Solana
-          // helper describes its own money state in errMsg.
-          const base = !isApiKeyMode() && getChain() !== "solana";
+          const base = !isApiKeyMode();
           return {
             content: [{ type: "text", text: `Music generation timed out.${base ? ` No payment was taken.${reclaim}` : ""}\nError: ${errMsg}` }],
             isError: true,
           };
         }
         return {
-          content: [{ type: "text", text: formatError(`Music generation failed: ${errMsg}`) }],
+          content: [{ type: "text", text: formatError(`Music generation failed: ${errMsg}`, { afterPayment: paidRequestSent }) }],
           isError: true,
         };
       } finally {
