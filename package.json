@@ -20,7 +20,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --experimental-test-module-mocks --test test/*.test.ts",
+    "test": "tsx --experimental-test-module-mocks --import ./test/_setup.ts --test test/*.test.ts",
     "prepublishOnly": "npm run build",
     "verify:prices": "tsx scripts/verify-prices.ts",
     "measure:schema": "node scripts/measure-tool-schema.mjs",
