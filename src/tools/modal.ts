@@ -13,7 +13,8 @@ import { withTxFee } from "../utils/tx-fee.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
 import { baseOnlyMessage, buildClientWithTimeout } from "../utils/wallet.js";
 import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
-import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { normalizeClassifyPath } from "../utils/path-safety.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
@@ -35,8 +36,9 @@ import type { BudgetState } from "../types.js";
 //   { timeout: 300 }                -> charged   $0.0120
 //
 // A $1 agent cap could settle $192 of non-refundable spend. Keep these tables in
-// step with the gateway's; an unknown gpu string falls back to the CPU rate there,
-// so it does here too.
+// step with the gateway's. The gateway's CreateRequestSchema 400s BEFORE payment
+// on any gpu string outside its five tiers (case-sensitive: "h100" is refused),
+// so the CPU rate is only ever what an ABSENT gpu pays.
 const MODAL_FLAT_RATE_MAX_SECONDS = 300;
 const MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS = 300;
 const MODAL_CREATE_PRICE_USD = 0.01;
@@ -56,6 +58,47 @@ const MODAL_CPU_HOURLY_PRICE_USD = 0.1;
 const MODAL_GPU_HOURLY_PRICE_USD = new Map<string, number>([
   ["T4", 1.5], ["L4", 2.0], ["A10G", 2.5], ["A100", 4.0], ["H100", 8.0],
 ]);
+const MODAL_GPU_TIERS = [...MODAL_GPU_HOURLY_PRICE_USD.keys()];
+
+// NORMALISE THE BODY THE WAY THE GATEWAY DOES, BEFORE PRICING AND BEFORE
+// SENDING. The gateway's CreateRequestSchema declares `gpu: z.string().trim()`
+// and runs its allow-list check and getModalCreatePricing on the TRIMMED value,
+// so `" H100 "`, `"H100\n"` and an NBSP-padded `"H100"` are all accepted and
+// billed as H100. This estimator looked the raw string up in the Map, missed,
+// and priced the CPU rate — the path-classification bug below, on the body
+// field that carries the largest single charge this server can make. Unpaid
+// 402 probe 2026-09-13: `{ timeout: 3600, gpu: " H100 " }` quotes 8001000
+// micro ($8.001) against a $0.102 reserve; at 24h that is $192.002 against
+// $2.402 — past a $5 cap, past the confirm dialog, and booked as $2.40 on the
+// Base ledger. Trim (String.prototype.trim, same as zod's) and keep the case:
+// the gateway is case-sensitive and 400s "h100" before payment, so folding
+// case would turn a free refusal into a paid H100.
+//
+// The trimmed body is also what gets SENT, so the reserve and the wire agree by
+// construction rather than by a second normalisation on the far side.
+export function normalizeModalCreateBody(body: unknown): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const o = body as Record<string, unknown>;
+  if (typeof o.gpu !== "string") return body;
+  return { ...o, gpu: o.gpu.trim() };
+}
+
+/**
+ * The refusal for a gpu the gateway would 400 before payment — every string
+ * outside the five tiers, including lowercase and the empty string. Returns
+ * null when the body is fine. Refusing here costs nothing (the gateway would
+ * refuse the same call unpaid) and saves the round-trip; naming the tiers
+ * matters because "Unsupported GPU type" alone sends a model guessing again.
+ * Only sandbox/create carries a priced gpu, so callers gate on the route.
+ */
+export function unsupportedModalGpu(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const gpu = (body as { gpu?: unknown }).gpu;
+  if (gpu === undefined || gpu === null) return null;
+  if (typeof gpu === "string" && MODAL_GPU_HOURLY_PRICE_USD.has(gpu)) return null;
+  return `Unsupported GPU type ${JSON.stringify(gpu)}. Allowed: ${MODAL_GPU_TIERS.join(", ")} (case-sensitive), or omit gpu for a CPU sandbox. ` +
+    `The gateway rejects any other value before payment, so nothing would have been served. No payment was made.`;
+}
 
 /** Exported for tests. Returns what x402 will CHARGE (base + the flat tx fee). */
 export function estimateModalCost(path: string, body?: unknown): number {
@@ -71,7 +114,10 @@ export function estimateModalCost(path: string, body?: unknown): number {
   if (!normalizeClassifyPath(path).includes("sandbox/create")) return withTxFee(MODAL_OPERATION_PRICE_USD);
 
   const o = body && typeof body === "object" ? (body as { gpu?: unknown; timeout?: unknown }) : {};
-  const gpu = typeof o.gpu === "string" ? o.gpu : undefined;
+  // Trimmed, as the gateway prices it — see normalizeModalCreateBody. The
+  // handler sends a body normalised the same way; this is belt-and-braces so
+  // the estimator is right even for a caller that skipped the handler.
+  const gpu = typeof o.gpu === "string" ? o.gpu.trim() : undefined;
   // A non-numeric/absent timeout defaults to 300s upstream — the flat tier.
   const seconds =
     typeof o.timeout === "number" && Number.isFinite(o.timeout) && o.timeout > 0
@@ -79,8 +125,11 @@ export function estimateModalCost(path: string, body?: unknown): number {
       : MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS;
 
   if (seconds > MODAL_FLAT_RATE_MAX_SECONDS) {
-    // An unknown or empty gpu falls back to the CPU rate — same as the gateway's
-    // `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`.
+    // An absent gpu is the CPU rate — same as the gateway's
+    // `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`, which runs on
+    // the trimmed value. An unknown gpu also falls back here, but only so the
+    // estimator stays total: the handler refuses it before the reserve
+    // (unsupportedModalGpu), and the gateway 400s it before payment.
     const hourly = gpu !== undefined ? MODAL_GPU_HOURLY_PRICE_USD.get(gpu) : undefined;
     return withTxFee((hourly ?? MODAL_CPU_HOURLY_PRICE_USD) * (seconds / 3600));
   }
@@ -132,6 +181,9 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
       },
     },
     async ({ path, body, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawPost, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         // sol.blockrun.ai returns 503 for every /v1/modal/* route — the sandbox
         // backend is Base-only. Probed 2026-08-07 by the dual-chain sweep in
@@ -150,7 +202,18 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
         if (hasPathTraversal(cleanPath)) {
           return { content: [{ type: "text", text: formatError(`Invalid path '${path}'.`) }], isError: true };
         }
-        // Pass the body: sandbox/create is priced from gpu + timeout, not the path.
+        // sandbox/create is priced from gpu + timeout. Normalise the gpu the way
+        // the gateway will (trim) BEFORE estimating and BEFORE sending, so the
+        // reserve, the confirm dialog, the ledger and the wire all describe the
+        // same tier — and refuse a tier the gateway would 400 unpaid, so the
+        // message names the five that exist instead of "API error: 400".
+        if (normalizeClassifyPath(cleanPath).includes("sandbox/create")) {
+          body = normalizeModalCreateBody(body);
+          const badGpu = unsupportedModalGpu(body);
+          if (badGpu) {
+            return { content: [{ type: "text", text: formatError(badGpu) }], isError: true };
+          }
+        }
         const estimatedCost = estimateModalCost(cleanPath, body);
         const gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
@@ -169,6 +232,7 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
           // lengthening the 60s timeout the shared getClient() gives every other tool.
           const client = buildClientWithTimeout(modalTimeoutMs(body)) as unknown as RawClient;
           const endpoint = `/v1/modal/${cleanPath}`;
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});
           recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
@@ -179,7 +243,11 @@ Full pricing tables + GPU details in the \`modal\` skill.`,
           gate.release();
         }
       } catch (err) {
-        return { content: [{ type: "text", text: formatError(extractErrorMessage(err)) }], isError: true };
+        // Books the reserve when the payment went out and no origin answer came
+        // back (utils/path-tool-catch.ts) — for sandbox/create that is the full
+        // reserve, which is the point: a create that timed out client-side may
+        // well be running and billed.
+        return pathToolFailure(err, { budget, agentId: agent_id, sentUsd });
       }
     }
   );
