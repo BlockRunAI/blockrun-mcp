@@ -189,3 +189,80 @@ test("real @anthropic-ai/sdk: create() refuses 33k max_tokens non-streaming, str
   assert.equal(thinking?.signature, "sig123", "the signature survives streaming assembly");
   assert.equal((final.content.find((b) => b.type === "text") as Anthropic.TextBlock).text, "42");
 });
+
+// Round 4b (CH-1): the Anthropic SDK wraps a never-connected fetch TWO levels
+// deep — APIConnectionError("Connection error.") → cause TypeError("fetch
+// failed") → cause { code: "ENOTFOUND" } — and the classifier read cause.code
+// one level down, found nothing, and the "fetch failed" text tripped the
+// transport regex: a DNS failure booked the reconstructed quote and forbade a
+// retry, for a request that never left the machine. The compat path saw the
+// raw undici error and said "none". Rail parity, in the direction that
+// over-books.
+test("a never-connected fetch nested two causes deep (the Anthropic SDK's shape) books nothing", async () => {
+  for (const code of ["ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN"]) {
+    const budget = newBudget();
+    const undici = Object.assign(new TypeError("fetch failed"), { cause: { code } });
+    const client = fakeClient({ connect: false, result: sdkError(undefined, "Connection error.", undici) });
+    const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
+    assert.equal(res.isError, true);
+    assert.equal(budget.spent, 0, `${code}: booked ${budget.spent}`);
+    assert.doesNotMatch(res.content[0].text, /may have|second charge|charge stands/i, `${code}: ${res.content[0].text}`);
+  }
+});
+
+// Round 4b (CH-3): an idle stall BEFORE the stream connected is not a settled
+// call. The 2xx never arrived, so the SDK's counter recorded nothing; the
+// payment may have been sent (Base: the paid retry runs long) — a maybe, the
+// same verdict the compat Solana path gives its own "before the first frame"
+// stall — not "the charge stands".
+test("an idle stall before the stream connects is a MAYBE, not a settled charge", async () => {
+  const budget = newBudget();
+  const client = {
+    messages: {
+      create: async () => { throw new Error("must stream"); },
+      stream: () => {
+        const self = { on() { return self; }, off() { return self; }, abort() {}, response: null, finalMessage: () => new Promise(() => {}) };
+        return self;
+      },
+    },
+  };
+  const { handleAnthropicNative: h } = await import("../src/tools/chat-anthropic.js");
+  const res = await h({ client: client as never, ...baseArgs, budget, idleTimeoutMs: 20 } as never);
+  assert.equal(res.isError, true);
+  assert.ok(budget.spent > 0, "the payment may have gone out — booked as a precaution");
+  assert.match(res.content[0].text, /cannot tell whether|MAY have been billed/i, res.content[0].text);
+  assert.doesNotMatch(res.content[0].text, /charge stands/, res.content[0].text);
+});
+
+// Round 4b (CH-5): the compat assembler hands back the partial text that
+// streamed before a post-acceptance failure (the caller paid for those
+// tokens); the native path discarded it.
+test("partial text streamed before a post-acceptance failure rides along on the native path", async () => {
+  const budget = newBudget();
+  const client = {
+    messages: {
+      create: async () => { throw new Error("must stream"); },
+      stream: () => {
+        const listeners: Record<string, Array<(...a: unknown[]) => void>> = {};
+        const self = {
+          on(ev: string, cb: (...a: unknown[]) => void) { (listeners[ev] ??= []).push(cb); return self; },
+          off() { return self; }, abort() {}, response: null,
+          finalMessage: async () => {
+            await Promise.resolve();
+            for (const cb of listeners.connect ?? []) cb();
+            for (const cb of listeners.text ?? []) cb("The first half of the ans", "The first half of the ans");
+            for (const cb of listeners.streamEvent ?? []) cb({ type: "content_block_delta" });
+            throw Object.assign(new Error("Connection error."), { cause: new Error("terminated") });
+          },
+        };
+        return self;
+      },
+    },
+  };
+  const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /charge stands/);
+  assert.match(res.content[0].text, /Partial response received before the failure/);
+  assert.match(res.content[0].text, /The first half of the ans/);
+  assert.equal((res.structuredContent as { partial_response?: string } | undefined)?.partial_response, "The first half of the ans");
+});
