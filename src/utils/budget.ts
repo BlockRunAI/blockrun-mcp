@@ -1,5 +1,5 @@
 // src/utils/budget.ts
-import type { BudgetState } from "../types.js";
+import type { AgentBudget, BudgetState } from "../types.js";
 
 const EPSILON = 1e-9;
 
@@ -180,6 +180,17 @@ export function amountToUsd(amount: unknown): number | null {
  * real on-chain spend: the old path recorded a flat estimate, so a frontier
  * chat or high-resolution video could settle for orders of magnitude more than
  * was booked, silently blowing past the cap.
+ *
+ * ZERO IS A SETTLED FIGURE, NOT AN ABSENT ONE. The account rail writes
+ * `x-blockrun-cost-usd: 0.000000` for a charge that really resolved to nothing,
+ * and parseCostHeader preserves it as 0 for exactly this call; the wallet rails
+ * report a genuinely free model as a 0 counter delta. Until audit round 3 this
+ * treated 0 like null (`actualUsd > 0`) and booked the ESTIMATE for it, so a
+ * free-priced account call was recorded at the reserve and a $0.05 delegate
+ * was cut off after seven of them having spent nothing (D33/D40). "Unknown" is
+ * spelled null/undefined; NaN and a negative are estimator bugs and fall back
+ * the same way. Callers that cannot tell free from unknown must pass null —
+ * amountToUsd already does, mapping a missing or "0" x402 amount to null.
  */
 export function recordActualSpend(
   budget: BudgetState,
@@ -188,7 +199,7 @@ export function recordActualSpend(
   agentId?: string,
 ): void {
   const cost =
-    typeof actualUsd === "number" && Number.isFinite(actualUsd) && actualUsd > 0
+    typeof actualUsd === "number" && Number.isFinite(actualUsd) && actualUsd >= 0
       ? actualUsd
       : Math.max(0, estimate);
   recordSpending(budget, cost, agentId);
@@ -204,6 +215,115 @@ export function parseBudgetLimitEnv(raw: string | undefined): number | null {
   if (!raw) return null;
   const n = Number(raw.trim().replace(/^\$/, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// ---------------------------------------------------------------------------
+// The operator's ceiling — the one number the session cannot raise
+// ---------------------------------------------------------------------------
+//
+// BLOCKRUN_BUDGET_LIMIT is documented as the hard stop for clients that cannot
+// render the spend dialog: on those, it is the ONLY guard. It used to seed the
+// same mutable `budget.limit` that blockrun_wallet action:"budget" writes, so
+// the agent it constrained could clear it (limit = null) or raise it (any
+// positive number) in one free, non-destructive, un-elicited tool call — and
+// the denial text it received at the cap pointed it at exactly that tool.
+//
+// The env value is therefore remembered separately, keyed by the ledger it
+// seeded, and the wallet tool treats it as a ceiling: `set` may lower the
+// session cap or raise it back UP TO the ceiling, `clear` restores the ceiling
+// rather than lifting it, and a delegated per-agent cap is clamped to it.
+// Without the env the ceiling is null and the tool keeps its old contract —
+// set/clear are then the operator's own session controls, and there is no one
+// to protect them from.
+//
+// A WeakMap rather than a field on BudgetState: the ledger is constructed in
+// one place and handed by reference to every tool, and the ceiling is a fact
+// about how that ledger was BORN, not state the tools update. Sealing happens
+// at wallet-tool registration, which initializeMcpServer runs right after the
+// env seed — so "the limit the server started with" and "the env value" are
+// the same number, and a cap the model sets later in the session is not
+// mistaken for one.
+const operatorCeilings = new WeakMap<BudgetState, number | null>();
+
+/**
+ * Record the current `budget.limit` as the operator ceiling for this ledger,
+ * once. Later calls return the sealed value and do not re-read `limit`, so a
+ * session `set` cannot become the ceiling by being sealed after the fact.
+ */
+export function sealOperatorCeiling(budget: BudgetState): number | null {
+  if (!operatorCeilings.has(budget)) operatorCeilings.set(budget, budget.limit);
+  return operatorCeilings.get(budget) ?? null;
+}
+
+/** The sealed operator ceiling, or null when the server started unlimited. */
+export function getOperatorCeiling(budget: BudgetState): number | null {
+  return operatorCeilings.get(budget) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent allocations — the ledger follows the agent_id, not the Map entry
+// ---------------------------------------------------------------------------
+//
+// Two bugs shared a root: `delegate` REPLACED the Map entry and `revoke`
+// DELETED it, while the reservation closure in reserveBudget() holds the entry
+// object it was given. So a re-delegation two minutes into a $1 render carried
+// `spent` into a new object, the actual was booked on the new one and the
+// estimate released from the old — the agent was over-counted by the estimate
+// for the rest of the process. And revoke + delegate (two calls, both the
+// model's to make) started the id at zero, which is the refill 0.50.0 said it
+// had closed.
+//
+// So the entry object is never replaced: re-delegation mutates its `limit`,
+// and revoke moves the SAME object into a per-ledger tombstone map that the
+// next delegate of that id restores. A reservation taken before either
+// operation releases against the object that is live after it. Spend made
+// while an id is revoked is tracked globally only, as before — a revoked id
+// has no per-agent cap, and a cap it does not have cannot be charged against.
+const revokedLedgers = new WeakMap<BudgetState, Map<string, AgentBudget>>();
+
+/**
+ * Allocate (or re-allocate) a per-agent cap. Returns the live entry and
+ * whether it carried a prior ledger — from a live entry or a revoked one — so
+ * the caller can say so. Never resets `spent`/`calls`.
+ */
+export function delegateAgent(
+  budget: BudgetState,
+  agentId: string,
+  limit: number,
+): { entry: AgentBudget; carried: boolean } {
+  const live = budget.agents.get(agentId);
+  if (live) {
+    live.limit = limit;
+    return { entry: live, carried: true };
+  }
+  const tombs = revokedLedgers.get(budget);
+  const revoked = tombs?.get(agentId);
+  if (revoked) {
+    tombs!.delete(agentId);
+    revoked.limit = limit;
+    budget.agents.set(agentId, revoked);
+    return { entry: revoked, carried: true };
+  }
+  const entry: AgentBudget = { limit, spent: 0, calls: 0 };
+  budget.agents.set(agentId, entry);
+  return { entry, carried: false };
+}
+
+/**
+ * Remove an agent's cap. Its ledger is kept (tombstoned) so a later delegate
+ * of the same id carries the spend. Returns false when there was no entry.
+ */
+export function revokeAgent(budget: BudgetState, agentId: string): boolean {
+  const live = budget.agents.get(agentId);
+  if (!live) return false;
+  budget.agents.delete(agentId);
+  let tombs = revokedLedgers.get(budget);
+  if (!tombs) {
+    tombs = new Map();
+    revokedLedgers.set(budget, tombs);
+  }
+  tombs.set(agentId, live);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

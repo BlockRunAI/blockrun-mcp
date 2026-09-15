@@ -99,7 +99,8 @@ test("a wallet call reports paidUsd null, never 0 — 0 would book a real charge
   assert.equal(got.paidUsd, null);
   assert.equal(posted.paidUsd, null);
   // The distinction recordActualSpend depends on: null means "unknown, use the
-  // estimate", 0 means "this was free".
+  // estimate", 0 means "this was free" and is BOOKED as $0 — budget.test.ts
+  // pins that side of the contract ("books an explicit settled ZERO as zero").
   assert.notEqual(got.paidUsd, 0);
 });
 
