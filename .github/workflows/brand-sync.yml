@@ -61,6 +61,14 @@ jobs:
           # keeping and a dated name per run only accumulates orphans.
           BR="brand-sync"
           git push -f origin "HEAD:${BR}"
+          # The PR a human opened last time is still open: the force-push just
+          # refreshed it, and `gh pr create` would fail with "already exists" —
+          # which the fallback below used to report as "PR creation is
+          # unavailable, open it by hand" (round 4b).
+          if EXISTING=$(gh pr list --head "$BR" --state open --json number -q '.[0].number') && [ -n "$EXISTING" ]; then
+            echo "refreshed the open PR #${EXISTING} from ${BR}"
+            exit 0
+          fi
           if gh pr create --head "$BR" \
               --title "chore: sync brand numbers" \
               --body "Automated marker refresh from https://blockrun.ai/brand/numbers.json (scripts/sync-brand-numbers.mjs --refresh). Opened as a PR because the default branch is protected."; then

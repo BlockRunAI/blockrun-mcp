@@ -21,6 +21,12 @@ concurrency:
 
 jobs:
   publish:
+    # main only, for workflow_dispatch as much as for push: the dispatch form
+    # accepts any ref, and every guard below is ref-agnostic (the version gate
+    # only ORDERS pkg against npm), so a write collaborator could have shipped
+    # a feature branch as `latest` — tagged at an unmerged commit that never
+    # passed the required check (round 4b).
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write          # required to push the tag + create the GitHub release
@@ -67,8 +73,16 @@ jobs:
           #
           # With the parameter the endpoint returns exactly one row, the real
           # latest, isLatest=true.
-          REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp&version=latest" \
-                | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const a=j.servers||[];console.log(a[0]?.server?.version||'none')}catch{console.log('none')}})")
+          # Same none/unknown split as npm above: "none" only when the registry
+          # ANSWERED and lists no server; a non-2xx (curl -f), an unparsable
+          # body or a missing `servers` field is "unknown" and stops the job
+          # before mcp-publisher runs blind (round 4b).
+          if REG_BODY=$(curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp&version=latest"); then
+            REG=$(printf '%s' "$REG_BODY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);if(!Array.isArray(j.servers)){console.log('unknown');return}console.log(j.servers[0]?.server?.version||'none')}catch{console.log('unknown')}})")
+          else
+            echo "::warning::registry lookup failed (non-2xx or network) — treating as unknown"
+            REG=unknown
+          fi
           # The tag is the third target, and it needs its OWN guard computed
           # here, not derived from the npm one. Ask the remote: actions/checkout
           # fetches no tags, so a local lookup always says "missing".
@@ -90,6 +104,12 @@ jobs:
       # every `npx -y @blockrun/mcp@latest` user. Plain Node: runs before npm ci.
       - name: Refuse a version below npm latest
         run: node scripts/version-gate.mjs "${{ steps.v.outputs.pkg }}" "${{ steps.v.outputs.npm }}"
+
+      - name: Refuse to run against an unknown registry state
+        if: steps.v.outputs.reg == 'unknown'
+        run: |
+          echo "::error::the MCP registry could not be read, so whether ${{ steps.v.outputs.pkg }} is already there is unknown — re-run the job"
+          exit 1
 
       - name: Install dependencies
         run: npm ci
@@ -178,10 +198,16 @@ jobs:
       # whose build or npm publish FAILED does not tag either: `!cancelled()`
       # lets this step run past a registry failure, and the outcome checks
       # keep it from running past a real one.
+      #
+      # NOT gated on `tag_missing`: once `git push origin $TAG` has succeeded,
+      # a re-run after `gh release create` failed resolves tag_missing=false
+      # and would skip the step — the in-step `gh release view` guard is what
+      # makes THAT re-run safe, and it can only run if the step runs. The
+      # `git ls-remote` guard inside keeps a stale HEAD from being re-tagged;
+      # tag_missing is still computed in Resolve for the log (round 4b).
       - name: Tag + GitHub release
         if: >-
           !cancelled()
-          && steps.v.outputs.tag_missing == 'true'
           && steps.build.outcome == 'success'
           && (steps.npm.outcome == 'success' || steps.v.outputs.pkg == steps.v.outputs.npm)
         env:
