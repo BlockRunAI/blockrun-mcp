@@ -515,11 +515,18 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
-            const r = await sendPaid(paid, () => apiKeyAsyncPost(endpoint, body, {
+            //
+            // Not wrapped in sendPaid, like video and music: this rail bills
+            // at SUBMIT and the helper classifies every post-submit exit
+            // itself — BilledJobError for a billed or unknown outcome,
+            // JobFailedError for a not_charged one. Arming the tracker around
+            // it made a not_charged failure whose upstream text said
+            // "timeout" read as "MAY have settled" (audit round 4).
+            const r = await apiKeyAsyncPost(endpoint, body, {
               pollBudgetMs: ACCOUNT_IMAGE_POLL_BUDGET_MS,
               pollIntervalMs: ACCOUNT_IMAGE_POLL_INTERVAL_MS,
               pollTimeoutMs: ACCOUNT_IMAGE_POLL_TIMEOUT_MS,
-            }));
+            });
             // paidUsd null is "the rail settled nothing at response time", NOT
             // "free" — fall back to the estimate and say so, never book $0.
             billedUsd = r.paidUsd ?? estimatedCost;
@@ -538,7 +545,15 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
+            // The quote, captured for the tracker: armed at the helper's
+            // onPaidRequest (the line before the signed POST leaves) and
+            // settled at onPaidResponse (any status), so the unpaid probe
+            // and the signing step are outside the window and an answered
+            // 5xx is never a maybe.
+            let solQuotedUsd: number | null = null;
             const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS, {
+              onPaidRequest: () => paid.arm(solQuotedUsd),
+              onPaidResponse: () => paid.settle(),
               // The Solana gateway prices carry a markup over the Base estimate
               // table, so the real quote can exceed what we reserved. Re-reserve
               // the true amount against the cap BEFORE the transfer is signed
@@ -557,13 +572,9 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
                   // has been signed at this point.
                   throw new BudgetExceededError(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
                 }
-                // Last: onQuote is the helper's final hook before it signs and
-                // sends. Arming HERE — not before the call — keeps the unpaid
-                // probe outside the window, so a probe timeout books nothing.
-                paid.arm(quotedUsd);
+                solQuotedUsd = quotedUsd;
               },
             });
-            paid.settle();
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
             billedUsd = paidUsd ?? estimatedCost;
             costIsEstimate = paidUsd === null;

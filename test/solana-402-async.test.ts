@@ -615,6 +615,69 @@ test("settled-at-submit: a completed poll with no receipt header still returns t
   assert.equal(r.txHash, undefined);
 });
 
+// Audit round 4: every escape from the post-submit loop, not just the ones
+// the round-3 branch enumerated. The reactive re-sign path could still throw
+// a plain "No charge was made" (a mutated challenge, a quote it could not
+// parse) or a bare RPC error from the re-sign, and music then reported
+// "failed"/"No payment was taken" with nothing booked — for a track the
+// gateway had settled at POST.
+test("settled-at-submit: every post-submit escape is a BilledJobError — re-sign refusals and RPC faults included", async () => {
+  // A re-priced challenge on a settled route: the refusal stands, but the
+  // charge does too.
+  script = [quote, optimistic202, settleFail402, () => { details = { ...baseDetails(), amount: "900000" }; return challenge402(); }];
+  await assert.rejects(solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, music), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `expected BilledJobError, got ${err.name}: ${err.message}`);
+    assert.match(err.message, /changed the payment amount/);
+    assert.match(err.message, /charge stands/);
+    assert.doesNotMatch(err.message, /no charge was made/i);
+    assert.equal((err as InstanceType<typeof BilledJobError>).paidUsd, 0.5);
+    return true;
+  });
+  details = baseDetails(); requests = []; signaturesCreated = 0;
+
+  // A fresh challenge with no readable requirements.
+  script = [quote, optimistic202, settleFail402, () => ({ status: 402, ok: false, headers: headers(), json: async () => ({}) })];
+  await assert.rejects(solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, music), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `expected BilledJobError, got ${err.name}: ${err.message}`);
+    assert.match(err.message, /no payment requirements/);
+    assert.match(err.message, /charge stands/);
+    assert.doesNotMatch(err.message, /no charge was made/i);
+    return true;
+  });
+  requests = []; signaturesCreated = 0;
+
+  // The re-sign itself fails (RPC) on the reactive path.
+  script = [quote, optimistic202, settleFail402, challenge402];
+  signCalls = 0; failSignOnCall = 2;
+  await assert.rejects(solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, music), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `expected BilledJobError, got ${err.name}: ${err.message}`);
+    assert.match(err.message, /rpc blip/);
+    assert.match(err.message, /charge stands/);
+    return true;
+  });
+  requests = []; signaturesCreated = 0; failSignOnCall = null; signCalls = 0;
+
+  // Re-sign exhaustion on a settled route is a charge, not "no charge".
+  script = [quote, optimistic202, settleFail402, challenge402, settleFail402];
+  await assert.rejects(solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, { ...music, maxReactiveResigns: 1 }), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `expected BilledJobError, got ${err.name}: ${err.message}`);
+    assert.match(err.message, /did not go through after 1 re-signs/);
+    assert.match(err.message, /charge stands/);
+    assert.doesNotMatch(err.message, /no charge was made/i);
+    return true;
+  });
+});
+
+test("payment-on-completion routes keep their plain refusals: a re-priced challenge is not a billed job", async () => {
+  script = [quote, () => submit(), settleFail402, () => { details = { ...baseDetails(), amount: "900000" }; return challenge402(); }];
+  await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, fast), (err: Error) => {
+    assert.equal(err instanceof BilledJobError, false);
+    assert.match(err.message, /No charge was made/);
+    return true;
+  });
+  details = baseDetails();
+});
+
 test("payment-on-completion routes (video) are untouched by the settled-at-submit branch", async () => {
   script = [quote, () => submit(), () => poll("failed", { error: "boom", payment_status: "not_charged" })];
   await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, fast), (err: Error) => {

@@ -221,3 +221,46 @@ test("an out-of-credit 402 on this rail is a funding answer, not a maybe, and bo
   assert.doesNotMatch(text, /MAY have/);
   assert.equal(budget.spent, 0);
 });
+
+// Audit round 4: the account rail is NOT wrapped in the in-flight tracker —
+// apiKeyAsyncPost classifies every post-submit exit itself (BilledJobError,
+// JobFailedError), and arming the tracker around it made a not_charged
+// terminal failure whose upstream text said "timeout" read as "MAY have
+// settled": budget.spent += a whole render and the text told the user to
+// check the dashboard before retrying a job the gateway had just said cost
+// nothing. video and music documented exactly this; image did the opposite.
+test("a not_charged terminal failure whose text says 'timeout' books nothing and says so", async () => {
+  script = [
+    queued202,
+    poll(200, { status: "failed", error: "The operation was aborted due to timeout", payment_status: "not_charged", note: "No payment was taken." }),
+  ];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "google/nano-banana", size: "1024x1024" });
+  assert.equal(res.isError, true);
+  assert.equal(budget.spent, 0, "the gateway said not_charged — nothing is booked");
+  assert.match(res.content[0].text, /No payment was taken/);
+  assert.doesNotMatch(res.content[0].text, /MAY have/);
+  assert.doesNotMatch(res.content[0].text, /booked against your budget/);
+});
+
+test("a 504 that ARRIVED on submit is an answer, not a maybe — nothing is booked as 'may have settled'", async () => {
+  script = [poll(504, { error: "Upstream timeout" })];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "google/nano-banana", size: "1024x1024" });
+  assert.equal(res.isError, true);
+  assert.equal(budget.spent, 0);
+  // formatError's hedge for a 5xx after the key was sent is text only, by
+  // design; what must not happen is the in-flight BOOKING sentence.
+  assert.doesNotMatch(res.content[0].text, /booked against your budget/);
+  assert.doesNotMatch(res.content[0].text, /got no answer/);
+});
+
+test("a 202 whose body carries no poll_url is a BILLED job, not a plain error", async () => {
+  script = [() => ({ status: 202, ok: true, headers: headers({ "x-blockrun-cost-usd": "0.052500" }), json: async () => ({ id: "img_43", status: "queued" }) })];
+  const { call, budget } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "google/nano-banana", size: "1024x1024" });
+  assert.equal(res.isError, true);
+  assert.equal(budget.spent, 0.0525, "the submit was accepted and billed; the ledger carries it");
+  assert.match(res.content[0].text, /img_43/);
+  assert.match(res.content[0].text, /bills a second render/);
+});

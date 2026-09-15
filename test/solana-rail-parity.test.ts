@@ -76,12 +76,19 @@ mock.module("../src/utils/solana-402.js", {
       return { data: happyBody, paidUsd: quoteUsd, txHash: "sol-tx" };
     },
     // The synchronous helper (speech, image, realface): same hook, and on a
-    // give-up the paid POST itself aborts after the transfer was signed.
-    solanaPaidPost: async (_e: string, _b: unknown, _t: number, opts?: { onQuote?: (usd: number | null, d?: unknown) => void }) => {
+    // give-up the paid POST itself aborts after the transfer was signed. The
+    // real helper fires onPaidRequest the line before the signed POST leaves
+    // and onPaidResponse when any answer arrives — the seam the tools arm
+    // and settle their tracker at since audit round 4 — so this stand-in
+    // honours the same contract: a give-up is a request that LEFT and never
+    // answered.
+    solanaPaidPost: async (_e: string, _b: unknown, _t: number, opts?: { onQuote?: (usd: number | null, d?: unknown) => void; onPaidRequest?: () => void; onPaidResponse?: () => void }) => {
       onQuoteWasFunction = typeof opts?.onQuote === "function";
       opts?.onQuote?.(quoteUsd, { resource: { description: "Seedance 2.0 Pro video generation (5s)" } });
+      opts?.onPaidRequest?.();
       paidPostsIssued++;
       if (giveUp) throw abortError();
+      opts?.onPaidResponse?.();
       return { data: happyBody, paidUsd: quoteUsd, txHash: "sol-tx" };
     },
   },

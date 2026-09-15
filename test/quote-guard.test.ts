@@ -87,6 +87,6 @@ test("image.ts actually calls the guard on the rail that has a quote", async () 
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/tools/image.ts", import.meta.url), "utf8");
   // The Solana helper is the only image rail that surfaces a 402 amount.
-  assert.match(src, /solanaPaidPost\([\s\S]{0,400}onQuote:/, "image must guard the Solana quote");
+  assert.match(src, /solanaPaidPost\([\s\S]{0,900}onQuote:/, "image must guard the Solana quote");
   assert.match(src, /assertQuoteNearEstimate\(/, "image must call the shared guard");
 });

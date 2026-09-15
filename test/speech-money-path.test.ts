@@ -207,3 +207,27 @@ test("account rail: the settled cost header is booked, and its absence books the
   assert.ok(near(noHeader.budget.spent, ESTIMATE), `spent=${noHeader.budget.spent}`);
   assert.match(text(res2), /estimated/);
 });
+
+// Audit round 4 (the D13 shape video and music got in round 3, and speech did
+// not): settlement was OBSERVED and booked, then the result could not be used
+// — the body aborted mid-read, or carried no URL. The charge stands; the
+// message has to say so and must not invite a second payment. Before this a
+// Base body abort after the booking returned "Speech generation failed" plus
+// formatError's "temporary API issue, try again" — for a call that had paid.
+for (const [name, setup, expectUsd] of [
+  ["Base", () => { rail = "base"; quotedAmount = "55000"; script = [resp402, () => ({ status: 200, ok: true, headers: headers({ "x-payment-receipt": "0xtx" }), json: async () => { throw new Error("aborted"); } })]; }, 0.055],
+  ["Solana", () => { rail = "solana"; quotedAmount = "56000"; script = [resp402, () => ({ status: 200, ok: true, headers: headers({ "x-payment-receipt": "sol-tx" }), json: async () => ({ model: "elevenlabs/flash-v2.5", data: [{}] }) })]; }, 0.056],
+  ["account", () => { rail = "account"; script = [() => ({ status: 200, ok: true, headers: headers({ "x-blockrun-cost-usd": "0.052500" }), json: async () => ({ data: [] }) })]; }, 0.0525],
+] as const) {
+  test(`${name}: a settled 200 whose body is unusable says the charge stands, once, and does not invite a retry`, async () => {
+    setup();
+    const { call, budget } = makeHarness();
+    const res = await call(SPEAK);
+    const t = text(res);
+    assert.equal(res.isError, true, t);
+    assert.ok(near(budget.spent, expectUsd), `${name}: spent=${budget.spent}, expected ${expectUsd}`);
+    assert.match(t, /charge stands/, `${name}: ${t}`);
+    assert.match(t, /action:"report"|dashboard\/activity/, `${name}: must say where to check — ${t}`);
+    assert.doesNotMatch(t, /try again|No payment was taken|out of funds/i, `${name}: ${t}`);
+  });
+}

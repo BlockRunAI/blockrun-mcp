@@ -131,3 +131,51 @@ test("a non-positive or unreadable quote is not captured — the reserve stays t
   assert.equal(out?.bookedUsd, 0.012);
   assert.ok(Math.abs(b.spent - 0.012) < 1e-9);
 });
+
+// Audit round 4: a helper wrapped in sendPaid can inspect the response and
+// THROW inside send(), so settle() is never reached although an answer
+// arrived — apiKeyPost's AccountApiError (a 4xx/5xx with its body text),
+// apiKeyAsyncPost's not_charged terminal failure, a Solana helper's
+// "API error N:". The tracker cannot know, so the verdict has to: an error
+// that carries a status, a typed job verdict, or the gateway's own uncharged
+// marker is an ANSWER, whatever its prose says. Before this, a not_charged
+// poll whose upstream text read "The operation was aborted due to timeout"
+// booked a whole render on image's account rail and said "MAY have gone
+// through" — the C13 shape, on the rail whose tools had just documented
+// why it must not happen.
+test("an error carrying a status is an answer, not a maybe — even when its body says 'timeout'", async () => {
+  const paid = trackPaidRequest();
+  const answered = Object.assign(new Error('API error 504: {"error":"Upstream timeout"}'), { statusCode: 504, name: "AccountApiError" });
+  await assert.rejects(sendPaid(paid, async () => { throw answered; }, 0.05));
+  assert.equal(paid.outstanding, true, "sendPaid itself cannot know a response arrived");
+  assert.equal(paid.mayHaveSettled(answered), false, "a statusCode proves the gateway answered");
+  const sdkShape = Object.assign(new Error("API error after payment: 502"), { statusCode: 502 });
+  assert.equal(paid.mayHaveSettled(sdkShape), false);
+  const anthropicShape = Object.assign(new Error("Request timed out"), { status: 408 });
+  assert.equal(paid.mayHaveSettled(anthropicShape), false);
+});
+
+test("the gateway's own not-charged verdict outranks a timeout in the upstream text", async () => {
+  const paid = trackPaidRequest();
+  const notCharged = new Error("Upstream generation failed: The operation was aborted due to timeout. No payment was taken.");
+  await assert.rejects(sendPaid(paid, async () => { throw notCharged; }, 0.05));
+  assert.equal(paid.mayHaveSettled(notCharged), false);
+  assert.equal(settleGiveUp(paid, notCharged, { budget: budget(), estimateUsd: 0.05, what: "Image generation" }), null);
+});
+
+test("a typed job verdict (JobFailedError / BilledJobError) is never a maybe", async () => {
+  const paid = trackPaidRequest();
+  for (const name of ["JobFailedError", "BilledJobError"]) {
+    const typed = Object.assign(new Error("Upstream generation failed: aborted due to timeout"), { name });
+    await assert.rejects(sendPaid(paid, async () => { throw typed; }, 0.05));
+    assert.equal(paid.mayHaveSettled(typed), false, name);
+  }
+});
+
+test("a bare abort while armed is still a maybe — the answered-error rule does not widen into 'never'", async () => {
+  const paid = trackPaidRequest();
+  await assert.rejects(sendPaid(paid, async () => { throw abortError(); }, 0.05));
+  assert.equal(paid.mayHaveSettled(abortError()), true);
+  assert.equal(paid.mayHaveSettled(fetchFailed("ECONNRESET")), true);
+  assert.equal(paid.mayHaveSettled(fetchFailed("ECONNREFUSED")), false);
+});

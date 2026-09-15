@@ -156,6 +156,19 @@ Returns a hosted audio URL — download immediately if you need to keep the file
       // only by a response — 0.50.0's boolean was cleared in a `.finally` the
       // catch could never observe, and set on Base alone (audit round 3).
       const paid = trackPaidRequest();
+      // The amount booked once settlement was OBSERVED, on any rail. Read by
+      // the catch: an error after this point — a body that aborted mid-read,
+      // a payload with no URL — is a real charge with an unusable result, and
+      // the message has to say the charge stands rather than "failed" with
+      // retry advice that pays again (the D13 shape video and music got in
+      // round 3; speech did not — audit round 4).
+      let bookedUsd: number | null = null;
+      // Hoisted with it: the receipt, so the charge-stands sentence can name it.
+      let txHash: string | null | undefined;
+      const book = (paidUsd: number | null, reserve: number) => {
+        recordActualSpend(budget, paidUsd, reserve, agent_id);
+        bookedUsd = paidUsd ?? reserve;
+      };
       try {
         if (action === "voices") {
           return await listVoices();
@@ -224,7 +237,6 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         let data: { data?: Array<{ url: string; format?: string; characters?: number; duration_seconds?: number }>; model?: string };
         let billedUsd: number;
-        let txHash: string | null | undefined;
         let estimated = false;
 
         // ---- Rail 1: account API key. One POST, no quote, no signature. ----
@@ -238,11 +250,19 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           billedUsd = r.paidUsd ?? cost;
           estimated = r.paidUsd === null;
           txHash = r.txHash;
-          recordActualSpend(budget, r.paidUsd, cost, agent_id);
+          book(r.paidUsd, cost);
         } else if (getChain() === "solana") {
           // ---- Rail 2: Solana wallet, via the shared manual-x402 helper. ----
           const { solanaPaidPost } = await import("../utils/solana-402.js");
+          // The quote, captured for the tracker: armed at the helper's
+          // onPaidRequest (the line before the signed POST leaves) and settled
+          // at onPaidResponse (any status), so the unpaid probe and the
+          // signing step are outside the window and an answered 5xx is never
+          // a maybe.
+          let solQuotedUsd: number | null = null;
           const r = await solanaPaidPost(path, body, SPEECH_TIMEOUT, {
+            onPaidRequest: () => paid.arm(solQuotedUsd),
+            onPaidResponse: () => paid.settle(),
             onQuote: (quotedUsd, quoteDetails) => {
               // WHAT was quoted, before how much. 350df27 put this guard on the
               // Base rail only, so a substituted or repriced product on
@@ -261,16 +281,13 @@ Returns a hosted audio URL — download immediately if you need to keep the file
                 gate = reserveBudget(budget, agent_id, quotedUsd);
                 if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
               }
-              // Last: onQuote is the helper's final hook before it signs and
-              // sends, so this is where the paid request becomes outstanding.
-              paid.arm(quotedUsd);
+              solQuotedUsd = quotedUsd;
             },
           });
-          paid.settle();
           data = r.data as typeof data;
           billedUsd = r.paidUsd ?? cost;
           txHash = r.txHash;
-          recordActualSpend(budget, r.paidUsd, cost, agent_id);
+          book(r.paidUsd, cost);
         } else {
         // ---- Rail 3: Base wallet. The original EIP-3009 402 flow. ----
         const endpoint = `${getApiBase()}${path}`;
@@ -355,7 +372,7 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         // the charge NOW, before reading the body — a truncated/unreadable body
         // below must not un-record a spend that already left the wallet.
         txHash = resp.headers.get("X-Payment-Receipt") || resp.headers.get("x-payment-receipt");
-        recordActualSpend(budget, billedUsd, cost, agent_id);
+        book(billedUsd, cost);
 
         data = await resp.json() as {
           data: Array<{ url: string; format?: string; characters?: number; duration_seconds?: number }>;
@@ -396,6 +413,19 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        // 1. Settlement was observed and booked, then the result could not be
+        //    used. The charge stands; the one thing not to do is run the
+        //    tool again.
+        // (Widened: TS narrows a closure-assigned `let` to never here.)
+        const booked = bookedUsd as number | null;
+        if (booked !== null) {
+          const where = isApiKeyMode() ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report"`;
+          return {
+            content: [{ type: "text", text: `Speech generation settled and the charge stands — $${booked.toFixed(4)} was charged${txHash ? ` (tx ${txHash})` : ""} and is booked against your budget — but the result could not be used: ${errMsg}
+Check ${where} before doing anything else; re-running blockrun_speech would charge again.` }],
+            isError: true,
+          };
+        }
         // Account mode has no wallet to fund — apiKeyPost already returns the
         // right remedy (top up credit at the portal), so don't overwrite it.
         if (isPaymentRejectionError(errMsg) && !isApiKeyMode()) {

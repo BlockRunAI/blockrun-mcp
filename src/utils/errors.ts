@@ -1,5 +1,7 @@
 import { getChain } from "./wallet.js";
 import { isApiKeyMode } from "./auth.js";
+import { isExplicitlyUncharged } from "./uncharged.js";
+export { isExplicitlyUncharged };
 
 // Literals rather than PORTAL_CREDITS_URL / PORTAL_ACTIVITY_URL: every handler
 // test that mocks utils/auth.js lists its named exports by hand, and the one
@@ -96,26 +98,6 @@ export function hasLabelledServerStatus(message: string): boolean {
   // payment: 502", where the word before the number is "payment", not "error".
   return new RegExp(`(?:status(?:\\s*code)?|http|error|payment)\\s*[:=]?\\s*5[0-9]{2}${STATUS_END}`).test(m) ||
     /(?:^|[^0-9.])5[0-9]{2}:?\s+(?:internal|server error|bad gateway|service unavailable|gateway time)/.test(m);
-}
-
-/**
- * Every way this repo and the gateway say "the money did not move". The list
- * is longer than it looks because the sentence is written in five places by
- * four authors: the gateway ("payment NOT charged"), the SDK, the manual-402
- * tools ("No payment taken", "no charge was made"), and the quote guard
- * ("Refusing to sign it — no charge was made"). Exported because the path
- * tools' catch (utils/path-tool-catch.ts) must refuse to BOOK a charge the
- * gateway says it never took, using the same evidence this formatter uses to
- * refuse to SAY it.
- */
-export function isExplicitlyUncharged(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("no payment was made") ||
-    m.includes("no payment was taken") ||
-    m.includes("no payment taken") ||
-    m.includes("no charge was made") ||
-    m.includes("nothing was charged") ||
-    m.includes("not charged");
 }
 
 /**

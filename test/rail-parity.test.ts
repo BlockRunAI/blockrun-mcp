@@ -355,6 +355,46 @@ for (const row of ROWS) {
 }
 
 // ---------------------------------------------------------------------------
+// Cell 2b: an ANSWER is never a maybe, whatever its words. The paid request
+// comes back 5xx with a body that says "timeout" — the gateway answered, so
+// nothing is outstanding and nothing is booked as "may have settled". Audit
+// round 4: image's account rail and speech's account rail wrapped a helper
+// that inspects the response and THROWS on it inside sendPaid, so settle()
+// was never reached and the catch classified the error by its prose —
+// isTimeoutError's substring match — and booked a whole render for a
+// not_charged job whose upstream text read "aborted due to timeout". The
+// verdict now comes off the error (a status, a typed job verdict, the
+// gateway's uncharged marker), never its message.
+// ---------------------------------------------------------------------------
+const answered5xx = () => ({ status: 504, ok: false, headers: headers(), json: async () => ({ error: "The operation was aborted due to timeout" }) });
+for (const row of ROWS) {
+  // video's Solana submit answering 5xx is the helper's own "poll error" shape
+  // after a 202; a 5xx ON the submit is covered the same way in the helper.
+  test(`${row.name} on Solana: the paid request is ANSWERED 5xx with "timeout" in the body → nothing booked as a maybe`, async () => {
+    rail = "solana";
+    quotedAmount = micro(row.reserve);
+    script = [resp402, answered5xx];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    const t = text(res);
+    assert.equal(res.isError, true, `${row.name}/solana: ${t}`);
+    assert.doesNotMatch(t, /got no answer|booked against your budget as a precaution|has been booked against your budget/, `${row.name}/solana: an answered 5xx is not "no answer" — got: ${t}`);
+    assert.equal(budget.spent, 0, `${row.name}/solana: an answered 5xx books nothing — spent=${budget.spent}`);
+  });
+
+  test(`${row.name} on the account rail: the Bearer request is ANSWERED 5xx with "timeout" in the body → nothing booked as a maybe`, async () => {
+    rail = "account";
+    script = [answered5xx];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    const t = text(res);
+    assert.equal(res.isError, true, `${row.name}/account: ${t}`);
+    assert.doesNotMatch(t, /got no answer|booked against your budget/, `${row.name}/account: an answered 5xx is not "no answer" — got: ${t}`);
+    assert.equal(budget.spent, 0, `${row.name}/account: an answered 5xx books nothing — spent=${budget.spent}`);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Cell 3: a Solana quote far above the estimate is refused BEFORE signing, on
 // every manual-402 tool — the 2026-09-08 shape (sol.blockrun.ai quoting a
 // different product at 2.7x). The first matrix checked this per FILE, and

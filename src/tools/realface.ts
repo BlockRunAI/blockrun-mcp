@@ -81,27 +81,32 @@ async function payAndPostJson(
   if (getChain() === "solana") {
     const { solanaPaidPost } = await import("../utils/solana-402.js");
     try {
+      // The quote, captured for the tracker: armed at the helper's
+      // onPaidRequest (the line before the signed POST leaves) and settled at
+      // onPaidResponse (any status), so a refused quote (thrown from onQuote,
+      // nothing signed) never books and an answered 5xx is never a maybe.
+      let solQuotedUsd: number | null = null;
       const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000, {
+        onPaidRequest: () => paid.arm(solQuotedUsd),
+        onPaidResponse: () => paid.settle(),
         onQuote: (quotedUsd, quoteDetails) => {
           onQuote?.(quotedUsd, quoteDetails?.resource?.description);
-          // The helper's last hook before it signs and sends: from here the
-          // paid request is outstanding. Armed AFTER the caller's guard so a
-          // refused quote (thrown above, nothing signed) never books.
-          paid.arm(quotedUsd);
+          solQuotedUsd = quotedUsd;
         },
       });
-      paid.settle();
       return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
     } catch (err) {
-      // solanaPaidPost throws on a non-2xx terminal response. Recover the status
-      // when it is one the callers branch on, so a 422 still reads as "rejected,
-      // not charged" rather than as an opaque failure.
-      const msg = err instanceof Error ? err.message : String(err);
-      const m = /\b(4\d\d|5\d\d)\b/.exec(msg);
-      if (m) {
-        // A status means a response arrived: the gateway said what it did.
-        paid.settle();
-        return { status: Number(m[1]), data: { error: msg }, settledUsd: null };
+      // solanaPaidPost throws on a non-2xx answer to the PAID request with the
+      // status on the error (`statusCode`, the SDK's shape): a 422 still reads
+      // as "rejected, not charged" and a 402 as the wallet's refusal. Read
+      // the property, never the prose — the regex this replaces turned any
+      // quote fault whose text mentioned "402" (an unreadable amount, a
+      // missing feePayer) into "out of funds" plus a top-up page, for a call
+      // where nothing had been signed (audit round 4).
+      const status = (err as { statusCode?: unknown } | undefined)?.statusCode;
+      if (typeof status === "number") {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { status, data: { error: msg }, settledUsd: null };
       }
       throw err;
     }

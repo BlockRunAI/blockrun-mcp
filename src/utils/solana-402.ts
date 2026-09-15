@@ -119,7 +119,14 @@ function paidRequestRefused(reason: string | undefined, where: string, tail = ""
         `No charge was made.${tail ? ` ${tail}` : ""}`,
     );
   }
-  return new PaymentError(`Payment was rejected${reason ? ` (${reason})` : ""}. Check your Solana USDC balance.${tail ? ` ${tail}` : ""}`);
+  // statusCode 402: the refusal is an ANSWER (realface maps it to its 402
+  // branch; the in-flight tracker reads it as settled), and only this one —
+  // the authorization fault above carries no status on purpose, so nothing
+  // downstream can read it as a funding problem.
+  return Object.assign(
+    new PaymentError(`Payment was rejected${reason ? ` (${reason})` : ""}. Check your Solana USDC balance.${tail ? ` ${tail}` : ""}`),
+    { statusCode: 402 },
+  );
 }
 
 /**
@@ -363,7 +370,13 @@ export async function solanaPaidPost(
   }
   if (!resp.ok) {
     const errBody = await resp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
-    throw new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`);
+    // `statusCode`, the SDK's APIError shape: the gateway ANSWERED, and a
+    // catch that reads the status off the error (realface's callers, the
+    // in-flight tracker's isAnswer) must not have to find it in the prose —
+    // realface's regex read any "402" in a quote fault's text as "out of
+    // funds", and a 504 whose body said "timeout" read as a dropped request
+    // (audit round 4).
+    throw Object.assign(new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`), { statusCode: resp.status });
   }
 
   // The 200 IS the settlement — the money moved before this body was read. An
@@ -421,8 +434,10 @@ export async function solanaPaidAsyncPost(
   if (quoteResp.status !== 402) {
     // Same as solanaPaidPost and the Base video path: a paid route that does
     // not quote is a fault, not a free render. Returning the body as a
-    // completed clip with paidUsd 0 made recordActualSpend book the full
-    // ESTIMATE (0 is "unknown" there) for a call that charged nothing.
+    // completed clip used to book it as a call — and since round 3 an
+    // explicit 0 is a SETTLED zero to recordActualSpend, so it would now be
+    // booked as a free success for a route that served no quote at all.
+    // Either way the honest answer is a throw.
     const data = await quoteResp.json().catch(() => ({})) as Record<string, unknown>;
     throw new Error(`Unexpected status ${quoteResp.status} (the endpoint did not return a quote): ${JSON.stringify(data)}`);
   }
@@ -509,6 +524,25 @@ export async function solanaPaidAsyncPost(
   // this client gives up; one that was answered cannot.
   let paidPollInFlight = false;
 
+  // EVERY escape from here on goes through one classifier, not only the ones
+  // enumerated below. Round 3 typed the failed-job, poll-error and deadline
+  // exits and left the reactive re-sign path throwing plain Errors — a
+  // mutated challenge ("No charge was made"), a challenge with no readable
+  // requirements, an RPC fault inside the re-sign — so on a settled-at-submit
+  // route music reported "failed"/"No payment was taken" with nothing booked
+  // for a track the gateway had settled at POST (audit round 4). On that
+  // model no throw after the submit can un-settle the transfer, so any throw
+  // that is not already a BilledJobError becomes one; payment-on-completion
+  // routes keep their plain refusals untouched.
+  try {
+    return await pollUntilDone();
+  } catch (err) {
+    if (!settledAtSubmit || err instanceof BilledJobError) throw err;
+    const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No charge was made\.?/i, "");
+    throw giveUp(`${what} could not be collected: ${msg}`, "");
+  }
+
+  async function pollUntilDone(): Promise<SolanaPaidPostResult> {
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
@@ -648,4 +682,5 @@ export async function solanaPaidAsyncPost(
       ? `${deadlineCore} No settlement receipt was observed by this client, but a poll carrying the payment signature was still in flight at the deadline and can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`
       : `${deadlineCore} The last poll was answered and no request carrying the payment signature is outstanding, so no charge was made. ${reclaimNote}`,
   );
+  }
 }
