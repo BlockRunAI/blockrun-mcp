@@ -3,15 +3,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
 import { PaymentError } from "@blockrun/llm";
-import { isTimeoutError } from "../utils/http.js";
-import { BudgetExceededError, assertQuoteNearEstimate, reReserveIfHigher, recordActualSpend, recordSpending, reserveBudget } from "../utils/budget.js";
+import { BudgetExceededError, assertQuoteNearEstimate, reReserveIfHigher, recordActualSpend, reserveBudget } from "../utils/budget.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
+import { sendPaid, settleGiveUp, trackPaidRequest } from "../utils/in-flight.js";
 import type { BudgetState } from "../types.js";
 import { getChain, getImageClient } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
-import { apiKeyPost } from "../utils/api-key-call.js";
+import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
+import { ledgerFallback } from "../utils/raw-call.js";
 import { solanaPaidPost } from "../utils/solana-402.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
@@ -231,6 +232,12 @@ function isLargerThanBase(model: string, size: string): boolean {
 // micro SHORT. So: do NOT use withTxFee() here (it rounds), and do not
 // pre-round the buffer. Same shape as the gateway's
 // usdToMicroUsdc(addTransactionFee(price)).
+//
+// This is the RESERVE. The gateway's fee has since dropped to $0.001 (the
+// same 402 probe quoted cogview-4 at $0.016750 on 2026-09-13) and has
+// flip-flopped before, so the gate keeps reserving the higher figure on
+// purpose (utils/tx-fee.ts) and the Base ledger books ledgerFallback() of it —
+// the two are different numbers by design; see the Base branch below.
 const IMAGE_QUOTE_BUFFER = 1.05;
 const IMAGE_TX_FEE_USD = 0.002;
 
@@ -248,6 +255,15 @@ export function estimateCost(model: string, size: string): number {
 // paid request's timeout must cover the whole render — not just a round-trip.
 const SOLANA_IMAGE_TIMEOUT_MS = 300_000;
 
+// The account rail answers inline when the render fits its 30s window and
+// otherwise 202 + poll_url (the vendored gateway route; "the account is
+// charged on completion"). gpt-image-2 — this tool's default — routinely takes
+// longer, and every edit does. The same total as the Solana render timeout,
+// in 5s polls that the account helper clamps to what is left of it.
+const ACCOUNT_IMAGE_POLL_BUDGET_MS = SOLANA_IMAGE_TIMEOUT_MS;
+const ACCOUNT_IMAGE_POLL_INTERVAL_MS = 5_000;
+const ACCOUNT_IMAGE_POLL_TIMEOUT_MS = 60_000;
+
 /**
  * The image2image routes (both gateways) ship the provider's output verbatim —
  * google/nano-banana returns a multi-megabyte base64 data URI, not a hosted
@@ -258,6 +274,9 @@ export async function materializeImageUrl(imageUrl: string): Promise<string> {
   if (!imageUrl.startsWith("data:image/")) return imageUrl;
   const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/is.exec(imageUrl);
   if (!m) return imageUrl; // undecodable — better to return the paid result verbatim than drop it
+  // The subtype is upstream output, but the capture above admits no `/` or
+  // `\`, so it can only ever be the last segment of a name INSIDE tmpdir —
+  // see test/image-materialize.test.ts, which pins that property.
   const ext = m[1].toLowerCase() === "jpeg" ? "jpg" : m[1].toLowerCase();
   const file = join(tmpdir(), `blockrun-image-${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`);
   await writeFile(file, Buffer.from(m[2], "base64"));
@@ -265,14 +284,19 @@ export async function materializeImageUrl(imageUrl: string): Promise<string> {
 }
 
 /**
- * Endpoint + body for a Solana-gateway image call. The gateway's zod schema
- * takes quality as low|medium|high|auto (the OpenAI latency knob), not this
- * tool's standard|hd — map hd→high and drop standard (the gateway default)
- * so the request isn't rejected with a 400.
+ * Endpoint + body for a gateway image call on the Solana and account rails.
+ *
+ * No `quality` key, ever. Since gateway commit 397e5d1c (live 2026-09-11)
+ * /v1/images/generations refuses ANY quality value for every model this tool
+ * lists — only the two gpt-image-2.5 ids accept one — and it refuses it
+ * BEFORE the 402, so the old standard|hd knob could only ever turn a paid call
+ * into a 400 (unpaid probes 2026-09-13: quality "standard", "hd" and "high"
+ * all 400 on Base and the account rail; the same body without it quotes). The
+ * parameter is gone from the schema for the same reason.
  */
 export function buildSolanaImageRequest(
   action: "generate" | "edit",
-  params: { model: string; prompt: string; size: string; quality?: string; image?: string | string[]; mask?: string },
+  params: { model: string; prompt: string; size: string; image?: string | string[]; mask?: string },
 ): { endpoint: string; body: Record<string, unknown> } {
   if (action === "edit") {
     return {
@@ -294,7 +318,6 @@ export function buildSolanaImageRequest(
       prompt: params.prompt,
       size: params.size,
       n: 1,
-      ...(params.quality === "hd" ? { quality: "high" } : {}),
     },
   };
 }
@@ -334,17 +357,26 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           .describe("Source image(s) for edit action: a base64 data URI, an http(s) URL, or a local file path (auto-encoded to a data URI) — or an array of 2–4 to fuse into one render (e.g. subject + layout guide, or reference + brand logo). openai/* accepts up to 4, google/* up to 3; a mask cannot be combined with multiple images."),
         mask: z.string().optional().describe("Inpaint mask for edit action (openai/gpt-image-* only): a base64 data URI, http(s) URL, or local file path. Transparent areas of the mask are regenerated. Cannot be combined with multiple source images."),
         size: z.string().optional().default("1024x1024").describe("Image size. Common values: 1024x1024 (all models), 1536x1024 / 1024x1536 (gpt-image-*), 2048x2048 / 4096x4096 (nano-banana-pro), 1280x720 / 2048x1024 / 2048x2048 / 2848x1600 (seedream-5-pro)"),
-        quality: z.enum(["standard", "hd"]).optional().default("standard"),
+        // There is deliberately NO `quality` parameter. The gateway refuses
+        // every quality value for every model listed here, before the 402
+        // (see buildSolanaImageRequest), so the old standard|hd knob — and its
+        // zod default of "standard", which the Base SDK path forwarded
+        // verbatim — 400'd every Base generate. A caller that still sends one
+        // has it stripped by the schema and nothing here reads it.
         inline: z.boolean().optional().describe("Return a small inline image preview (thumbnail) the client can render in-conversation, in addition to the full-resolution URL. Defaults to the BLOCKRUN_INLINE_IMAGES env setting (off unless set). Rich clients (e.g. the VS Code extension) render it; plain terminals ignore it. Off keeps responses lightweight."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, action, model, image, mask, size, quality, inline, agent_id }) => {
+    async ({ prompt, action, model, image, mask, size, inline, agent_id }) => {
       // Hoisted for the outer catch: a timeout after the payment was sent has
-      // to be booked, and the catch needs both the reserve and whether a paid
-      // request was outstanding.
+      // to be booked, and the catch needs the reserve when no quote was seen.
       let estimatedCostForCatch = 0;
-      let paidRequestInFlight = false;
+      // Armed only while a request carrying the payment is outstanding, on
+      // every rail — settled by a response, per call. 0.50.0's boolean was
+      // cleared in a `.finally` the catch never observed on the account rail,
+      // never set on Base, and set BEFORE the unpaid quote probe on Solana, so
+      // a 15s probe timeout booked a whole render (audit round 3).
+      const paid = trackPaidRequest();
       try {
         const selectedModel = model || "openai/gpt-image-2";
 
@@ -441,15 +473,16 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
           let imageUrl: string | undefined;
           // Actual USDC charged, surfaced in the result footer so the user always
           // sees the price without relying on the plugin's announce-cost skill.
-          // Base has no billed-amount in the SDK response, so the catalog estimate
-          // (which mirrors the live price table) is the best available figure;
-          // Solana returns the real 402-quoted amount.
+          // Base has no billed-amount in the SDK response, so the observed
+          // charge (ledgerFallback of the reserve — see the Base branch) is the
+          // best available figure; Solana returns the real 402-quoted amount
+          // and the account rail its settled cost header.
           let billedUsd = estimatedCost;
           // Whether `billedUsd` is still our own guess rather than a figure the
-          // rail settled. Seeded to the previous behaviour — the Base SDK rail
-          // reports the catalog price and has always been labelled exact — so
-          // this change only affects the account rail, which is the one that can
-          // now do better.
+          // rail settled. The Base SDK rail's observed charge is reconstructed
+          // from a live-verified rate table, not read off a response, and has
+          // always been labelled exact; the account rail flips this when its
+          // cost header is present, Solana when its 402 amount parses.
           let costIsEstimate = isApiKeyMode();
           // isApiKeyMode() first: on the account rail getChain() can still say
           // "solana" (it is the default for a machine with no wallet), and this
@@ -466,20 +499,27 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             // 2026-09-05 — a nano-banana image settles at $0.052500 and returns
             // both the header and `price.amount`, against a $0.0535 estimate.
             //
-            // apiKeyPost is the same helper music, speech, video and realface
-            // already use; image was the odd one out only because an SDK client
-            // existed for it.
+            // apiKeyAsyncPost, not apiKeyPost: the gateway answers 202 +
+            // poll_url for any render past its 30s inline window, and the
+            // single-POST helper handed that envelope back as if it were the
+            // image — "No image URL in response", job id and poll_url dropped,
+            // the render orphaned, and the agent's retry submitting another
+            // (audit round 3; a regression of #140, which replaced the SDK's
+            // polling ImageClient on this rail). The async helper handles the
+            // inline 200 and the 202 alike, and its BilledJobError carries
+            // the job id for the catch below.
             const { endpoint, body } = buildSolanaImageRequest(action, {
               model: selectedModel,
               prompt,
               size,
-              quality,
               image: normalizedImage,
               mask: normalizedMask,
             });
-            paidRequestInFlight = true;
-            const r = await apiKeyPost(endpoint, body, { timeoutMs: SOLANA_IMAGE_TIMEOUT_MS })
-              .finally(() => { paidRequestInFlight = false; });
+            const r = await sendPaid(paid, () => apiKeyAsyncPost(endpoint, body, {
+              pollBudgetMs: ACCOUNT_IMAGE_POLL_BUDGET_MS,
+              pollIntervalMs: ACCOUNT_IMAGE_POLL_INTERVAL_MS,
+              pollTimeoutMs: ACCOUNT_IMAGE_POLL_TIMEOUT_MS,
+            }));
             // paidUsd null is "the rail settled nothing at response time", NOT
             // "free" — fall back to the estimate and say so, never book $0.
             billedUsd = r.paidUsd ?? estimatedCost;
@@ -495,11 +535,9 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               model: selectedModel,
               prompt,
               size,
-              quality,
               image: normalizedImage,
               mask: normalizedMask,
             });
-            paidRequestInFlight = true;
             const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS, {
               // The Solana gateway prices carry a markup over the Base estimate
               // table, so the real quote can exceed what we reserved. Re-reserve
@@ -515,24 +553,50 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
                 });
                 gate = reReserveIfHigher(budget, gate, agent_id, estimatedCost, quotedUsd);
                 if (!gate.allowed) {
-                  throw new BudgetExceededError(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget.`);
+                  // Says so, like the other four manual-402 tools: nothing
+                  // has been signed at this point.
+                  throw new BudgetExceededError(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
                 }
+                // Last: onQuote is the helper's final hook before it signs and
+                // sends. Arming HERE — not before the call — keeps the unpaid
+                // probe outside the window, so a probe timeout books nothing.
+                paid.arm(quotedUsd);
               },
             });
-            paidRequestInFlight = false;
+            paid.settle();
             recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
             billedUsd = paidUsd ?? estimatedCost;
             costIsEstimate = paidUsd === null;
             imageUrl = (data as { data?: Array<{ url?: string }> }).data?.[0]?.url;
           } else {
-            const response = action === "edit"
-              ? await getImageClient().edit(prompt, normalizedImage!, {
+            // ---- Base rail: the SDK's ImageClient owns the 402. ----
+            //
+            // No quote is visible here, so the ledger gets what the gateway is
+            // observed to charge rather than the reserve: the reserve carries
+            // the $0.002 tx fee (rounded against us on purpose — see
+            // estimateCost) where a live 402 probe of the Base route on
+            // 2026-09-13 quoted cogview-4 at $0.016750, i.e. base x 1.05 +
+            // $0.001. Booking the reserve verbatim tripped caps early on
+            // every Base image (audit round 3); ledgerFallback is the same
+            // reconstruction the path tools use.
+            const observedUsd = ledgerFallback(estimatedCost);
+            // The SDK signs and sends the payment inside this call, so the
+            // whole call is the paid window. Its unpaid 402 probe is inside
+            // it too — the SDK offers no seam between the two — so a probe
+            // timeout here is booked as well; that is the conservative
+            // direction, and the gateway answers the probe in well under a
+            // second, so it is a far narrower window than the render.
+            const response = await sendPaid(paid, () => action === "edit"
+              ? getImageClient().edit(prompt, normalizedImage!, {
                   model: selectedModel,
                   size,
                   ...(normalizedMask ? { mask: normalizedMask } : {}),
                 })
-              : await getImageClient().generate(prompt, { model: selectedModel, size, quality: quality as "standard" | "hd" });
-            recordSpending(budget, estimatedCost, agent_id);
+              // No quality option: the SDK forwards any truthy value and the
+              // gateway 400s all of them for these models (see the schema).
+              : getImageClient().generate(prompt, { model: selectedModel, size }), observedUsd);
+            recordActualSpend(budget, null, observedUsd, agent_id);
+            billedUsd = observedUsd;
             imageUrl = response.data?.[0]?.url;
           }
 
@@ -545,12 +609,13 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
 
           const delivered = await materializeImageUrl(imageUrl);
           const savedLocally = delivered !== imageUrl;
-          // On the wallet rails billedUsd is what was actually signed and settled
-          // (from the 402 quote). On the account rail nothing comes back to read,
-          // so it is this server's own estimate — and it is estimated HIGH, since
-          // estimateCost adds the $0.001 transaction fee that account billing
-          // does not charge. Printing that unlabelled invites someone to
-          // reconcile an invoice against a number we invented.
+          // On Solana billedUsd is what was actually signed and settled (from
+          // the 402 quote); on Base it is the observed charge the ledger books;
+          // on the account rail it is the settled cost header when the gateway
+          // sent one, else this server's own estimate — and that is estimated
+          // HIGH, since estimateCost adds a transaction fee that account
+          // billing does not charge. Printing that unlabelled invites someone
+          // to reconcile an invoice against a number we invented.
           // Label what the number IS, not which rail produced it. Calling a
           // settled amount "estimated" is as misleading as the reverse, and it
           // invites someone to discount a figure that reconciles exactly.
@@ -577,13 +642,27 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         if (err instanceof BudgetExceededError) {
           return { content: [{ type: "text", text: errMsg }], isError: true };
         }
-        if (paidRequestInFlight && isTimeoutError(err)) {
-          recordActualSpend(budget, null, estimatedCostForCatch, agent_id);
+        // The account rail's async path: the gateway accepted the job (or may
+        // have — a submit that never answered), and it is charged when the
+        // render completes whether or not this client is still polling. Book
+        // it and name the job; the one thing not to do is submit again.
+        // Checked before the in-flight tracker, whose sentence would say
+        // "signature" for a rail that has none.
+        if (err instanceof BilledJobError) {
+          recordActualSpend(budget, err.paidUsd, estimatedCostForCatch, agent_id);
+          const what = err.billing === "billed"
+            ? `Image generation did not return an image, but the gateway accepted the render${err.jobId ? ` (job ${err.jobId})` : ""} and the account is charged when it completes.`
+            : `Image generation got no answer to its submit, so the render MAY have been accepted and billed to the BlockRun account.`;
           return {
-            content: [{ type: "text", text: `Image generation timed out while a request carrying the payment was still in flight, so the gateway MAY have settled the charge after this client gave up — it has been booked against your budget; check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `${what} $${(err.paidUsd ?? estimatedCostForCatch).toFixed(4)} has been booked against your budget; check https://user.blockrun.ai/dashboard/activity before doing anything else — a new blockrun_image call starts and bills a second render.\nError: ${errMsg}` }],
             isError: true,
           };
         }
+        // A paid request that never answered on the wallet rails (or an SDK
+        // call that dropped mid-payment on Base): the gateway settles on its
+        // own clock, so this is booked and said out loud.
+        const giveUp = settleGiveUp(paid, err, { budget, agentId: agent_id, estimateUsd: estimatedCostForCatch, what: "Image generation" });
+        if (giveUp) return { content: [{ type: "text", text: giveUp.text }], isError: true };
         if (err instanceof PaymentError) {
           return {
             content: [{ type: "text", text: `Image generation needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],

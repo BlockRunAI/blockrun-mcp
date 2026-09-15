@@ -1,11 +1,30 @@
 // src/utils/solana-402.ts
 // Manual x402 payment flow against the Solana gateway (sol.blockrun.ai) for
-// paid endpoints the SolanaLLMClient doesn't expose as public methods yet:
-// image generation (solanaPaidPost, synchronous optimistic settle) and video
-// (solanaPaidAsyncPost, payment-on-completion polling). Music and speech are
-// candidates once their Solana routes ship. Mirrors the music.ts manual-402
-// pattern on Base, but signs an SPL transfer via createSolanaPaymentPayload
-// instead of an EIP-3009 authorization.
+// paid endpoints the SolanaLLMClient doesn't expose as public methods:
+// solanaPaidPost for the routes that answer inline (image, speech, realface —
+// synchronous optimistic settle) and solanaPaidAsyncPost for the async ones
+// (video, music — submit + poll). Mirrors the manual-402 pattern the tools use
+// on Base, but signs an SPL transfer via createSolanaPaymentPayload instead of
+// an EIP-3009 authorization.
+//
+// Two settlement models share solanaPaidAsyncPost, and the gateway tells us
+// which one a route follows on the submit answer:
+//
+//   payment-on-completion (video)  the POST verifies and enqueues; the charge
+//                                  happens on the poll that observes
+//                                  "completed", with the signature it carries.
+//                                  A failed job is not charged.
+//   settled-at-submit (music)      the POST settles the transfer optimistically
+//                                  the moment it is accepted (202 with
+//                                  payment_status "settled_optimistic" and the
+//                                  X-Payment-Optimistic header; blockrun-sol
+//                                  audio/generations/route.ts). The polls are
+//                                  pure delivery, so a failed job, a deadline
+//                                  or a poll error is a CERTAIN charge.
+//
+// Until audit round 3 the helper assumed the first model for every route and
+// said "No payment was taken" for a failed music job the gateway had already
+// settled.
 import {
   SolanaLLMClient,
   PaymentError,
@@ -17,9 +36,10 @@ import {
   SOLANA_NETWORK,
 } from "@blockrun/llm";
 import { fetchWithTimeout } from "./http.js";
-import { pollTimeoutFor } from "./poll.js";
+import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { resolveSolanaKey } from "./wallet.js";
 import { amountToUsd } from "./budget.js";
+import { BilledJobError } from "./api-key-call.js";
 
 const QUOTE_TIMEOUT_MS = 15_000;
 
@@ -38,9 +58,12 @@ const QUOTE_TIMEOUT_MS = 15_000;
 // keeps the worst case near 40s. The poll GET itself is capped at the Solana
 // poll route's own maxDuration (60s) rather than Base's 90s: a stalled poll
 // is the one place the signature ages without a re-sign, and the gateway
-// can't answer past 60s anyway. Submit gets Base's 30s — the gateway verifies
-// and enqueues in 3-20s, and a 300s hold here was silently adding five
-// minutes to the "15 min hard cap" the tool description promises.
+// can't answer past 60s anyway. Submit gets Base's 30s — the VIDEO gateway
+// verifies and enqueues in 3-20s, and a 300s hold here was silently adding
+// five minutes to the "15 min hard cap" the tool description promises. It is
+// a default, not a rule: the audio route holds the paid POST inline for up to
+// 60s and settles at POST regardless, so a 30s abort there was a charged track
+// with no job id (C15) — music.ts passes its own submitTimeoutMs.
 export const SOLANA_ASYNC_DEFAULT_BUDGET_MS = 900_000;
 export const SOLANA_ASYNC_POLL_INTERVAL_MS = 5_000;
 export const SOLANA_ASYNC_SUBMIT_TIMEOUT_MS = 30_000;
@@ -52,12 +75,19 @@ export const SOLANA_ASYNC_RESIGN_RETRY_MS = 10_000;
 export const SOLANA_ASYNC_MAX_REACTIVE_RESIGNS = 3;
 
 // Settle-failure reasons the Solana gateway itself treats as permanent for the
-// presented authorization (mirrors PERMANENT_ERRORS in the gateway's
-// x402-solana.ts). Anything else on a poll 402 — stale blockhash, a concurrent
-// settle claim, a facilitator hiccup — is the gateway's documented "re-sign
-// and re-poll" path and must not be reported as a funding problem.
-const PERMANENT_SETTLE_PATTERNS = [
-  "insufficient",
+// presented authorization (together they mirror PERMANENT_ERRORS in the
+// gateway's x402-solana.ts). Anything else on a poll 402 — stale blockhash, a
+// concurrent settle claim, a facilitator hiccup — is the gateway's documented
+// "re-sign and re-poll" path and must not be reported as a funding problem.
+//
+// The permanent set is split by REMEDY. Only "insufficient" is the wallet; the
+// rest are the signature or the authorization, and a user whose payload was
+// malformed or whose authorization expired was being told to fund a wallet
+// that had plenty in it — and, on Base, handed a Coinbase top-up page — because
+// the one message said "rejected … balance" and every tool's catch keyed on
+// those words (audit round 3, D2).
+const FUNDING_SETTLE_PATTERNS = ["insufficient"];
+const INVALID_AUTH_SETTLE_PATTERNS = [
   "invalid signature",
   "invalid payment",
   "unauthorized",
@@ -65,10 +95,63 @@ const PERMANENT_SETTLE_PATTERNS = [
   "invalid_payload",
   "expired",
 ];
-function isPermanentSettleFailure(reason: string | undefined): boolean {
+function matches(reason: string | undefined, patterns: string[]): boolean {
   if (!reason) return false;
   const lower = reason.toLowerCase();
-  return PERMANENT_SETTLE_PATTERNS.some((p) => lower.includes(p));
+  return patterns.some((p) => lower.includes(p));
+}
+const isFundingFailure = (reason: string | undefined) => matches(reason, FUNDING_SETTLE_PATTERNS);
+const isInvalidAuthFailure = (reason: string | undefined) => matches(reason, INVALID_AUTH_SETTLE_PATTERNS);
+
+/**
+ * The error for a 402 that came back on a request CARRYING the signature. A
+ * funding reason (or no reason at all — the gateway's verification 402 does
+ * not always carry PAYMENT-RESPONSE) is a PaymentError, which the tools turn
+ * into "out of funds" plus the top-up note. An authorization reason is a plain
+ * Error whose text deliberately contains none of "rejected" / "balance" /
+ * "insufficient" — isPaymentRejectionError (utils/errors.ts) keys on exactly
+ * those — and does contain "no charge was made", which formatError honours.
+ */
+function paidRequestRefused(reason: string | undefined, where: string, tail = ""): Error {
+  if (reason && isInvalidAuthFailure(reason) && !isFundingFailure(reason)) {
+    return new Error(
+      `The Solana gateway refused the payment signature ${where} (reason: ${reason}) — a signing/authorization fault, not a funding problem. ` +
+        `No charge was made.${tail ? ` ${tail}` : ""}`,
+    );
+  }
+  return new PaymentError(`Payment was rejected${reason ? ` (${reason})` : ""}. Check your Solana USDC balance.${tail ? ` ${tail}` : ""}`);
+}
+
+/**
+ * The key, or the honest reason there is none. Two reasons, two remedies:
+ * a keychain that would not open is NOT a missing wallet — the wallet is very
+ * likely there and funded, and "run setup" invites a second one. 783cfb3
+ * taught buildSolanaClient (wallet.ts) that distinction and left the manual-402
+ * helpers saying the old thing (audit round 3, D3/D30). Neither is a
+ * PaymentError: image's catch turns one into "your wallet is out of funds".
+ *
+ * solanaKeyUnavailableReason is imported dynamically so the handler suites
+ * that mock utils/wallet.js by name (and predate it) keep linking — image.ts
+ * imports this module statically. Only the failure path pays for the import.
+ */
+async function requireSolanaKey(): Promise<string> {
+  // resolveSolanaKey, not the SDK's file-only loader: under
+  // BLOCKRUN_KEYCHAIN=strict the .solana-session file is retired once its key
+  // is in the OS keychain, and getChain() still reports "solana" for it.
+  const privateKey = resolveSolanaKey();
+  if (privateKey) return privateKey;
+  const { solanaKeyUnavailableReason } = await import("./wallet.js");
+  const locked = solanaKeyUnavailableReason?.();
+  if (locked) {
+    throw new Error(
+      `Cannot reach your Solana wallet key — ${locked}. Your existing wallet is most likely still in the keychain: ` +
+        `unlock it and retry, or set SOLANA_WALLET_KEY. Nothing was charged.`,
+    );
+  }
+  throw new Error(
+    `No Solana wallet on this machine yet. Run blockrun_wallet action:"setup" (or action:"chain" chain:"solana") to create one, ` +
+      `or set SOLANA_WALLET_KEY. Nothing was charged.`,
+  );
 }
 
 /** errorReason from a base64 x402 PAYMENT-RESPONSE header, when present and well-formed. */
@@ -93,7 +176,26 @@ export interface SolanaPaidPostResult {
   jobId?: string;
 }
 
-export interface SolanaPaidAsyncPostOptions {
+/**
+ * The two hooks that mark the edges of every request CARRYING the payment.
+ * Offered by both helpers so a tool's in-flight tracker (utils/in-flight.ts)
+ * can be armed at the true signing point and settled on every answer, instead
+ * of guessing from onQuote — which fires before the transfer is signed, so a
+ * signing-time RPC failure read as "may have settled".
+ */
+export interface PaidRequestHooks {
+  /**
+   * Invoked immediately before a request carrying PAYMENT-SIGNATURE is sent:
+   * the submit, and (async) every paid poll. Never around the unpaid quote or
+   * the unpaid re-sign challenge. A request that is sent and never answered
+   * leaves this as the last hook that fired — which is the point.
+   */
+  onPaidRequest?: () => void;
+  /** Invoked the moment such a request has an answer — any status, before it is inspected. */
+  onPaidResponse?: () => void;
+}
+
+export interface SolanaPaidAsyncPostOptions extends PaidRequestHooks {
   /**
    * Total wall time allowed for quote + submit + polling, measured from the
    * call's entry. Defaults to SOLANA_ASYNC_DEFAULT_BUDGET_MS (15 minutes).
@@ -101,8 +203,23 @@ export interface SolanaPaidAsyncPostOptions {
   pollBudgetMs?: number;
   /** Delay between idempotent poll GETs. Defaults to SOLANA_ASYNC_POLL_INTERVAL_MS. */
   pollIntervalMs?: number;
-  /** Timeout for the single paid submit POST. Defaults to SOLANA_ASYNC_SUBMIT_TIMEOUT_MS. */
+  /**
+   * Timeout for the single paid submit POST. Defaults to
+   * SOLANA_ASYNC_SUBMIT_TIMEOUT_MS, which is sized for the video route (verify
+   * + enqueue, always 202 in 3-20s). A route that holds the paid POST inline —
+   * the audio route races generation against a 60s window and settles at
+   * POST regardless — needs its own, larger value (music.ts).
+   */
   submitTimeoutMs?: number;
+  /**
+   * Sentence subject for every error this helper throws, e.g. "Music
+   * generation". Defaults to "Video generation", the helper's first caller —
+   * music surfaced "Video generation did not complete" and "re-running
+   * blockrun_video" verbatim until it passed its own (audit round 3, D1/D22).
+   */
+  what?: string;
+  /** The tool name the reclaim note warns about re-running. Defaults to "blockrun_video". */
+  tool?: string;
   /** Timeout for each poll GET (always clamped to the remaining budget). Defaults to SOLANA_ASYNC_POLL_TIMEOUT_MS. */
   pollTimeoutMs?: number;
   /** Re-sign the SVM transaction (fresh blockhash) this often. Defaults to SOLANA_ASYNC_RESIGN_INTERVAL_MS. */
@@ -131,7 +248,10 @@ async function readPaymentRequired(response: Response): Promise<string> {
       header = Buffer.from(JSON.stringify(body)).toString("base64");
     }
   }
-  if (!header) throw new PaymentError("402 response but no payment requirements found");
+  // A gateway fault, not a funding problem — plain Error, like every other
+  // refusal of a quote we could not validate. PaymentError is reserved for a
+  // 402 on a request that CARRIED the signature (the tools' "out of funds").
+  if (!header) throw new Error("402 response but no payment requirements found. No charge was made.");
   return header;
 }
 
@@ -139,10 +259,10 @@ function parseSolanaChallenge(paymentHeader: string): SolanaPaymentContext {
   const paymentRequired = parsePaymentRequired(paymentHeader);
   const details = extractPaymentDetails(paymentRequired, SOLANA_NETWORK);
   if (!details.network?.startsWith("solana:")) {
-    throw new PaymentError(`Expected a Solana payment quote, got network: ${details.network}. The endpoint may not support Solana settlement yet.`);
+    throw new Error(`Expected a Solana payment quote, got network: ${details.network}. The endpoint may not support Solana settlement yet. No charge was made.`);
   }
   const feePayer = (details.extra as { feePayer?: string } | undefined)?.feePayer;
-  if (!feePayer) throw new PaymentError("Missing feePayer in the 402 quote's extra field");
+  if (!feePayer) throw new Error("Missing feePayer in the 402 quote's extra field. No charge was made.");
   return { paymentRequired, details, paidUsd: amountToUsd(details.amount) };
 }
 
@@ -187,7 +307,7 @@ export async function solanaPaidPost(
   endpoint: string,
   body: Record<string, unknown>,
   paidTimeoutMs: number,
-  opts?: {
+  opts?: PaidRequestHooks & {
     /**
      * Invoked with the quoted USD (from the 402 `details.amount`) AFTER the quote
      * is parsed but BEFORE anything is signed or paid. Throw from here to abort
@@ -197,13 +317,7 @@ export async function solanaPaidPost(
     onQuote?: (quotedUsd: number | null, details: ReturnType<typeof extractPaymentDetails>) => void;
   },
 ): Promise<SolanaPaidPostResult> {
-  // resolveSolanaKey, not the SDK's file-only loader: under
-  // BLOCKRUN_KEYCHAIN=strict the .solana-session file is retired once its key
-  // is in the OS keychain, and getChain() still reports "solana" for it.
-  const privateKey = resolveSolanaKey();
-  if (!privateKey) {
-    throw new PaymentError('No Solana wallet found. Run blockrun_wallet with action:"setup" to provision one.');
-  }
+  const privateKey = await requireSolanaKey();
 
   const apiUrl = SolanaLLMClient.SOLANA_API_URL;
   const url = `${apiUrl}${endpoint}`;
@@ -235,14 +349,17 @@ export async function solanaPaidPost(
   // Step 2: paid request. The signed SPL transaction embeds a recent blockhash
   // (~60-90s validity); the gateway settles optimistically in parallel with
   // generation, so submitting right after signing keeps it inside the window.
+  opts?.onPaidRequest?.();
   const resp = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": paymentPayload },
     body: JSON.stringify(body),
   }, paidTimeoutMs);
+  opts?.onPaidResponse?.();
 
   if (resp.status === 402) {
-    throw new PaymentError("Payment was rejected. Check your Solana USDC balance.");
+    await resp.json().catch(() => ({}));
+    throw paidRequestRefused(settleFailureReason(resp), "on the paid request");
   }
   if (!resp.ok) {
     const errBody = await resp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
@@ -288,15 +405,11 @@ export async function solanaPaidAsyncPost(
   const pollTimeoutMs = opts.pollTimeoutMs ?? SOLANA_ASYNC_POLL_TIMEOUT_MS;
   const resignIntervalMs = opts.resignIntervalMs ?? SOLANA_ASYNC_RESIGN_INTERVAL_MS;
   const maxReactiveResigns = opts.maxReactiveResigns ?? SOLANA_ASYNC_MAX_REACTIVE_RESIGNS;
+  const what = opts.what ?? "Video generation";
+  const tool = opts.tool ?? "blockrun_video";
   const deadline = startedAt + pollBudgetMs;
 
-  // resolveSolanaKey, not the SDK's file-only loader: under
-  // BLOCKRUN_KEYCHAIN=strict the .solana-session file is retired once its key
-  // is in the OS keychain, and getChain() still reports "solana" for it.
-  const privateKey = resolveSolanaKey();
-  if (!privateKey) {
-    throw new PaymentError('No Solana wallet found. Run blockrun_wallet with action:"setup" to provision one.');
-  }
+  const privateKey = await requireSolanaKey();
 
   const apiUrl = SolanaLLMClient.SOLANA_API_URL;
   const url = `${apiUrl}${endpoint}`;
@@ -317,7 +430,7 @@ export async function solanaPaidAsyncPost(
   const paymentHeader = await readPaymentRequired(quoteResp);
   const original = parseSolanaChallenge(paymentHeader);
   if (original.paidUsd === null) {
-    throw new PaymentError(`The gateway's Solana quote carried an unreadable amount (${JSON.stringify(original.details.amount)}); refusing to sign it. No charge was made.`);
+    throw new Error(`The gateway's Solana quote carried an unreadable amount (${JSON.stringify(original.details.amount)}); refusing to sign it. No charge was made.`);
   }
   opts.onQuote?.(original.paidUsd, original.details);
 
@@ -330,12 +443,17 @@ export async function solanaPaidAsyncPost(
   if (submitTimeout === 0) {
     throw new Error(`Budget of ${Math.round(pollBudgetMs / 1000)}s was spent before the job could be submitted. No charge was made.`);
   }
+  opts.onPaidRequest?.();
   const submitResp = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": paymentPayload },
     body: JSON.stringify(body),
   }, submitTimeout);
-  if (submitResp.status === 402) throw new PaymentError("Payment was rejected. Check your Solana USDC balance.");
+  opts.onPaidResponse?.();
+  if (submitResp.status === 402) {
+    await submitResp.json().catch(() => ({}));
+    throw paidRequestRefused(settleFailureReason(submitResp), "at submit");
+  }
 
   const submitData = await submitResp.json().catch(() => ({})) as Record<string, unknown>;
   const pollPath = typeof submitData.poll_url === "string" ? submitData.poll_url : "";
@@ -358,17 +476,38 @@ export async function solanaPaidAsyncPost(
   if (!pollPath) throw new Error(`Submit response missing poll_url: ${JSON.stringify(submitData)}`);
   const pollUrl = new URL(pollPath, apiUrl);
   if (pollUrl.origin !== new URL(apiUrl).origin) {
-    throw new PaymentError(`Refusing to send a payment signature to an off-gateway poll URL: ${pollUrl.origin}. No charge was made.`);
+    throw new Error(`Refusing to send a payment signature to an off-gateway poll URL: ${pollUrl.origin}. No charge was made.`);
   }
+
+  // Which settlement model this route follows (see the module comment). The
+  // gateway declares settled-at-submit on the wire — the header and the body
+  // field are both read because a proxy can strip either — and the helper
+  // never assumes it: an answer that says nothing is payment-on-completion.
+  const settledAtSubmit =
+    (submitResp.headers.get("x-payment-optimistic") || "").toLowerCase() === "true" ||
+    submitData.payment_status === "settled_optimistic";
 
   // The gateway keeps a finished job claimable for ~48h; every message that
   // gives up on one must say so, because re-running the tool submits (and
   // pays for) a brand-new job.
-  const reclaimNote = `The finished job stays claimable on the gateway for ~48h${jobId ? ` (job ${jobId})` : ""}; re-running blockrun_video would start and charge a new job.`;
+  const reclaimNote = `The finished job stays claimable on the gateway for ~48h${jobId ? ` (job ${jobId})` : ""}; re-running ${tool} would start and charge a new job.`;
+  const settledNote = `The gateway settled the payment at submit (payment_status settled_optimistic), so the charge stands${jobId ? ` (job ${jobId})` : ""}.`;
+  // Every give-up after the submit goes through here so the two models cannot
+  // drift apart: on a settled-at-submit route the money is gone whatever the
+  // failure was, and the tool has to book it and name the job — the same
+  // BilledJobError the account rail throws, for the same reason.
+  const giveUp = (core: string, uncharged: string): Error =>
+    settledAtSubmit
+      ? new BilledJobError(`${core} ${settledNote} ${reclaimNote}`, { paidUsd: original.paidUsd, jobId, billing: "billed" })
+      : new Error(`${core} ${uncharged} ${reclaimNote}`);
 
   let resignsLeft = maxReactiveResigns;
   let lastStatus = typeof submitData.status === "string" ? submitData.status : "queued";
   let lastSettleReason: string | undefined;
+  // True between a paid poll leaving and its answer arriving. Read at the
+  // deadline: a poll that was still in flight can settle server-side after
+  // this client gives up; one that was answered cannot.
+  let paidPollInFlight = false;
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
@@ -394,6 +533,8 @@ export async function solanaPaidAsyncPost(
     if (pollTimeout === 0) break;
 
     let pollResp: Response;
+    paidPollInFlight = true;
+    opts.onPaidRequest?.();
     try {
       pollResp = await fetchWithTimeout(pollUrl.toString(), {
         method: "GET",
@@ -401,9 +542,13 @@ export async function solanaPaidAsyncPost(
       }, pollTimeout);
     } catch {
       // Polling is idempotent and settlement has not been observed. A transient
-      // disconnect is safe to retry inside the existing deadline.
+      // disconnect is safe to retry inside the existing deadline. The in-flight
+      // flag stays set (and the caller's tracker stays armed): the request
+      // that never answered may still be settling server-side.
       continue;
     }
+    paidPollInFlight = false;
+    opts.onPaidResponse?.();
 
     if (pollResp.status === 402) {
       // The gateway's settle-failure 402 carries PAYMENT-RESPONSE (the reason),
@@ -411,11 +556,24 @@ export async function solanaPaidAsyncPost(
       // Its body is informational only — consume it to release the socket.
       lastSettleReason = settleFailureReason(pollResp) ?? lastSettleReason;
       await pollResp.json().catch(() => ({}));
-      if (isPermanentSettleFailure(lastSettleReason)) {
-        throw new PaymentError(`Payment was rejected while settling the completed Solana video (${lastSettleReason}). Check your Solana USDC balance. ${reclaimNote}`);
+      if (isFundingFailure(lastSettleReason)) {
+        // On a settled-at-submit route the poll never settles, so a funding
+        // reason there is the delivery signature being refused — the charge
+        // already stands. Everywhere else it is the wallet.
+        if (settledAtSubmit) throw giveUp(`The Solana gateway refused the delivery signature (reason: ${lastSettleReason}).`, "");
+        throw new PaymentError(`Payment was rejected while settling the completed job (${lastSettleReason}). Check your Solana USDC balance. ${reclaimNote}`);
+      }
+      if (isInvalidAuthFailure(lastSettleReason)) {
+        throw giveUp(
+          `The Solana gateway refused the payment signature while settling the completed job (reason: ${lastSettleReason}) — a signing/authorization fault, not a funding problem.`,
+          "No charge was made.",
+        );
       }
       if (resignsLeft <= 0) {
-        throw new Error(`Solana settlement did not go through after ${maxReactiveResigns} re-signs${lastSettleReason ? ` (last gateway reason: ${lastSettleReason})` : ""}. The video finished upstream but this client observed no settlement receipt, so no charge was made. ${reclaimNote}`);
+        throw giveUp(
+          `Solana settlement did not go through after ${maxReactiveResigns} re-signs${lastSettleReason ? ` (last gateway reason: ${lastSettleReason})` : ""}.`,
+          "The job finished upstream but this client observed no settlement receipt, so no charge was made.",
+        );
       }
       resignsLeft--;
       let challenge: Response;
@@ -440,7 +598,7 @@ export async function solanaPaidAsyncPost(
         fresh.details.recipient !== original.details.recipient ||
         freshFeePayer !== originalFeePayer
       ) {
-        throw new PaymentError("The refreshed poll challenge changed the payment amount, recipient or fee payer; refusing to re-authorize it. No charge was made.");
+        throw giveUp("The refreshed poll challenge changed the payment amount, recipient or fee payer; refusing to re-authorize it.", "No charge was made.");
       }
       nextResignAt = Date.now() + resignIntervalMs;
       paymentPayload = await signSolanaChallenge(fresh, pollUrl.toString(), privateKey);
@@ -459,14 +617,35 @@ export async function solanaPaidAsyncPost(
     }
 
     if (lastStatus === "failed") {
-      throw new Error(`Video generation failed upstream: ${String(pollData.error || "unknown")}. No payment was taken.`);
+      // Typed on both models. The gateway echoes the upstream failure text
+      // verbatim, and MiniMax's is "The operation was aborted due to timeout";
+      // a tool that classified this by prose booked a render the gateway had
+      // just said was not charged (C13).
+      const failed = `${what} failed upstream: ${String(pollData.error || "unknown")}.`;
+      if (settledAtSubmit) {
+        throw new BilledJobError(`${failed} ${settledNote}`, { paidUsd: original.paidUsd, jobId, billing: "billed" });
+      }
+      throw new JobFailedError(`${failed} No payment was taken.`, { jobId });
     }
     if (pollResp.ok && lastStatus === "completed") {
       return { data: pollData, paidUsd: original.paidUsd, txHash: undefined, jobId };
     }
     if (pollResp.status === 202 || pollResp.status === 504 || pollResp.ok) continue;
-    throw new Error(`Video poll error ${pollResp.status}: ${JSON.stringify(pollData)}`);
+    const pollError = `${what} poll error ${pollResp.status}: ${JSON.stringify(pollData)}`;
+    if (settledAtSubmit) throw giveUp(pollError, "");
+    throw new Error(pollError);
   }
 
-  throw new Error(`Video generation did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}). No settlement receipt was observed by this client; a poll still in flight at the deadline can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`);
+  // The deadline says what this helper KNOWS, and the hooks above let the
+  // caller's tracker know the same thing: a poll that was still in flight can
+  // settle server-side (the gateway does not stop because we hung up); a poll
+  // that was answered "in_progress" cannot, because on this model settlement
+  // needs a signed poll to observe "completed".
+  const deadlineCore = `${what} did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}).`;
+  if (settledAtSubmit) throw giveUp(deadlineCore, "");
+  throw new Error(
+    paidPollInFlight
+      ? `${deadlineCore} No settlement receipt was observed by this client, but a poll carrying the payment signature was still in flight at the deadline and can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`
+      : `${deadlineCore} The last poll was answered and no request carrying the payment signature is outstanding, so no charge was made. ${reclaimNote}`,
+  );
 }

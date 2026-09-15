@@ -18,7 +18,8 @@ import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { launchTopUp } from "../utils/onramp.js";
-import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
+import { fetchWithTimeout } from "../utils/http.js";
+import { sendPaid, settleGiveUp, trackPaidRequest } from "../utils/in-flight.js";
 import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { apiAuthHeaders, isApiKeyMode } from "../utils/auth.js";
@@ -146,13 +147,15 @@ Returns a hosted audio URL — download immediately if you need to keep the file
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
       // Hoisted for the catch: a timeout after the signature was sent has to be
-      // booked, and it needs both the reserve and whatever the 402 quoted.
+      // booked, and the booking needs the reserve when no quote was captured.
       let reservedCost = 0;
-      let quotedCost: number | null = null;
-      // Set only while a request carrying the payment is outstanding. A timeout
-      // on the unpaid 402 probe charges nothing, and booking it would invent
-      // spend; a timeout after the signature went out may well have settled.
-      let paidRequestInFlight = false;
+      // Armed only while a request carrying the payment is outstanding, on
+      // every rail. A timeout on the unpaid 402 probe charges nothing, and
+      // booking it would invent spend; a timeout after the signature (or the
+      // account Bearer) went out may well have settled. Per call, and settled
+      // only by a response — 0.50.0's boolean was cleared in a `.finally` the
+      // catch could never observe, and set on Base alone (audit round 3).
+      const paid = trackPaidRequest();
       try {
         if (action === "voices") {
           return await listVoices();
@@ -226,7 +229,9 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         // ---- Rail 1: account API key. One POST, no quote, no signature. ----
         if (isApiKeyMode()) {
-          const r = await apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT });
+          // The Bearer IS the payment on this rail: a POST that never answers
+          // may still be billed, so it is armed like a signed one.
+          const r = await sendPaid(paid, () => apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT }));
           data = r.data as typeof data;
           // The settled figure when the rail reports one, the local estimate
           // otherwise — and `estimated` says which, so the two are never mixed up.
@@ -238,15 +243,30 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           // ---- Rail 2: Solana wallet, via the shared manual-x402 helper. ----
           const { solanaPaidPost } = await import("../utils/solana-402.js");
           const r = await solanaPaidPost(path, body, SPEECH_TIMEOUT, {
-            onQuote: (quotedUsd) => {
-              // Re-check the REAL price against the budget before signing: the
-              // Solana gateway quotes independently of our local estimate.
-              if (quotedUsd === null || quotedUsd <= cost) return;
-              gate?.release();
-              gate = reserveBudget(budget, agent_id, quotedUsd);
-              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            onQuote: (quotedUsd, quoteDetails) => {
+              // WHAT was quoted, before how much. 350df27 put this guard on the
+              // Base rail only, so a substituted or repriced product on
+              // sol.blockrun.ai — the DEFAULT chain — was signed unseen while
+              // Base refused it (audit round 3). Refusing costs nothing: the
+              // helper has not signed yet.
+              assertQuoteNearEstimate(quotedUsd, cost, {
+                what: `${action === "sound_effect" ? "sound effect" : model} speech`,
+                quotedFor: quoteDetails?.resource?.description,
+                hint: `Retry on Base (blockrun_wallet action:"chain" chain:"base"), or report the quote.`,
+              });
+              // Then the cap, against the REAL price: the Solana gateway quotes
+              // independently of our local estimate.
+              if (quotedUsd !== null && quotedUsd > cost) {
+                gate?.release();
+                gate = reserveBudget(budget, agent_id, quotedUsd);
+                if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+              }
+              // Last: onQuote is the helper's final hook before it signs and
+              // sends, so this is where the paid request becomes outstanding.
+              paid.arm(quotedUsd);
             },
           });
+          paid.settle();
           data = r.data as typeof data;
           billedUsd = r.paidUsd ?? cost;
           txHash = r.txHash;
@@ -277,8 +297,6 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         // Prefer the exact 402-quoted price (handles sound-effect duration and any
         // server-side price change) over the local estimate for billing + display.
         billedUsd = amountToUsd(details.amount) ?? cost;
-        quotedCost = amountToUsd(details.amount);
-        paidRequestInFlight = true;
 
         // WHAT was quoted, before how much. 0.49.0 added this to video (both
         // rails) and image (Solana) and left the identical hand-rolled flows
@@ -312,15 +330,17 @@ Returns a hosted audio URL — download immediately if you need to keep the file
           }
         );
 
-        // Step 2: synthesize with payment (settlement happens after generation)
-        const resp = await fetchWithTimeout(endpoint, {
+        // Step 2: synthesize with payment (settlement happens after generation).
+        // Armed for exactly this fetch: the signature is on it, and a response
+        // of any status settles the tracker before it is inspected.
+        const resp = await sendPaid(paid, () => fetchWithTimeout(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "PAYMENT-SIGNATURE": paymentPayload,
           },
           body: JSON.stringify(body),
-        }, SPEECH_TIMEOUT).finally(() => { paidRequestInFlight = false; });
+        }, SPEECH_TIMEOUT), quotedUsd);
 
         if (resp.status === 402) {
           throw new Error("Payment rejected. Check your wallet balance.");
@@ -384,17 +404,12 @@ Returns a hosted audio URL — download immediately if you need to keep the file
             isError: true,
           };
         }
-        if (paidRequestInFlight && isTimeoutError(err)) {
-          // The wording was already right and the LEDGER entry was missing: a
-          // charge the message says MAY have settled was booked nowhere, and
-          // the finally released the reservation. Book it conservatively, the
-          // way video, music and realface do (audit round 2, rail-parity).
-          recordActualSpend(budget, quotedCost, reservedCost, agent_id);
-          return {
-            content: [{ type: "text", text: `Speech generation timed out after ${SPEECH_TIMEOUT / 1000}s. The payment signature had already been sent, so a charge MAY have settled without returning audio — it has been booked against your budget; check blockrun_wallet action:"report" before retrying.\nError: ${errMsg}` }],
-            isError: true,
-          };
-        }
+        // A paid request that never answered on ANY rail: the gateway settles
+        // on its own clock, so this is booked (the quote where one was seen,
+        // else the reserve) and said out loud — the finally below releases the
+        // reservation, and a bare "failed" invites a retry that pays twice.
+        const giveUp = settleGiveUp(paid, err, { budget, agentId: agent_id, estimateUsd: reservedCost, what: "Speech generation" });
+        if (giveUp) return { content: [{ type: "text", text: giveUp.text }], isError: true };
         return {
           content: [{ type: "text", text: formatError(`Speech generation failed: ${errMsg}`) }],
           isError: true,

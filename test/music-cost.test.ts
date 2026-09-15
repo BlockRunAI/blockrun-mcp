@@ -223,7 +223,7 @@ test("a paid poll still in flight at the deadline MAY have settled: say so, book
   const res = await call({ prompt: "lofi beat" });
   const t = text(res);
   assert.equal(res.isError, true, t);
-  assert.match(t, /MAY have settled/);
+  assert.match(t, /MAY have gone through/);
   assert.match(t, /blockrun_wallet action:"report"/);
   assert.match(t, /claimable.*job trk_1/);
   assert.doesNotMatch(t, /please try again|peak load/);
@@ -254,7 +254,7 @@ test("a paid submit that aborts MAY have settled inline: say so and book conserv
   const res = await call({ prompt: "lofi beat" });
   const t = text(res);
   assert.equal(res.isError, true, t);
-  assert.match(t, /MAY have settled/);
+  assert.match(t, /MAY have gone through/);
   assert.doesNotMatch(t, /please try again|peak load/);
   assert.doesNotMatch(t, /No payment was taken/);
   assert.ok(Math.abs(budget.spent - 0.2) < 1e-9, `booked conservatively: spent=${budget.spent}`);
