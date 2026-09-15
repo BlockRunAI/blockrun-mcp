@@ -36,3 +36,19 @@ export function failRedacted(prefix: string, error: unknown): never {
   console.error(JSON.stringify({ failed: true, error: redactChainValues(`${prefix}${message}`) }));
   process.exit(1);
 }
+
+/**
+ * Route every uncaught exception and unhandled rejection through failRedacted.
+ *
+ * Call it before the first await. Only -live.ts had these two lines; the
+ * other four scripts either wrapped one call in try/catch (fine until a
+ * second call is added outside it) or had nothing at all — and the read-only
+ * preflight, whose header promises it never emits a wallet address, would
+ * have printed one on the first RPC failure. One installer means the promise
+ * is kept by every script the same way, and test/redact-exit.test.ts checks
+ * that each one calls it.
+ */
+export function installRedactedExit(): void {
+  process.on("uncaughtException", (error) => failRedacted("", error));
+  process.on("unhandledRejection", (error) => failRedacted("", error));
+}

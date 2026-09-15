@@ -55,15 +55,33 @@ jobs:
           # latest, isLatest=true.
           REG=$(curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.BlockRunAI/blockrun-mcp&version=latest" \
                 | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);const a=j.servers||[];console.log(a[0]?.server?.version||'none')}catch{console.log('none')}})")
+          # The tag is the third target, and it needs its OWN guard computed
+          # here, not derived from the npm one. Ask the remote: actions/checkout
+          # fetches no tags, so a local lookup always says "missing".
+          if git ls-remote --exit-code --tags origin "refs/tags/v${PKG}" >/dev/null 2>&1; then
+            TAG_MISSING=false
+          else
+            TAG_MISSING=true
+          fi
           echo "pkg=$PKG"  >> "$GITHUB_OUTPUT"
           echo "npm=$NPM"  >> "$GITHUB_OUTPUT"
           echo "reg=$REG"  >> "$GITHUB_OUTPUT"
-          echo "package.json=$PKG | npm=$NPM | registry=$REG"
+          echo "tag_missing=$TAG_MISSING" >> "$GITHUB_OUTPUT"
+          echo "package.json=$PKG | npm=$NPM | registry=$REG | tag v$PKG missing=$TAG_MISSING"
+
+      # `pkg != npm` is inequality, not order. npm publish does not compare
+      # semver and points `latest` at whatever it just published, so a
+      # package.json LOWER than npm latest (a typo'd 0.5.1 for 0.51.0, or a
+      # number proposed off a stale VERSION file) would ship and downgrade
+      # every `npx -y @blockrun/mcp@latest` user. Plain Node: runs before npm ci.
+      - name: Refuse a version below npm latest
+        run: node scripts/version-gate.mjs "${{ steps.v.outputs.pkg }}" "${{ steps.v.outputs.npm }}"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build, typecheck, test
+        id: build
         run: |
           npm run build
           npm run typecheck
@@ -71,6 +89,7 @@ jobs:
 
       # ---- npm ----
       - name: Publish to npm
+        id: npm
         if: steps.v.outputs.pkg != steps.v.outputs.npm
         run: npm publish --provenance --access public
         env:
@@ -127,12 +146,30 @@ jobs:
       # Same independent-guard shape as the two publishes above — it checks
       # whether the tag already exists rather than assuming, so re-runs and
       # workflow_dispatch are safe.
-      # Gated on the same version diff as the npm publish above. Without it, a
-      # push that only touched publish.yml (or a workflow_dispatch) would tag
-      # HEAD and title the release from an unrelated commit subject — precisely
-      # in the "release is missing" state this automation exists to repair.
+      #
+      # INDEPENDENT means its own guard, not npm's. This step used to be gated
+      # on `pkg != npm`, which is false the moment npm has published — so a
+      # job that went red AFTER npm (the mcp-publisher download, a registry
+      # 400, the tag push itself) could never be repaired by re-running it: the
+      # re-run found npm == pkg, skipped this step by its `if:`, and went green
+      # with no tag and no release. The in-step `gh release view` / `git
+      # ls-remote` checks that make re-runs safe never executed, because the
+      # outer condition short-circuited them. That is the drift this step was
+      # written to end, reported as success.
+      #
+      # So the gate is: the tag is ABSENT (resolved against origin, up front),
+      # and npm carries this version — either this run published it, or it was
+      # already there. A push that only touched publish.yml still cannot tag
+      # HEAD under a stale number, because then the tag already exists. A run
+      # whose build or npm publish FAILED does not tag either: `!cancelled()`
+      # lets this step run past a registry failure, and the outcome checks
+      # keep it from running past a real one.
       - name: Tag + GitHub release
-        if: steps.v.outputs.pkg != steps.v.outputs.npm
+        if: >-
+          !cancelled()
+          && steps.v.outputs.tag_missing == 'true'
+          && steps.build.outcome == 'success'
+          && (steps.npm.outcome == 'success' || steps.v.outputs.pkg == steps.v.outputs.npm)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.pkg }}

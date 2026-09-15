@@ -18,6 +18,19 @@
  * Markers look like:  <!-- br:models.chatVisible -->66<!-- /br:models.chatVisible -->
  * and wrap the WHOLE token, so a badge URL, its alt text and the prose number
  * can all regenerate from one key.
+ *
+ * THIS COPY IS AHEAD OF THE SOURCE. blockrun's `brand-script-sync` CI job
+ * diffs every consumer against brand/sync-brand-numbers.mjs and its printed
+ * remediation is "copy the source over the consumer" — twice that overwrote a
+ * fix made here (#84, #128). What this copy carries that the source does not,
+ * as of 2026-09-13: assertRenderable + escAttr (a value from the mirror is
+ * refused, and attribute-escaped, before it is written into a README that the
+ * brand-sync bot then pushes unattended with contents:write), keyOf() on the
+ * keys-in-use count, and the --check summary that does not say "up to date"
+ * under a list of stale fenced markers. Resync source <- consumer: land THIS
+ * file in blockrun/brand and fan it out; do not copy the source over it.
+ * test/brand-sync-script.test.ts fails on a copy without the guard, so a
+ * consumer <- source resync cannot pass this repo's required `test` check.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, writeFileSync, readdirSync } from "node:fs";

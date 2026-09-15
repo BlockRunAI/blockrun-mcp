@@ -7,14 +7,23 @@
  *
  * The redaction covers every exit path, thrown errors included — see
  * ./redact.ts for why that is not the same regex it used to be.
+ *
+ * Moves real funds, so it refuses to run without --confirm (or
+ * POLYMARKET_E2E_CONFIRM=1) — see ./e2e-confirm.ts. `npm run
+ * e2e:polymarket:live -- --confirm`.
  */
 import { fetchPositions, getFundsAddress } from "../src/utils/polymarket/positions.js";
 import { redeemPosition } from "../src/utils/polymarket/redeem.js";
 import { withdrawFunds } from "../src/utils/polymarket/withdraw.js";
-import { failRedacted, redactChainValues } from "./redact.js";
+import { requireLiveConfirm } from "./e2e-confirm.js";
+import { failRedacted, installRedactedExit, redactChainValues } from "./redact.js";
 
-process.on("uncaughtException", (error) => failRedacted("", error));
-process.on("unhandledRejection", (error) => failRedacted("", error));
+installRedactedExit();
+// Gate first: a check that runs after the redeem is a receipt.
+requireLiveConfirm([
+  "redeem one resolved position worth <= $0.001 (burns the shares)",
+  "withdraw $2.00 USDC from the Polymarket deposit wallet through the bridge",
+]);
 
 const owner = getFundsAddress();
 const positions = await fetchPositions(owner);
