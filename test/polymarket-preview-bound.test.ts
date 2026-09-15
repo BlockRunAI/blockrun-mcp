@@ -19,6 +19,16 @@ let bids: Array<{ price: string; size: string }> = [{ price: "0.39", size: "100"
 
 const fakeClob = {
   getOrderBook: async () => ({ tick_size: "0.01", neg_risk: false, min_order_size: "5", asks, bids }),
+  // Round 4b: the tool signs (createOrder / createMarketOrder — the SDK's
+  // pre-sign network reads live there) and POSTs the signed order separately,
+  // so only the POST can have an unknown outcome. These three route the
+  // split calls through the createAndPost* behaviour each test scripts.
+  createOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "limit", order, options }),
+  createMarketOrder: async (order: Record<string, unknown>, options: Record<string, unknown>) => ({ signedOf: "market", order, options }),
+  postOrder: async (signed: { signedOf: string; order: Record<string, unknown>; options: Record<string, unknown> }, orderType: unknown, postOnly?: boolean) =>
+    signed.signedOf === "limit"
+      ? (fakeClob as any).createAndPostOrder(signed.order, signed.options, orderType, postOnly)
+      : (fakeClob as any).createAndPostMarketOrder(signed.order, signed.options, orderType),
   createAndPostOrder: async (order: Record<string, unknown>) => {
     calls.push({ kind: "limit", order });
     return { success: true, orderID: "0xORDER", status: "matched" };

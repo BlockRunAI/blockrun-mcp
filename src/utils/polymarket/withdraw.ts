@@ -167,8 +167,21 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
         // see relayer.ts sendWalletBatch). There is nothing to look up, and the
         // signed batch may still land — block until the deadline passes.
         const idUnknown = pending.transactionID === "unknown";
-        const state = idUnknown ? undefined : await getRelayerTransactionState(pending.transactionID);
-        if (state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
+        // An EOA (sigType 0) withdrawal is a plain Polygon transaction, not a
+        // relayer batch: "eoa:<hash>" is looked up by receipt, a bare "eoa"
+        // (the send itself never answered) blocks until the deadline. Round 4b:
+        // this rail had no guard at all, so a receipt timeout after the
+        // broadcast invited a second full transfer with a fresh nonce.
+        const eoaHash = pending.transactionID.startsWith("eoa:") ? pending.transactionID.slice(4) : undefined;
+        let settled = false;
+        if (eoaHash) {
+          try {
+            const receipt = await getPublicClient().getTransactionReceipt({ hash: eoaHash as Hex });
+            settled = Boolean(receipt);
+          } catch { settled = false; }
+        }
+        const state = idUnknown || pending.transactionID.startsWith("eoa") ? undefined : await getRelayerTransactionState(pending.transactionID);
+        if (settled || state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
           saveState({ pendingWithdraw: undefined });
         } else {
           const waitSecs = pending.deadline + graceSec - Math.floor(Date.now() / 1000);
@@ -289,18 +302,31 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     } else {
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
-      txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
-      // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
-      // Discarding the receipt meant a REVERTED pUSD transfer still printed
-      // "✅ Withdrawal submitted … the bridge delivers USDC to Base" with a link
-      // to the failed tx and no isError, so the user waited for money that was
-      // never sent and blamed the bridge. redeem.ts and setup.ts both assert
-      // status; this path was the one that did not.
-      assertTransactionSucceeded(
-        await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex }),
-        "pUSD transfer",
-        txHash,
-      );
+      // The same double-send guard the relayer path keeps: armed before the
+      // broadcast (a send that never answers may still have reached the
+      // node), the hash recorded once known, cleared only on a receipt.
+      const eoaDeadline = Math.floor(Date.now() / 1000) + 300;
+      saveState({ pendingWithdraw: { transactionID: "eoa", deadline: eoaDeadline } });
+      try {
+        txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
+        saveState({ pendingWithdraw: { transactionID: `eoa:${txHash}`, deadline: eoaDeadline } });
+        // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
+        // Discarding the receipt meant a REVERTED pUSD transfer still printed
+        // "✅ Withdrawal submitted … the bridge delivers USDC to Base" with a link
+        // to the failed tx and no isError, so the user waited for money that was
+        // never sent and blamed the bridge. redeem.ts and setup.ts both assert
+        // status; this path was the one that did not.
+        const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
+        saveState({ pendingWithdraw: undefined });
+        assertTransactionSucceeded(receipt, "pUSD transfer", txHash);
+      } catch (err) {
+        if (err instanceof Error && /reverted/i.test(err.message)) throw err; // a receipt was read: definite
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Withdraw: the pUSD transfer ${txHash ? `(tx ${txHash}) ` : ""}did not confirm (${msg}). It may still land — ` +
+            `a broadcast transaction is not un-sent by a client timeout. Do NOT retry yet: wait for the guard window to pass, then ${WITHDRAW_GUIDANCE}.`,
+        );
+      }
     }
 
     return {
