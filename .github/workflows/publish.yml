@@ -37,7 +37,21 @@ jobs:
         id: v
         run: |
           PKG=$(node -p "require('./package.json').version")
-          NPM=$(npm view @blockrun/mcp version 2>/dev/null || echo "none")
+          # "none" ONLY on npm's own E404 (the package has never been published).
+          # Any other failure — a registry 5xx, a network error, a bad token —
+          # is "unknown", which the version gate step refuses. Spelling every
+          # failure as "none" made the gate pass on the one input where it must
+          # not: a package.json below latest during a registry blip, which would
+          # publish and downgrade `latest`.
+          if NPM=$(npm view @blockrun/mcp version 2>npm-view.err); then
+            :
+          elif grep -q "E404" npm-view.err; then
+            NPM=none
+          else
+            echo "::warning::npm view failed and it was not an E404:"; cat npm-view.err
+            NPM=unknown
+          fi
+          rm -f npm-view.err
           # `version=latest` is load-bearing. Without it the search endpoint pages
           # at 30 results with every isLatest=false, so the old `|| a[a.length-1]`
           # fallback returned the last row of PAGE ONE — 0.32.8, frozen since July —

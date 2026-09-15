@@ -194,3 +194,11 @@ test("publish: the tag/release step is gated on the tag being ABSENT, not on npm
   assert.equal(step(wf, "publish", "Publish to npm").id, "npm", "the npm step needs an id for its outcome to be referenced");
   assert.equal(step(wf, "publish", "Build, typecheck, test").id, "build");
 });
+
+test("publish: an npm registry failure is 'unknown' and refused, only an E404 is 'none'", () => {
+  const wf = load("publish.yml");
+  const resolve = step(wf, "publish", "Resolve versions").run ?? "";
+  assert.doesNotMatch(resolve, /npm view @blockrun\/mcp version 2>\/dev\/null \|\| echo "none"/, "every failure spelled as 'none' lets a downgrade through on a registry blip");
+  assert.match(resolve, /E404/, "the not-yet-published case is recognised by npm's own error code");
+  assert.match(resolve, /NPM=unknown|NPM="unknown"/, "anything else is unknown, which the gate refuses");
+});

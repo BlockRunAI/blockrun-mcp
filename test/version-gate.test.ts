@@ -55,3 +55,14 @@ test("the CLI exits non-zero on a downgrade and zero on a release", () => {
   const out = execFileSync("node", [script, "0.51.0", "0.50.0"], { encoding: "utf8" });
   assert.match(out, /0\.51\.0 > npm latest 0\.50\.0/);
 });
+
+// Audit round 4: "none" must mean "npm answered E404", never "npm did not
+// answer". The workflow used to spell every `npm view` failure as "none", so a
+// transient registry error on a run whose package.json was BELOW latest — the
+// exact case the gate exists for — passed the gate and the npm step alike.
+test("'unknown' (npm could not be read) is refused — a gate that cannot look does not pass", () => {
+  const r = gate({ pkg: "0.51.0", npm: "unknown" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /could not be read|unknown/i);
+  assert.match(r.reason, /re-run/i);
+});

@@ -15,7 +15,8 @@
 // package to lean on. Exported for test/version-gate.test.ts; the CLI is what
 // the workflow calls.
 //
-// "none" (nothing on npm yet) passes; equal passes (that is the re-run of an
+// "none" (nothing on npm yet — npm's E404) passes; "unknown" (npm could not be
+// read at all) is refused; equal passes (that is the re-run of an
 // already-published version, which the workflow skips on its own); prereleases
 // and anything that is not X.Y.Z are refused, because the workflow has no
 // dist-tag path for them and a malformed string must not compare as 0.0.0.
@@ -39,6 +40,12 @@ export function compareSemver(a, b) {
 export function gate({ pkg, npm }) {
   if (!SEMVER.test(pkg)) return { ok: false, reason: `package.json version "${pkg}" is not a bare X.Y.Z version — refusing to publish it` };
   if (npm === "none") return { ok: true, reason: `nothing on npm yet — ${pkg} will be the first publish` };
+  // The workflow spells a registry/network failure "unknown" (only npm's own
+  // E404 is "none"). A gate that could not look has not passed: refuse, and
+  // say re-run — the one input where "none" and "unknown" differ is a
+  // package.json below latest during a registry blip, which is exactly the
+  // downgrade this script exists to stop.
+  if (npm === "unknown") return { ok: false, reason: `npm latest could not be read (registry or network failure) — cannot order ${pkg} against it, refusing; re-run the job` };
   if (!SEMVER.test(npm)) return { ok: false, reason: `npm latest "${npm}" is not a bare X.Y.Z version — cannot order ${pkg} against it, refusing` };
   const order = compareSemver(pkg, npm);
   if (order < 0) {
