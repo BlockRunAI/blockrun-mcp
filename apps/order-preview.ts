@@ -53,6 +53,29 @@ const body = $("body");
 
 /** The arguments the model passed to blockrun_polymarket_read (we re-use them to re-quote). */
 let toolArgs: Record<string, unknown> = {};
+
+/**
+ * Orders whose submit ended with an UNKNOWN outcome, keyed by token+side, with
+ * the message the user saw. This must outlive the card that set it: the lock
+ * used to be a `let` inside renderPreview, so Re-quote — which the unknown
+ * path re-enables so the user can see the new price — rendered a fresh card
+ * with Place enabled, and one more click was a second real order on top of
+ * one that may already be resting at the CLOB. A fresh preview for the same
+ * token+side now renders locked until the user has checked positions/orders
+ * (a new session clears it: the card has no state beyond this page).
+ */
+const unknownOutcomes = new Map<string, string>();
+const outcomeKey = (p: { tokenId: string; action: string }) => `${p.tokenId}:${p.action}`;
+
+/**
+ * Tell the model what happened on the card. The success path already does
+ * this; the unknown-outcome path did not, so the conversation had no record
+ * that an order may be live and the agent could re-place it from the text
+ * path with no idea the card had already tried.
+ */
+function tellModel(text: string, structuredContent: Record<string, unknown> = {}): void {
+  void app.updateModelContext({ content: [{ type: "text", text }], structuredContent }).catch(() => {});
+}
 app.ontoolinput = (p) => { toolArgs = { ...(p.arguments ?? {}) }; };
 app.ontoolresult = (r) => render(r as ToolResult);
 
@@ -191,9 +214,20 @@ function renderPreview(p: Preview): void {
   const quotedAmount = parseFloat(amountField.value);
   // Submitting, or submitted-with-unknown-outcome. Either way this card must
   // not offer Place again: the first is a duplicate in flight, the second is a
-  // duplicate bet on an order that may already be live at the CLOB.
+  // duplicate bet on an order that may already be live at the CLOB. The
+  // unknown flag is read from module scope so it survives Re-quote.
   let submitting = false;
-  let outcomeUnknown = false;
+  let outcomeUnknown = unknownOutcomes.has(outcomeKey(p));
+  const lockUnknown = (message: string, structuredContent?: Record<string, unknown>) => {
+    outcomeUnknown = true;
+    unknownOutcomes.set(outcomeKey(p), message);
+    tellModel(
+      `Order card: the ${p.action} of ${usd(p.notionalUsd)} on ${p.outcome ?? p.tokenId} did NOT complete and its outcome is UNKNOWN — ` +
+        `the order MAY already be live at the exchange. Check blockrun_polymarket_read action:"orders" (limit) / action:"positions" (market) ` +
+        `before placing it again. Card message: ${message}`,
+      { outcome: "unknown", action: p.action, tokenId: p.tokenId, notionalUsd: p.notionalUsd, ...(structuredContent ?? {}) },
+    );
+  };
   const syncPlace = () => {
     const stale = parseFloat(amountField.value) !== quotedAmount;
     if (stale && armed) disarm();
@@ -207,6 +241,13 @@ function renderPreview(p: Preview): void {
     if (stale) { note.className = "note"; note.textContent = "Amount changed — Re-quote first to refresh the price and notional before placing."; }
   };
   amountField.addEventListener("input", syncPlace);
+  if (outcomeUnknown) {
+    // Re-rendered (Re-quote) after an unknown outcome: keep the lock and the
+    // warning on the fresh card, so the new price is visible but not placeable.
+    note.className = "note err";
+    note.textContent = `${unknownOutcomes.get(outcomeKey(p)) ?? "A previous submit of this order did not complete."}\n\nThis order MAY already be live at the exchange. Check your positions/orders before placing it again — this card will not re-submit it.`;
+    syncPlace();
+  }
 
   place.addEventListener("click", async () => {
     if (submitting || outcomeUnknown) return;
@@ -237,15 +278,12 @@ function renderPreview(p: Preview): void {
         // nothing landed; otherwise this card must not invite a second bet.
         const text = resultText(r);
         note.className = "note err"; note.textContent = text;
-        if (outcomeIsUnknown(text)) { outcomeUnknown = true; setBusy(place, false); setBusy(requote, false); syncPlace(); }
+        if (outcomeIsUnknown(text)) { lockUnknown(text, (r.structuredContent ?? {}) as Record<string, unknown>); setBusy(place, false); setBusy(requote, false); syncPlace(); }
         else { disarm(); setBusy(place, false); setBusy(requote, false); }
         return;
       }
       renderPlaced(p, structured<Placed>(r) ?? {}, resultText(r));
-      void app.updateModelContext({
-        content: [{ type: "text", text: `User placed the order from the order card: ${resultText(r)}` }],
-        structuredContent: (r.structuredContent ?? {}) as Record<string, unknown>,
-      }).catch(() => {});
+      tellModel(`User placed the order from the order card: ${resultText(r)}`, (r.structuredContent ?? {}) as Record<string, unknown>);
     } catch (e) {
       submitting = false; amountField.disabled = false;
       const msg = String((e as Error).message ?? e);
@@ -259,7 +297,7 @@ function renderPreview(p: Preview): void {
         note.textContent = msg;
         disarm(); setBusy(place, false); setBusy(requote, false);
       } else {
-        outcomeUnknown = true;
+        lockUnknown(msg);
         note.textContent = `${msg}\n\nThe request did not complete, so this order MAY already be live at the exchange. Check your positions before placing it again — this card will not re-submit it.`;
         setBusy(place, false); setBusy(requote, false); syncPlace();
       }

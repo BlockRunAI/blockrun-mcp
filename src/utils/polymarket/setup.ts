@@ -225,17 +225,40 @@ function approvalChecklist(items: ApprovalItem[]): string {
   return items.map((i) => `  ${i.granted ? "✅" : "❌"} ${i.label}`).join("\n");
 }
 
-async function geoblockLine(): Promise<string> {
+/**
+ * The region check, as a report line AND as a verdict. `ready` below has to
+ * see the verdict: a blocked egress used to print "❌ Region: order placement
+ * BLOCKED" and, two lines later, "🎯 Ready to trade" with structured
+ * ready:true — the fields an agent keys on before funding — so the user
+ * funded a vault it could not trade from. "unknown" is a best-effort probe
+ * that failed, not a blocker; it is reported as such.
+ */
+async function geoblockLine(): Promise<{ line: string; orderPlacement: "permitted" | "blocked" | "unknown" }> {
   const geo = await checkGeoblock();
   const where = geo.country ? ` (egress country: ${geo.country})` : "";
-  if (geo.orderPlacement === "permitted") return `✅ Region: order placement permitted from this egress${where}`;
-  if (geo.orderPlacement === "blocked") {
-    return `❌ Region: order placement BLOCKED from this egress${where}. ` +
-      "Point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay " +
-      "(see deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / " +
-      "HTTPS_PROXY) only changes how the current egress is reached, not the Polymarket-facing IP.";
+  if (geo.orderPlacement === "permitted") {
+    return { orderPlacement: "permitted", line: `✅ Region: order placement permitted from this egress${where}` };
   }
-  return "ℹ️ Region: could not determine order-placement status (check re-runs on demand)";
+  if (geo.orderPlacement === "blocked") {
+    return {
+      orderPlacement: "blocked",
+      line: `❌ Region: order placement BLOCKED from this egress${where}. ` +
+        "Point POLYMARKET_CLOB_HOST + POLYMARKET_RELAYER_URL at a permitted-region relay " +
+        "(see deploy/finland-egress) or restore the default. A proxy alone (POLYMARKET_CLOB_PROXY / " +
+        "HTTPS_PROXY) only changes how the current egress is reached, not the Polymarket-facing IP.",
+    };
+  }
+  return { orderPlacement: "unknown", line: "ℹ️ Region: could not determine order-placement status (check re-runs on demand)" };
+}
+
+/** The closing verdict line: green only when nothing blocks an order. */
+function readyLine(ready: boolean, orderPlacement: "permitted" | "blocked" | "unknown", readyText: string): string {
+  if (ready) return readyText;
+  if (orderPlacement === "blocked") {
+    return `⛔ NOT ready: order placement is blocked from this egress (see ❌ Region above). ` +
+      `Do not fund the wallet for trading until setup reports the region as permitted.`;
+  }
+  return `Re-run action:"setup" after completing the ❌ items.`;
 }
 
 const KEY_BACKUP_NOTE =
@@ -359,7 +382,7 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
 
   const geo = await geoblockLine();
   const boundedApprovalUsd = getBoundedApprovalsUsd();
-  const ready = deployed && balance > 0 && !approvalsPending && credsReady;
+  const ready = deployed && balance > 0 && !approvalsPending && credsReady && geo.orderPlacement !== "blocked";
 
   const lines = [
     `Polymarket setup — deposit-wallet mode (POLY_1271)`,
@@ -418,9 +441,9 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
     ...(balanceCacheWarned
       ? [`   ⚠️ Balance cache not pre-warmed (${balanceCacheWarned}) — your first buy refreshes it automatically.`]
       : []),
-    geo,
+    geo.line,
     ``,
-    ready ? `🎯 Ready to trade. Discover markets with blockrun_markets, then action:"buy".` : `Re-run action:"setup" after completing the ❌ items.`,
+    readyLine(ready, geo.orderPlacement, `🎯 Ready to trade. Discover markets with blockrun_markets, then action:"buy".`),
     ``,
     KEY_BACKUP_NOTE,
   ];
@@ -438,6 +461,7 @@ async function runSetupDepositWallet(opts: { confirm: boolean }): Promise<{ text
       ...(approvalsTxHash ? { approvalsTxHash } : {}),
       ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
+      orderPlacement: geo.orderPlacement,
       ready,
     },
   };
@@ -517,7 +541,7 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
   }
 
   const geo = await geoblockLine();
-  const ready = balance > 0 && !approvalsPending && credsReady;
+  const ready = balance > 0 && !approvalsPending && credsReady && geo.orderPlacement !== "blocked";
 
   const lines = [
     `Polymarket setup — plain EOA mode (POLYMARKET_SIG_TYPE=0)`,
@@ -542,12 +566,14 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
         ]
       : []),
     `${credsReady ? "✅" : "❌"} CLOB API credentials${credsNote}`,
-    geo,
+    geo.line,
     ``,
-    ready
-      ? `🎯 Ready to trade. Note: the CLOB may reject plain-EOA makers on order placement — ` +
-        `the deposit wallet (unset POLYMARKET_SIG_TYPE) is the supported trading path.`
-      : `Re-run action:"setup" after completing the ❌ items.`,
+    readyLine(
+      ready,
+      geo.orderPlacement,
+      `🎯 Ready to trade. Note: the CLOB may reject plain-EOA makers on order placement — ` +
+        `the deposit wallet (unset POLYMARKET_SIG_TYPE) is the supported trading path.`,
+    ),
     ``,
     KEY_BACKUP_NOTE,
   ];
@@ -564,6 +590,7 @@ async function runSetupEoa(opts: { confirm: boolean }): Promise<{ text: string; 
       ...(approvalTxHashes.length ? { approvalTxHashes } : {}),
       ...(approvalsUnverified ? { approvalsUnverified: true } : {}),
       credsReady,
+      orderPlacement: geo.orderPlacement,
       ready,
     },
   };

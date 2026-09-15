@@ -137,19 +137,38 @@ test("session cap blocks the order that would cross it", async () => {
   }
 });
 
-test("a failed submit rolls back the reservation (no phantom session spend)", async () => {
+// Round 3 (C40): this used to throw a bare "network blip" and assert the
+// reservation was rolled back — pinning the defect. A throw with no 4xx behind
+// it is a LOST response, and the order may be live; only a definite rejection
+// releases (test/polymarket-submit-unknown.test.ts covers the unknown class).
+test("a REJECTED submit rolls back the reservation (no phantom session spend)", async () => {
   const before = getSessionLedger();
-  const failClob = {
-    ...fakeClob,
-    createAndPostMarketOrder: async () => { throw new Error("network blip"); },
-  };
-  mock.method(fakeClob, "createAndPostMarketOrder", failClob.createAndPostMarketOrder);
+  const rejected = Object.assign(new Error("invalid order"), { status: 400, data: { error: "invalid order", status: 400 } });
+  mock.method(fakeClob, "createAndPostMarketOrder", async () => { throw rejected; });
   try {
     const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
     assert.equal(res.isError, true);
+    assert.doesNotMatch(res.text, /MAY (have been accepted|be live)/i);
     const after = getSessionLedger();
-    assert.equal(after.totalUsd, before.totalUsd, "failed order must not consume session budget");
-    assert.equal(after.count, before.count, "failed order must not increment the order count");
+    assert.equal(after.totalUsd, before.totalUsd, "rejected order must not consume session budget");
+    assert.equal(after.count, before.count, "rejected order must not increment the order count");
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("a submit whose response is LOST keeps the reservation — the order may be live", async () => {
+  const before = getSessionLedger();
+  mock.method(fakeClob, "createAndPostMarketOrder", async () => { throw new Error("network blip"); });
+  try {
+    const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, /MAY have been accepted/);
+    assert.match(res.text, /action:"positions"/);
+    const after = getSessionLedger();
+    assert.equal(after.totalUsd, before.totalUsd + 5, "a possibly-live order must count against the cap");
+    assert.equal(after.count, before.count, "…but is not a confirmed placement");
+    assert.equal(after.unconfirmed, before.unconfirmed + 1);
   } finally {
     mock.restoreAll();
   }
@@ -393,13 +412,33 @@ test("a sell is bounded the other way — a LOWER fill is the worse one", async 
   assert.equal(calls.length, before + 1);
 });
 
-test("without the bound, behaviour is unchanged — the walk stands on its own", async () => {
+// Round 3 (C39): the bound is no longer opt-in. The documented agent flow —
+// preview, quote the user, re-call with confirm:true and nothing else — never
+// passed max_fill_price, so a moved book was signed at a price the user never
+// consented to. The preview's worst fill is now the default bound at confirm
+// (test/polymarket-preview-bound.test.ts); only a token/side that was never
+// previewed in this process stands on its own walk.
+test("without max_fill_price, the LAST PREVIEW for that token/side is the bound", async () => {
   mock.method(fakeClob, "getOrderBook", async () => ({
     tick_size: "0.01", neg_risk: false, min_order_size: "5",
     asks: [{ price: "0.55", size: "25" }], bids: [{ price: "0.39", size: "100" }],
   }));
   const before = calls.length;
+  // Token 111 was previewed at worst fill 0.40 earlier in this file.
   const res = await executeTrade({ action: "buy", token_id: "111", amount_usd: 5, confirm: true });
+  assert.equal(res.isError, true, res.text);
+  assert.match(res.text, /book moved/);
+  assert.equal(calls.length, before, "a bare confirm past the previewed bound signs nothing");
+});
+
+test("a token/side never previewed in this process stands on its own walk", async () => {
+  mock.method(fakeClob, "getOrderBook", async () => ({
+    tick_size: "0.01", neg_risk: false, min_order_size: "5",
+    asks: [{ price: "0.55", size: "25" }], bids: [{ price: "0.39", size: "100" }],
+  }));
+  const before = calls.length;
+  const res = await executeTrade({ action: "buy", token_id: "999", amount_usd: 5, confirm: true });
   assert.equal(res.isError, undefined, res.text);
   assert.equal(calls.length, before + 1);
+  assert.equal(calls[calls.length - 1].order.price, 0.55);
 });

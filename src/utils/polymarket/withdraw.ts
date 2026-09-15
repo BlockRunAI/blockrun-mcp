@@ -36,7 +36,7 @@ import {
 } from "./constants.js";
 import { getPolymarketAccount } from "./client.js";
 import { assertTransactionSucceeded } from "./transactions.js";
-import type { ToolResult } from "./orders.js";
+import { declinedResult, type SpendGate, type ToolResult } from "./transactions.js";
 import { getFundsAddress } from "./positions.js";
 import { loadState, saveState } from "./creds.js";
 import { getRelayerTransactionState, sendWalletBatch } from "./relayer.js";
@@ -124,6 +124,8 @@ interface WithdrawInput {
   amount_usd?: number;
   to_address?: string;
   confirm?: boolean;
+  /** See orders.ts SpendGate. Supplied by the tool handler. */
+  askUser?: SpendGate;
 }
 
 export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
@@ -224,6 +226,15 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
           wrapUsd: Number(formatUnits(wrapRaw, PUSD_DECIMALS)),
         },
       };
+    }
+
+    // The user's word before anything is signed, when the operator asked for
+    // it (BLOCKRUN_CONFIRM_SPEND=on). The amount is the one that will move —
+    // the full balance when amount_usd was omitted — and the label carries the
+    // destination, since a custom to_address is the irreversible part.
+    if (input.askUser) {
+      const gate = await input.askUser(amountUsd, `polymarket · withdraw $${amountUsd.toFixed(2)} → ${recipient}${isCustom ? " (CUSTOM address)" : " (your agent wallet)"}`);
+      if (!gate.ok) return declinedResult(`the $${amountUsd.toFixed(2)} withdrawal`);
     }
 
     // 0. Sweep legacy USDC.e → pUSD when the pUSD on hand can't cover the

@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { asStructuredContent } from "../utils/body.js";
 import { extractErrorMessage } from "../utils/errors.js";
-import { executeTrade, listOpenOrders, cancelOrdersAction, getSessionLedger, type ToolResult } from "../utils/polymarket/orders.js";
+import { confirmSpend } from "../utils/confirm-spend.js";
+import { executeTrade, listOpenOrders, cancelOrdersAction, getSessionLedger, type SpendGate, type ToolResult } from "../utils/polymarket/orders.js";
 import { listPositions } from "../utils/polymarket/positions.js";
 import { redeemPosition } from "../utils/polymarket/redeem.js";
 import { runSetup } from "../utils/polymarket/setup.js";
@@ -11,6 +12,7 @@ import { withdrawFunds } from "../utils/polymarket/withdraw.js";
 import { fundVault } from "../utils/polymarket/fund.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
+import type { BudgetState } from "../types.js";
 
 /**
  * Trading is intentionally NOT gated on the x402 budget ledger: that ledger
@@ -18,8 +20,12 @@ import { appToolMeta } from "../apps.js";
  * user's own pUSD on Polygon — mixing them would corrupt both. The guardrails
  * here are confirm:true (hard-required to sign anything), the per-order
  * POLYMARKET_MAX_BET_USD cap, and the optional session cap (see orders.ts).
+ *
+ * The one exception is action:"fund"'s $0.01 gateway fee: that IS Base-wallet
+ * API spend, so when the registrar hands over the budget (mcp-handler.ts) fund
+ * reserves and books it like any paid call. Without it, legacy behaviour.
  */
-export function registerPolymarketTool(server: McpServer): void {
+export function registerPolymarketTool(server: McpServer, budget?: BudgetState): void {
   server.registerTool(
     "blockrun_polymarket",
     {
@@ -57,7 +63,7 @@ Prices are probabilities 0–1 on the market's tick grid. token_id comes from bl
         order_type: z.enum(["GTC", "GTD", "FOK", "FAK"]).optional()
           .describe("Default: GTC for limit orders, FOK for market orders"),
         max_fill_price: z.number().gt(0).lt(1).optional()
-          .describe("Market orders only: the worst fill you accept (0-1). Carry the preview's worst-fill figure into the confirm and a book that moved in between is refused rather than signed at the new price. Buy = ceiling, sell = floor."),
+          .describe("Market orders only: the worst fill you accept (0-1). Defaults to the worst fill of this session's last preview for the same token+side, so a bare confirm:true is already held to what was quoted — a book that moved past it is refused, not signed. Pass this to widen or tighten that bound. Buy = ceiling, sell = floor."),
         expires_at: z.number().int().positive().optional()
           .describe("Unix seconds expiry (GTD only, ≥ ~3 min in the future)"),
         post_only: z.boolean().optional()
@@ -73,6 +79,13 @@ Prices are probabilities 0–1 on the market's tick grid. token_id comes from bl
       },
     },
     async (args) => {
+      // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): the money-moving
+      // actions ask the user at the dialog the other paid tools use, with the
+      // real notional, right before they sign. `confirm:true` is a boolean the
+      // model supplies — it is the required floor, not the human's answer. A
+      // no-op when the flag is off or the client cannot elicit, so confirm:true
+      // alone still places, exactly as before.
+      const askUser: SpendGate = (usd, label) => confirmSpend(server, { usd, label });
       try {
         let result: ToolResult;
         switch (args.action) {
@@ -80,11 +93,11 @@ Prices are probabilities 0–1 on the market's tick grid. token_id comes from bl
             result = await runSetup({ confirm: args.confirm === true });
             break;
           case "fund":
-            result = await fundVault({ amount_usd: args.amount_usd, confirm: args.confirm });
+            result = await fundVault({ amount_usd: args.amount_usd, confirm: args.confirm, askUser, budget, agent_id: args.agent_id });
             break;
           case "buy":
           case "sell":
-            result = await executeTrade({ ...args, action: args.action });
+            result = await executeTrade({ ...args, action: args.action, askUser });
             break;
           case "orders":
             result = await listOpenOrders({ condition_id: args.condition_id });
@@ -99,7 +112,7 @@ Prices are probabilities 0–1 on the market's tick grid. token_id comes from bl
             result = await redeemPosition({ condition_id: args.condition_id, confirm: args.confirm });
             break;
           case "withdraw":
-            result = await withdrawFunds({ amount_usd: args.amount_usd, to_address: args.to_address, confirm: args.confirm });
+            result = await withdrawFunds({ amount_usd: args.amount_usd, to_address: args.to_address, confirm: args.confirm, askUser });
             break;
         }
         if (result.isError) {

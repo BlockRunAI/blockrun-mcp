@@ -46,6 +46,15 @@ mock.module("../src/utils/polymarket/positions.js", {
 mock.module("../src/utils/polymarket/setup.js", {
   namedExports: { getPublicClient: () => ({ getCode: async () => vaultCode }) },
 });
+// fund consults the pendingFund guard (test/polymarket-fund-unknown.test.ts);
+// keep it off the real ~/.blockrun/.polymarket.json.
+let stateFile: Record<string, unknown> = {};
+mock.module("../src/utils/polymarket/creds.js", {
+  namedExports: {
+    loadState: () => ({ ...stateFile }),
+    saveState: (patch: Record<string, unknown>) => { stateFile = { ...stateFile, ...patch }; return stateFile; },
+  },
+});
 
 const { fundVault } = await import("../src/utils/polymarket/fund.js");
 
