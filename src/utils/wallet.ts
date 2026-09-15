@@ -8,9 +8,9 @@ import {
   PriceClient,
   SolanaLLMClient,
   AnthropicClient,
-  getOrCreateWallet,
+  createWallet,
+  loadWallet,
   createSolanaWallet,
-  saveSolanaWallet,
   solanaPublicKey,
   loadSolanaWallet,
   USDC_SOLANA,
@@ -26,7 +26,6 @@ import {
   EVM_KEY_ACCOUNT,
   SOLANA_KEY_ACCOUNT,
   getKeychainMode,
-  keychainLoad,
   keychainRead,
   persistKey,
 } from "./keychain.js";
@@ -93,25 +92,83 @@ function readChainPreference(): "base" | "solana" | null {
 // Memoized: getChain() is a hot path and this branch spawns a subprocess.
 // Only ever consulted after the file check misses, so the cost is paid at most
 // once per process, and only by users who have no Solana session file.
-let _keychainSolanaKeyPresent: boolean | undefined;
+//
+// Three answers, not two. These probes used keychainLoad(), which collapses a
+// read ERROR (locked keychain, the 5s unlock-dialog timeout, an ACL denial)
+// into the same null as "absent" — and the null was memoised for the life of
+// the process. Under BLOCKRUN_KEYCHAIN=strict the session files are gone, so
+// a funded Base-only user whose keychain was locked at the first paid call was
+// read as a fresh install and routed to Solana; unlocking and retrying in the
+// same process changed nothing, the "No Solana wallet yet — run setup" remedy
+// fired, and setup minted a Solana wallet that step 5 then selected on every
+// later start. ensureEvmWallet() refuses to act on the same "error" status;
+// the selector in front of it has to be at least as careful. So: "unknown" is
+// never memoised, and only definite answers are.
+type KeychainProbe = boolean | "unknown";
 
-function hasKeychainSolanaKey(): boolean {
+let _keychainSolanaKeyPresent: boolean | undefined;
+let _keychainEvmKeyPresent: boolean | undefined;
+
+function probeKeychain(account: string): KeychainProbe {
+  const read = keychainRead(account);
+  if (read.status === "error") return "unknown";
+  return read.status === "found";
+}
+
+function hasKeychainSolanaKey(): KeychainProbe {
   if (getKeychainMode() === "off") return false;
   if (_keychainSolanaKeyPresent === undefined) {
-    _keychainSolanaKeyPresent = keychainLoad(SOLANA_KEY_ACCOUNT) !== null;
+    const probe = probeKeychain(SOLANA_KEY_ACCOUNT);
+    if (probe === "unknown") return probe;
+    _keychainSolanaKeyPresent = probe;
   }
   return _keychainSolanaKeyPresent;
 }
 
 // Same memoization, for the mirror-image probe used by the Solana-first default.
-let _keychainEvmKeyPresent: boolean | undefined;
-
-function hasKeychainEvmKey(): boolean {
+function hasKeychainEvmKey(): KeychainProbe {
   if (getKeychainMode() === "off") return false;
   if (_keychainEvmKeyPresent === undefined) {
-    _keychainEvmKeyPresent = keychainLoad(EVM_KEY_ACCOUNT) !== null;
+    const probe = probeKeychain(EVM_KEY_ACCOUNT);
+    if (probe === "unknown") return probe;
+    _keychainEvmKeyPresent = probe;
   }
   return _keychainEvmKeyPresent;
+}
+
+/**
+ * The EVM key the environment supplies, normalised the way the SDK normalises
+ * it (trim, 0x-prefix) — or undefined.
+ *
+ * BOTH names, because the SDK loader behind every gate in this file honours
+ * `BLOCKRUN_WALLET_KEY || BASE_CHAIN_WALLET_KEY` (its README documents the
+ * latter as the canonical setup). Checking only the first meant a user on the
+ * SDK's configuration had the keychain read ahead of their env key — a stale
+ * entry from the previous wallet silently signing every payment, the exact
+ * shadowing the precedence comment in ensureEvmWallet says it prevents — and
+ * was read as "no Base wallet" by the Solana-first default.
+ */
+function envEvmKey(): `0x${string}` | undefined {
+  const raw = (process.env.BLOCKRUN_WALLET_KEY || process.env.BASE_CHAIN_WALLET_KEY || "").trim();
+  if (!raw) return undefined;
+  return (raw.startsWith("0x") ? raw : `0x${raw}`) as `0x${string}`;
+}
+
+/**
+ * The EVM key the SDK would load from disk — ~/.blockrun/.session, then the
+ * legacy ~/.blockrun/wallet.key — or null when neither holds one. Asks the
+ * loader's own question rather than re-implementing half of it: a file the
+ * loader would honour must never be invisible to the gate in front of it.
+ *
+ * "unreadable" when a file exists but cannot be read: not evidence either
+ * way. See keyFileHasKey for why the gate then errs on the side of "present".
+ */
+function evmKeyOnDisk(): string | null | "unreadable" {
+  try {
+    return loadWallet();
+  } catch {
+    return "unreadable";
+  }
 }
 
 /**
@@ -130,7 +187,8 @@ function hasKeychainEvmKey(): boolean {
  * shell redirect all leave exactly this file behind.
  *
  * getChain() already asks the question this way (twice, with comments saying
- * why). These are the two callers that did not.
+ * why). The Solana gate below is the caller that did not; the EVM gate now
+ * asks the SDK loader itself (evmKeyOnDisk), which trims the same way.
  *
  * A file we cannot READ counts as present. We have no idea whether it holds a
  * key, and consulting the keychain on that guess is how a stale entry shadows
@@ -157,13 +215,16 @@ function keyFileHasKey(file: string): boolean {
  * install and move them to a chain they have never funded.
  */
 function hasExistingBaseWallet(): boolean {
-  if (process.env.BLOCKRUN_WALLET_KEY) return true;
-  try {
-    if (fs.existsSync(WALLET_FILE_PATH) && fs.readFileSync(WALLET_FILE_PATH, "utf-8").trim()) {
-      return true;
-    }
-  } catch { /* an unreadable file is not evidence either way — fall through */ }
-  return hasKeychainEvmKey();
+  if (envEvmKey()) return true;
+  // Same files the SDK loader reads (.session, then the legacy wallet.key); an
+  // unreadable file is not evidence either way — fall through to the keychain.
+  const onDisk = evmKeyOnDisk();
+  if (onDisk !== null && onDisk !== "unreadable") return true;
+  // A keychain we could not open may well hold the funded wallet. Migrating
+  // on that uncertainty is the silent substitution this guard exists to stop,
+  // so "unknown" answers "yes, stay on Base": the Base path then fails loudly
+  // with its unlock-the-keychain message, and nothing suggests minting.
+  return hasKeychainEvmKey() !== false;
 }
 
 /** Test seam — clears the memoized keychain probes. */
@@ -208,7 +269,13 @@ export function getChain(): "base" | "solana" {
   //    without this a Solana user with no explicit .chain would be silently
   //    flipped to Base by the hardening step itself — then met with
   //    "Base-only" refusals from a wallet they never funded.
-  if (hasKeychainSolanaKey()) return "solana";
+  //
+  //    "unknown" (the keychain would not open) is deliberately NOT a Solana
+  //    signal: it falls through to step 6, whose guard treats the same
+  //    uncertainty as "stay on Base" — the chain whose refusal message says
+  //    "unlock the keychain" rather than "run setup". Nothing is memoised on
+  //    the way, so the first successful read after an unlock is honoured.
+  if (hasKeychainSolanaKey() === true) return "solana";
 
   // 6. No Solana signal anywhere — but that is not the same as "new user".
   //
@@ -421,15 +488,113 @@ export function isEvmPrivateKey(value: string): value is `0x${string}` {
   return /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
+/**
+ * Publish a freshly minted key to its session file — unless another process
+ * got there first, in which case return THEIR key and drop ours.
+ *
+ * The 0.50.0 single-flight covers overlapping callers inside one server; it
+ * cannot see a second server, and Claude Code, Cursor and Claude Desktop are
+ * commonly all configured with `-s user`. On a machine that has never held a
+ * key, two of them can both find every store empty, both mint, and both write.
+ * The SDK's saveWallet()/saveSolanaWallet() are plain writeFileSync, so the
+ * last writer won on disk (and in the keychain, via -U) while each process
+ * kept its own wallet cached for its lifetime and printed its OWN address with
+ * a funding QR. USDC sent to the loser's address was unrecoverable once that
+ * process exited: no store ever held the key.
+ *
+ * Exclusive publish, via hard link: the key is written to a private temp file
+ * and linked into place, so the session file either does not exist or holds a
+ * complete key — never a zero-byte file mid-write that a racing reader could
+ * mistake for "nothing here" and overwrite. link() fails with EEXIST when the
+ * other process won; we then read the file and adopt what it holds. On a
+ * filesystem without hard links, `wx` (O_EXCL) is the fallback, which closes
+ * the same race up to the microseconds between its create and its write.
+ *
+ * A pre-existing EMPTY file (an interrupted write, a restore placeholder —
+ * the round-3 scenario) loses the exclusive create but holds nothing to
+ * adopt; it is replaced atomically. Mode 0600 throughout, as the SDK writes.
+ */
+function publishMintedKey(file: string, key: string): string {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(tmp, key, { mode: 0o600 });
+    try {
+      fs.linkSync(tmp, file);
+      return key;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        // No hard links here: exclusive create is the next best thing.
+        try {
+          fs.writeFileSync(file, key, { mode: 0o600, flag: "wx" });
+          return key;
+        } catch (err2) {
+          if ((err2 as NodeJS.ErrnoException).code !== "EEXIST") throw err2;
+        }
+      }
+    }
+    // Someone published before us. Their key is the wallet every store will
+    // hold from here on; ours exists only in this heap and must not be shown.
+    const theirs = fs.readFileSync(file, "utf-8").trim();
+    if (theirs) return theirs;
+    // ...unless "someone" is a stale empty placeholder. Replace it in one step.
+    fs.renameSync(tmp, file);
+    return key;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+/**
+ * The refusal below has to describe the state it found, not a mode the user
+ * may never have set. The empty-file gate made it reachable in AUTO mode — an
+ * existing zero-byte .session consults the keychain — and the fixed wording
+ * ("no longer exists because BLOCKRUN_KEYCHAIN=strict retired it") sent that
+ * user hunting for a file that was right there, and never told them that
+ * restoring it from a backup is the fix.
+ */
+function explainMissingKeyFile(file: string, shown: string): string {
+  let exists = false;
+  try {
+    exists = fs.existsSync(file);
+  } catch { /* treat as missing */ }
+  if (exists) return `${shown} exists but holds no key (an interrupted write or a restore placeholder)`;
+  return getKeychainMode() === "strict"
+    ? `${shown} no longer exists (BLOCKRUN_KEYCHAIN=strict retires it once the key is in the keychain)`
+    : `there is no ${shown} to fall back to`;
+}
+
 function ensureEvmWallet() {
   if (_evmWalletInfo) return _evmWalletInfo;
 
-  // BLOCKRUN_WALLET_KEY outranks the keychain, matching the SDK's own
-  // precedence (env > ~/.blockrun/.session). An operator who exports a key
-  // must not be silently overridden by a stale keychain entry from an earlier
-  // wallet — that is the same failure the .chain-auto file exists to prevent,
-  // and here it would route payments through a wallet the user cannot see.
-  // ...and so does the key FILE, whenever it exists. Replacing
+  // The env key outranks everything, matching the SDK's own precedence
+  // (env > ~/.blockrun/.session > legacy wallet.key). An operator who exports
+  // a key must not be silently overridden by a stale keychain entry from an
+  // earlier wallet — that is the same failure the .chain-auto file exists to
+  // prevent, and here it would route payments through a wallet the user
+  // cannot see.
+  //
+  // And it is a SIGNER OVERRIDE, not a wallet this machine owns: it is never
+  // mirrored into the keychain and never retires the file. It used to be —
+  // persistKey stored it over the funded key with -U and, under strict, the
+  // read-back (keychain === env key, trivially) then deleted the .session
+  // still holding the funded key. One run with a different key in the
+  // environment and the funded wallet, also the Polymarket deposit signer,
+  // was in no store at all. The Solana rail never persisted SOLANA_WALLET_KEY;
+  // this is the parity fix.
+  const fromEnv = envEvmKey();
+  if (fromEnv) {
+    _evmWalletInfo = {
+      address: privateKeyToAccount(fromEnv).address,
+      privateKey: fromEnv,
+      isNew: false,
+    };
+    return _evmWalletInfo;
+  }
+
+  // ...and so does the key FILE, whenever it holds a key. Replacing
   // ~/.blockrun/.session is how a wallet gets rotated or restored from backup,
   // and reading the keychain ahead of an existing file would let a stale entry
   // from the previous wallet shadow the new key silently — every payment then
@@ -439,11 +604,13 @@ function ensureEvmWallet() {
   // exactly when the file is gone, which is what strict mode does. Reading it
   // first bought no security in auto mode anyway: the plaintext file is still
   // sitting there for the same attacker to read.
-  if (
-    !process.env.BLOCKRUN_WALLET_KEY &&
-    getKeychainMode() !== "off" &&
-    !keyFileHasKey(WALLET_FILE_PATH)
-  ) {
+  //
+  // "Holds a key" is the loader's question, asked through the loader: an
+  // empty file is no key (see keyFileHasKey), the legacy wallet.key counts,
+  // and a file we cannot read counts as present so the loader fails loudly
+  // on it instead of a stale keychain entry shadowing it.
+  const onDisk = evmKeyOnDisk();
+  if (onDisk === null && getKeychainMode() !== "off") {
     const read = keychainRead(EVM_KEY_ACCOUNT);
 
     if (read.status === "found" && isEvmPrivateKey(read.value)) {
@@ -455,18 +622,17 @@ function ensureEvmWallet() {
       return _evmWalletInfo;
     }
 
-    // A read that FAILED is not a read that found nothing. The file is already
-    // gone at this point (strict mode retired it), so falling through would
-    // hand getOrCreateWallet() an empty slate and mint a BRAND NEW wallet —
-    // orphaning a funded one that is very likely still sitting in a keychain we
-    // merely could not open (locked, ACL-denied, timed out). Stop instead: a
-    // loud error is recoverable, a silently replaced wallet is not.
+    // A read that FAILED is not a read that found nothing. No file holds a
+    // key at this point, so falling through would mint a BRAND NEW wallet —
+    // orphaning a funded one that is very likely still sitting in a keychain
+    // we merely could not open (locked, ACL-denied, timed out). Stop instead:
+    // a loud error is recoverable, a silently replaced wallet is not.
     if (read.status === "error") {
       throw new Error(
         `Could not read the wallet key from the OS keychain (${read.detail}), and ` +
-          `~/.blockrun/.session no longer exists because BLOCKRUN_KEYCHAIN=strict retired it. ` +
+          `${explainMissingKeyFile(WALLET_FILE_PATH, "~/.blockrun/.session")}. ` +
           `Refusing to create a new wallet — your existing one is most likely still in the keychain. ` +
-          `Unlock the keychain and retry, or set BLOCKRUN_WALLET_KEY to your key.`,
+          `Unlock the keychain and retry, restore the file from a backup, or set BLOCKRUN_WALLET_KEY to your key.`,
       );
     }
 
@@ -477,14 +643,34 @@ function ensureEvmWallet() {
     }
   }
 
-  _evmWalletInfo = getOrCreateWallet();
-  if (_evmWalletInfo.isNew) {
-    console.error(formatWalletCreatedMessage(_evmWalletInfo.address));
+  if (onDisk !== null) {
+    // The SDK loader's own answer (a file we cannot read is re-read here so
+    // it throws the real error rather than being papered over).
+    const privateKey = (onDisk === "unreadable" ? loadWallet() : onDisk) as `0x${string}` | null;
+    if (privateKey) {
+      _evmWalletInfo = { address: privateKeyToAccount(privateKey).address, privateKey, isNew: false };
+      persistKey(EVM_KEY_ACCOUNT, privateKey, WALLET_FILE_PATH);
+      return _evmWalletInfo;
+    }
   }
+
+  // Every store says "absent": mint. The mint is what the SDK's
+  // getOrCreateWallet() would do, minus its plain-write save — see
+  // publishMintedKey for why the write has to be exclusive.
+  const minted = createWallet();
+  const published = publishMintedKey(WALLET_FILE_PATH, minted.privateKey);
+  // An adopted file is read raw; the SDK loader would 0x-prefix it, so do the same.
+  const privateKey = (published.startsWith("0x") ? published : `0x${published}`) as `0x${string}`;
+  _evmWalletInfo = {
+    address: privateKeyToAccount(privateKey).address,
+    privateKey,
+    isNew: true,
+  };
+  console.error(formatWalletCreatedMessage(_evmWalletInfo.address));
   // Mirror into the keychain so the next process reads it from there instead
   // of the plaintext file. No-op unless a keychain exists; only strict mode
   // then retires the file, and only after a verified read-back.
-  persistKey(EVM_KEY_ACCOUNT, _evmWalletInfo.privateKey, WALLET_FILE_PATH);
+  persistKey(EVM_KEY_ACCOUNT, privateKey, WALLET_FILE_PATH);
   return _evmWalletInfo;
 }
 
@@ -615,19 +801,24 @@ async function provisionSolanaWallet(): Promise<SolanaWalletInfo> {
   if (keychainError !== undefined) {
     throw new Error(
       `Could not read the Solana wallet key from the OS keychain (${keychainError}), and ` +
-        `~/.blockrun/.solana-session does not exist (BLOCKRUN_KEYCHAIN=strict retires it once the key is in the keychain). ` +
+        `${explainMissingKeyFile(SOLANA_WALLET_FILE_PATH, "~/.blockrun/.solana-session")}. ` +
         `Refusing to create a new Solana wallet — your existing one is most likely still in the keychain. ` +
-        `Unlock the keychain and retry, or set SOLANA_WALLET_KEY to your key. Nothing was charged.`,
+        `Unlock the keychain and retry, restore the file from a backup, or set SOLANA_WALLET_KEY to your key. Nothing was charged.`,
     );
   }
   const created = await createSolanaWallet();
-  saveSolanaWallet(created.privateKey);
+  // NOT the SDK's saveSolanaWallet(): that is a plain write, and the await
+  // above (a cold @solana/web3.js import) is a wide window for a second server
+  // process to mint too. Publish exclusively and adopt the winner's key if we
+  // lost — see publishMintedKey.
+  const privateKey = publishMintedKey(SOLANA_WALLET_FILE_PATH, created.privateKey);
+  const address = privateKey === created.privateKey ? created.address : await solanaPublicKey(privateKey);
   // Mirror into the keychain; strict mode then retires the file after a
   // verified read-back — the same sequence ensureEvmWallet() runs.
-  persistKey(SOLANA_KEY_ACCOUNT, created.privateKey, SOLANA_WALLET_FILE_PATH);
-  _solanaKey = created.privateKey;
-  _solanaWalletInfo = { address: created.address, privateKey: created.privateKey, isNew: true };
-  console.error(formatWalletCreatedMessage(created.address));
+  persistKey(SOLANA_KEY_ACCOUNT, privateKey, SOLANA_WALLET_FILE_PATH);
+  _solanaKey = privateKey;
+  _solanaWalletInfo = { address, privateKey, isNew: true };
+  console.error(formatWalletCreatedMessage(address));
   return _solanaWalletInfo;
 }
 

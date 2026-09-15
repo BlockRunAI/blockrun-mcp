@@ -188,9 +188,33 @@ export type KeychainRead =
   | { status: "error"; detail: string };
 
 /**
+ * Did the helper binary fail to launch at all?
+ *
+ * spawnSync does NOT throw for a nonexistent path: it returns `{status: null,
+ * error: ENOENT}`. Before this was checked, the linux branch fell through its
+ * exit-code tests and reported `secret-tool exit timeout` as a keychain ERROR
+ * — and both provisioners rightly refuse to mint on "error", so a fresh
+ * Ubuntu/Debian/WSL/Docker install (libsecret-tools is not installed by
+ * default) could never create a wallet on either chain, with a message
+ * blaming BLOCKRUN_KEYCHAIN=strict on a machine that had never set it. A
+ * keychain that does not exist cannot be holding a funded key: a missing
+ * binary is "unavailable", never a fault, and the header above promises the
+ * MCP stays file-based there.
+ */
+function binaryMissing(result: { error?: NodeJS.ErrnoException }): boolean {
+  return result.error?.code === "ENOENT";
+}
+
+/**
  * Read a secret, preserving WHY a read came back empty.
  */
 export function keychainRead(account: string): KeychainRead {
+  // Without a keychain there is nothing to read and nothing to spawn. This is
+  // the same check persistKey() makes before writing; a reader that asked a
+  // narrower question than the writer is how the ENOENT above got classified
+  // as a fault.
+  if (!isKeychainAvailable()) return { status: "absent" };
+
   const platform = os.platform();
   try {
     if (platform === "darwin") {
@@ -204,6 +228,7 @@ export function keychainRead(account: string): KeychainRead {
         return value ? { status: "found", value } : { status: "absent" };
       }
       if (result.status === MACOS_ITEM_NOT_FOUND) return { status: "absent" };
+      if (binaryMissing(result)) return { status: "absent" };
       return { status: "error", detail: `security exit ${result.status ?? "timeout"}` };
     }
 
@@ -218,6 +243,7 @@ export function keychainRead(account: string): KeychainRead {
         return value ? { status: "found", value } : { status: "absent" };
       }
       if (result.status === LINUX_ITEM_NOT_FOUND) return { status: "absent" };
+      if (binaryMissing(result)) return { status: "absent" };
       return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}` };
     }
 
@@ -231,10 +257,12 @@ export function keychainRead(account: string): KeychainRead {
  * Read a secret. Returns null when absent, unavailable, or unreadable.
  *
  * Convenience wrapper for callers where "absent" and "error" lead to the same
- * safe action. Anywhere the difference decides whether to CREATE a wallet, use
- * keychainRead() instead.
+ * safe action. Anywhere the difference decides whether to CREATE a wallet — or
+ * which chain to select — use keychainRead() instead.
  */
 export function keychainLoad(account: string): string | null {
+  if (!isKeychainAvailable()) return null;
+
   const platform = os.platform();
   try {
     if (platform === "darwin") {
@@ -248,7 +276,7 @@ export function keychainLoad(account: string): string | null {
       // a locked keychain returns a different code, and silently creating a
       // SECOND wallet because we could not read the first one is the worst
       // possible failure here — the user's funds appear to vanish.
-      if (result.status !== MACOS_ITEM_NOT_FOUND) {
+      if (result.status !== MACOS_ITEM_NOT_FOUND && !binaryMissing(result)) {
         warnOnce(
           `OS keychain read failed (security exit ${result.status}) — falling back to ~/.blockrun/.session.`,
         );
@@ -263,7 +291,7 @@ export function keychainLoad(account: string): string | null {
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
       if (result.status === 0) return result.stdout.trim() || null;
-      if (result.status !== LINUX_ITEM_NOT_FOUND) {
+      if (result.status !== LINUX_ITEM_NOT_FOUND && !binaryMissing(result)) {
         warnOnce(
           `OS keychain read failed (secret-tool exit ${result.status}) — falling back to ~/.blockrun/.session.`,
         );
@@ -363,6 +391,27 @@ const defaultOps: KeychainOps = {
   load: keychainLoad,
 };
 
+/**
+ * Does the plaintext file hold exactly `key`, as its loader would read it?
+ *
+ * The loaders trim and (for EVM) 0x-prefix the file, so `KEY\n` and the bare
+ * hex are the same key on disk. Missing or empty is "yes": there is nothing
+ * there to lose. Unreadable is "no": unverifiable is not verified.
+ */
+function fileHoldsKey(file: string, key: string): boolean {
+  let raw: string;
+  try {
+    if (!fs.existsSync(file)) return true;
+    raw = fs.readFileSync(file, "utf-8");
+  } catch {
+    return false;
+  }
+  const onDisk = raw.trim();
+  if (onDisk === "") return true;
+  if (onDisk === key) return true;
+  return key.startsWith("0x") && !onDisk.startsWith("0x") && `0x${onDisk}` === key;
+}
+
 export function persistKey(
   account: string,
   key: string,
@@ -379,6 +428,22 @@ export function persistKey(
   if (ops.load(account) !== key) {
     warnOnce(
       "BLOCKRUN_KEYCHAIN=strict: keychain read-back did not match — keeping the plaintext key file.",
+    );
+    return;
+  }
+
+  // The read-back proved the KEYCHAIN holds `key`. It says nothing about the
+  // FILE, and the file is what gets deleted. Before this check, a key that
+  // arrived from BLOCKRUN_WALLET_KEY went through here: stored over the
+  // funded key with -U, read back as itself, and the .session still holding
+  // the funded key was removed — both copies of the wallet gone in one run,
+  // behind the success message below. The caller no longer persists env keys
+  // at all, but the delete must be safe on its own: remove the file only when
+  // it holds the very key we just verified, and never remove what we could
+  // not read. Empty is fine to remove — it holds nothing to lose.
+  if (!fileHoldsKey(plaintextFile, key)) {
+    warnOnce(
+      `BLOCKRUN_KEYCHAIN=strict: ${plaintextFile} holds a different key than the one verified in the keychain — keeping it.`,
     );
     return;
   }
