@@ -273,3 +273,48 @@ test("a path tool renders a settled-then-failed call as a charge that stands, bo
   assert.match(t, /\$0\.0030/);
   assert.doesNotMatch(t, /MAY have gone through|Try again in a few minutes/);
 });
+
+// Audit round 4b (P1, a regression of the RawCallSettledError fix): the SDK's
+// spend counter is per CLIENT, getClient() is a cached singleton per rail, and
+// tool calls run concurrently — so a concurrent call's settlement landed
+// inside a failing call's before/after window and was booked to it as "the
+// charge stands" (and booked again by the call that actually paid). Every
+// path tool now builds its own client, like blockrun_chat always did.
+test("every shared-client path tool builds a fresh client per call, never the singleton", async () => {
+  const { readFileSync } = await import("node:fs");
+  for (const f of ["search", "exa", "markets", "rpc", "defi", "phone"]) {
+    const src = readFileSync(new URL(`../src/tools/${f}.ts`, import.meta.url), "utf8");
+    assert.doesNotMatch(src, /\bgetClient\(\)/, `${f}.ts must not read the shared client — its spend counter is shared too`);
+    assert.match(src, /\bbuildClient\(\)/, `${f}.ts builds a per-call client`);
+  }
+});
+
+test("a concurrent settlement on the SAME client would be misattributed — which is why the client is per call", async () => {
+  const { rawPost } = await import("../src/utils/raw-call.js");
+  let total = 0;
+  const shared = {
+    getSpending: () => ({ totalUsd: total }),
+    requestWithPaymentRaw: async () => {
+      total += 0.2645; // a concurrent call settles while this one is in flight...
+      throw Object.assign(new Error("API error: 400"), { statusCode: 400 }); // ...and this one is refused unpaid
+    },
+  };
+  // The helper cannot tell the two apart on a shared counter; this pins that
+  // the ONLY defence is the per-call client asserted above.
+  await assert.rejects(rawPost(shared as never, "/v1/x", {}), (e: Error) => e.name === "RawCallSettledError");
+});
+
+// Round 4b (RP-5): the account rail returned a settled 2xx whose body would
+// not parse as a SUCCESS with data `{}` — money booked, no hint the body was
+// unreadable — while the wallet rails say the charge stands. Same verdict now.
+test("account rail: a settled 2xx with an unreadable body is a charge that stands, booked at the cost header", async () => {
+  rail = "account";
+  accountFetch = async () => new Response("<html>not json</html>", { status: 200, headers: { "content-type": "text/html", "x-blockrun-cost-usd": "0.012000" } });
+  const { call, budget } = harness(registerRpcTool as Register);
+  const res = await call({ network: "ethereum", method: "eth_blockNumber" });
+  const t = textOf(res);
+  assert.equal(res.isError, true, t);
+  assert.match(t, /charge stands/);
+  assert.match(t, /\$0\.0120/);
+  assert.ok(Math.abs(budget.spent - 0.012) < 1e-9, `spent=${budget.spent}`);
+});

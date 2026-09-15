@@ -35,13 +35,9 @@ import { recordActualSpend } from "./budget.js";
 import { settlementOnThrow } from "./chat-stream.js";
 import { isApiKeyMode } from "./auth.js";
 import { ledgerFallback, RawCallSettledError } from "./raw-call.js";
-import { basePaymentReplayHedge, extractErrorMessage, formatError, isExplicitlyUncharged } from "./errors.js";
+import { basePaymentReplayHedge, extractErrorMessage, formatError } from "./errors.js";
+import { isExplicitlyUncharged, ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
 
-// Statuses an edge or a load balancer returns when the ORIGIN did not answer
-// in time — the origin may still be running the request and settle it after
-// the client is gone. Mirrors ORIGIN_DID_NOT_ANSWER in utils/chat-stream.ts
-// (not exported there); keep the two in step.
-const ORIGIN_DID_NOT_ANSWER = new Set([408, 502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530]);
 
 function statusOf(err: unknown): number | undefined {
   const e = err as { statusCode?: unknown; status?: unknown } | undefined;
@@ -86,13 +82,15 @@ export function pathToolFailure(err: unknown, opts: PathToolFailureOpts): PathTo
   // The SDK's counter moved before the throw: a CERTAIN charge at a known
   // amount (see RawCallSettledError), not a maybe at the reserve.
   if (err instanceof RawCallSettledError) {
-    recordActualSpend(opts.budget, err.settledUsd, opts.sentUsd, opts.agentId);
+    // The counted amount where the rail reported one; the reserve otherwise.
+    const booked = err.settledUsd ?? ledgerFallback(opts.sentUsd);
+    recordActualSpend(opts.budget, err.settledUsd, booked, opts.agentId);
     return {
       content: [{
         type: "text",
         text: `Error: ${err.message}
 
-The payment settled before this failure, so the charge stands — $${err.settledUsd.toFixed(4)} is booked against your budget. ` +
+The payment settled before this failure, so the charge stands — $${booked.toFixed(4)} is booked against your budget. ` +
           `The gateway answered but the response could not be read; retrying pays again. Check blockrun_wallet action:"report" first.`,
       }],
       isError: true,

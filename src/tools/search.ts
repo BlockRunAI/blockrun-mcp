@@ -11,7 +11,7 @@ import { z } from "zod";
 import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
-import { getClient } from "../utils/wallet.js";
+import { buildClient } from "../utils/wallet.js";
 import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
 import { formatError } from "../utils/errors.js";
 import { pathToolFailure } from "../utils/path-tool-catch.js";
@@ -75,7 +75,7 @@ export function estimateSearchCost(body: unknown): number {
 // shape error the gateway reports unpaid.
 const SEARCH_SOURCES = ["web", "news"] as const;
 
-/** Exported for tests. The refusal for a `sources` entry the gateway no longer serves, or null. */
+/** The refusal for a `sources` entry the gateway no longer serves, or null. Pinned directly in test/search-sources.test.ts. */
 export function unsupportedSearchSource(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const sources = (body as { sources?: unknown }).sources;
@@ -140,7 +140,14 @@ Full request shape + worked examples in the \`search\` skill (\`skills/search/SK
           // reservation. No-ops when off, sub-threshold, or unsupported by the client.
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `search · ${cleanPath || "search"}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
-          const client = getClient() as unknown as RawClient;
+          // A FRESH client per call, never the shared singleton: rawGet/rawPost
+          // read the SDK's cumulative spend counter around the call to tell a
+          // settled-then-failed request from a free refusal, and the MCP SDK
+          // dispatches tool calls concurrently — on a shared client a
+          // concurrent call's settlement landed inside this call's window and
+          // was booked to it as "the charge stands" (audit round 4b). Same
+          // reason blockrun_chat builds its own.
+          const client = buildClient() as unknown as RawClient;
           const endpoint = cleanPath ? `/v1/search/${cleanPath}` : "/v1/search";
           sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, endpoint, body ?? {});

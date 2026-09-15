@@ -14,7 +14,7 @@ import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budge
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { coerceBody } from "../utils/body.js";
-import { getClient } from "../utils/wallet.js";
+import { buildClient } from "../utils/wallet.js";
 import { ledgerFallback, rawPost, type RawClient } from "../utils/raw-call.js";
 import { formatError } from "../utils/errors.js";
 import { pathToolFailure } from "../utils/path-tool-catch.js";
@@ -98,7 +98,14 @@ Prefer blockrun_price (free quotes) or blockrun_dex (free DEX data) when they co
           // reservation. No-ops when off, sub-threshold, or unsupported by the client.
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `rpc · ${cleanNetwork}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
-          const client = getClient() as unknown as RawClient;
+          // A FRESH client per call, never the shared singleton: rawGet/rawPost
+          // read the SDK's cumulative spend counter around the call to tell a
+          // settled-then-failed request from a free refusal, and the MCP SDK
+          // dispatches tool calls concurrently — on a shared client a
+          // concurrent call's settlement landed inside this call's window and
+          // was booked to it as "the charge stands" (audit round 4b). Same
+          // reason blockrun_chat builds its own.
+          const client = buildClient() as unknown as RawClient;
           sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawPost(client, `/v1/rpc/${cleanNetwork}`, body);
           recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);

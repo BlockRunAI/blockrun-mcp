@@ -4,7 +4,7 @@ import { z } from "zod";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { asStructuredContent, coerceBody } from "../utils/body.js";
-import { getClient } from "../utils/wallet.js";
+import { buildClient } from "../utils/wallet.js";
 import { ledgerFallback, rawGet, rawPost, type RawClient } from "../utils/raw-call.js";
 import { formatError } from "../utils/errors.js";
 import { pathToolFailure } from "../utils/path-tool-catch.js";
@@ -132,7 +132,14 @@ Pass query params via 'params' (GET) — a '?' in 'path' is refused before payme
           // (client.ts:1534, 1552), so the wallet rail is byte-identical — but the
           // account rail then goes through utils/api-key-call.ts, which reads the
           // settled `x-blockrun-cost-usd` instead of discarding the response.
-          const llm = getClient() as unknown as RawClient;
+          // A FRESH client per call, never the shared singleton: rawGet/rawPost
+          // read the SDK's cumulative spend counter around the call to tell a
+          // settled-then-failed request from a free refusal, and the MCP SDK
+          // dispatches tool calls concurrently — on a shared client a
+          // concurrent call's settlement landed inside this call's window and
+          // was booked to it as "the charge stands" (audit round 4b). Same
+          // reason blockrun_chat builds its own.
+          const llm = buildClient() as unknown as RawClient;
           const endpoint = `/v1/pm/${path}`;
           sentUsd = estimatedCost;
           const { data: result, paidUsd } = body !== undefined
