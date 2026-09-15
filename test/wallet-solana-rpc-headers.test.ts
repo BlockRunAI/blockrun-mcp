@@ -19,10 +19,11 @@ const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 type Captured = { url: string; headers: Record<string, string>; body: Record<string, unknown> };
 
-async function balanceWith(env: { SOLANA_RPC_HEADERS?: string; SOLANA_RPC_URL?: string }, reply: unknown): Promise<{ captured: Captured; balance: number | null }> {
-  const saved = { headers: process.env.SOLANA_RPC_HEADERS, url: process.env.SOLANA_RPC_URL };
+async function balanceWith(env: { SOLANA_RPC_HEADERS?: string; SOLANA_RPC_URL?: string; SOLANA_RPC_API_KEY?: string }, reply: unknown): Promise<{ captured: Captured; balance: number | null }> {
+  const saved = { headers: process.env.SOLANA_RPC_HEADERS, url: process.env.SOLANA_RPC_URL, apiKey: process.env.SOLANA_RPC_API_KEY };
   if (env.SOLANA_RPC_HEADERS === undefined) delete process.env.SOLANA_RPC_HEADERS; else process.env.SOLANA_RPC_HEADERS = env.SOLANA_RPC_HEADERS;
   if (env.SOLANA_RPC_URL === undefined) delete process.env.SOLANA_RPC_URL; else process.env.SOLANA_RPC_URL = env.SOLANA_RPC_URL;
+  if (env.SOLANA_RPC_API_KEY === undefined) delete process.env.SOLANA_RPC_API_KEY; else process.env.SOLANA_RPC_API_KEY = env.SOLANA_RPC_API_KEY;
   const realFetch = globalThis.fetch;
   let captured: Captured | undefined;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -42,6 +43,7 @@ async function balanceWith(env: { SOLANA_RPC_HEADERS?: string; SOLANA_RPC_URL?: 
     globalThis.fetch = realFetch;
     if (saved.headers === undefined) delete process.env.SOLANA_RPC_HEADERS; else process.env.SOLANA_RPC_HEADERS = saved.headers;
     if (saved.url === undefined) delete process.env.SOLANA_RPC_URL; else process.env.SOLANA_RPC_URL = saved.url;
+    if (saved.apiKey === undefined) delete process.env.SOLANA_RPC_API_KEY; else process.env.SOLANA_RPC_API_KEY = saved.apiKey;
   }
 }
 
@@ -92,4 +94,26 @@ test("an RPC error answers null (unavailable), never 0 beside a funded address",
     { jsonrpc: "2.0", id: 1, error: { code: -32600, message: "unauthorized" } },
   );
   assert.equal(balance, null);
+});
+
+// Audit round 4: the SDK's resolveRpcConfig honours SOLANA_RPC_API_KEY as an
+// `x-api-key` header when SOLANA_RPC_HEADERS is unset — the documented way to
+// point at a keyed private RPC — and the balance read knew only the JSON
+// form, so that configuration still answered 401 and "unavailable".
+test("SOLANA_RPC_API_KEY is sent as x-api-key, the way the SDK sends it", async () => {
+  const { captured, balance } = await balanceWith(
+    { SOLANA_RPC_API_KEY: "k-456", SOLANA_RPC_URL: "https://private.rpc.example/solana" },
+    tokenAccounts([2]),
+  );
+  assert.equal(captured.headers["x-api-key"], "k-456");
+  assert.equal(balance, 2);
+});
+
+test("SOLANA_RPC_HEADERS outranks SOLANA_RPC_API_KEY, the SDK's precedence", async () => {
+  const { captured } = await balanceWith(
+    { SOLANA_RPC_HEADERS: '{"Authorization":"Bearer t"}', SOLANA_RPC_API_KEY: "k-456" },
+    tokenAccounts([2]),
+  );
+  assert.equal(captured.headers["authorization"], "Bearer t");
+  assert.equal(captured.headers["x-api-key"], undefined, "the JSON form replaces, it does not merge");
 });

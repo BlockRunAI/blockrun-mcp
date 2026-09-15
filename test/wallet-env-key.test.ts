@@ -148,10 +148,24 @@ test("an env key without the 0x prefix is normalised the way the SDK normalises 
   assert.equal(wallet.getOrCreateWalletKey(), ENV_KEY);
 });
 
-test("the legacy ~/.blockrun/wallet.key outranks the keychain, exactly as the SDK loader ranks it", () => {
+test("the legacy ~/.blockrun/wallet.key ranks BELOW the keychain, and above a mint", () => {
+  // Round 3 pinned the opposite ("exactly as the SDK loader ranks it") and
+  // that was the P1 round 4 found: strict mode retires .session and never
+  // wallet.key, so a stale legacy file outranked the funded keychain entry
+  // the moment .session was gone, and persistKey stored it over the funded
+  // key with -U. The keychain entry only ever exists because this server
+  // mirrored a key there, so it can never be staler than a file that
+  // predates the mirror. .session stays the rotation seam (see
+  // keychain-precedence.test.ts); wallet.key is a fallback for a machine
+  // whose keychain holds nothing.
   fs.writeFileSync(path.join(blockrunDir, "wallet.key"), LEGACY_KEY + "\n", { mode: 0o600 });
+  assert.equal(wallet.getOrCreateWalletKey(), STALE_KEYCHAIN_KEY, "the keychain's funded key wins over a legacy file");
+  assert.deepEqual(persisted, [], "and nothing is written over it");
 
-  assert.equal(wallet.getOrCreateWalletKey(), LEGACY_KEY, "a key file the SDK would load must not be shadowed by the keychain");
+  wallet.resetEvmWalletCache();
+  store.delete("evm-wallet-key");
+  assert.equal(wallet.getOrCreateWalletKey(), LEGACY_KEY, "with no keychain entry the legacy file is the wallet, not a reason to mint");
+  store.set("evm-wallet-key", STALE_KEYCHAIN_KEY);
 });
 
 test("getChain() recognises a Base wallet configured through BASE_CHAIN_WALLET_KEY or wallet.key", () => {

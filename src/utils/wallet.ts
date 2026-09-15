@@ -172,6 +172,26 @@ function evmKeyOnDisk(): string | null | "unreadable" {
 }
 
 /**
+ * The key in ~/.blockrun/.session alone — the ROTATION seam, the one file
+ * that outranks the keychain — or null when that file holds nothing.
+ *
+ * Not the legacy wallet.key: strict mode retires .session once its key is in
+ * the keychain and never touches wallet.key (persistKey is only ever handed
+ * the .session path), so a loader that read both put a stale legacy file
+ * from an older install AHEAD of the keychain the moment .session was gone —
+ * and persisted its key over the funded one with -U (audit round 4). The
+ * legacy file is consulted only after the keychain says "absent".
+ *
+ * "unreadable" when .session exists but cannot be read, for the same reason
+ * as evmKeyOnDisk: the loader then fails loudly on it instead of a keychain
+ * entry shadowing it.
+ */
+function sessionKeyOnDisk(): string | null | "unreadable" {
+  if (!keyFileHasKey(WALLET_FILE_PATH)) return null;
+  return evmKeyOnDisk();
+}
+
+/**
  * Does this key file actually HOLD a key?
  *
  * `existsSync` alone is the wrong question at a keychain gate. The loaders on
@@ -218,8 +238,11 @@ function hasExistingBaseWallet(): boolean {
   if (envEvmKey()) return true;
   // Same files the SDK loader reads (.session, then the legacy wallet.key); an
   // unreadable file is not evidence either way — fall through to the keychain.
-  const onDisk = evmKeyOnDisk();
-  if (onDisk !== null && onDisk !== "unreadable") return true;
+  // A file that exists but cannot be read counts as present, the way
+  // ensureEvmWallet treats it: migrating on "could not read" is the silent
+  // substitution this guard exists to stop, and the Base path then fails
+  // loudly on the same file.
+  if (evmKeyOnDisk() !== null) return true;
   // A keychain we could not open may well hold the funded wallet. Migrating
   // on that uncertainty is the silent substitution this guard exists to stop,
   // so "unknown" answers "yes, stay on Base": the Base path then fails loudly
@@ -512,35 +535,67 @@ export function isEvmPrivateKey(value: string): value is `0x${string}` {
  *
  * A pre-existing EMPTY file (an interrupted write, a restore placeholder —
  * the round-3 scenario) loses the exclusive create but holds nothing to
- * adopt; it is replaced atomically. Mode 0600 throughout, as the SDK writes.
+ * adopt. It is CLAIMED, not overwritten: the placeholder is renamed aside
+ * (exactly one process can rename a given name away) and the exclusive link
+ * is retried, so two processes that both lost to the same placeholder still
+ * publish exactly one key and the other adopts it — round 3 replaced the
+ * placeholder with a plain rename, which two losers could both do, the last
+ * one silently discarding the first one's published key (audit round 4).
+ * Whatever happened, the file is read back at the end and its contents are
+ * what this process signs with: the residual window is the read-to-return
+ * gap, not the whole publish. Mode 0600 throughout, as the SDK writes.
  */
 function publishMintedKey(file: string, key: string): string {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
-  try {
-    fs.writeFileSync(tmp, key, { mode: 0o600 });
+  // Exclusive create, by hard link where the filesystem has them and by
+  // O_EXCL otherwise. true = ours is now the file; false = a file exists.
+  const tryPublish = (): boolean => {
     try {
       fs.linkSync(tmp, file);
-      return key;
+      return true;
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") {
-        // No hard links here: exclusive create is the next best thing.
-        try {
-          fs.writeFileSync(file, key, { mode: 0o600, flag: "wx" });
-          return key;
-        } catch (err2) {
-          if ((err2 as NodeJS.ErrnoException).code !== "EEXIST") throw err2;
-        }
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      try {
+        fs.writeFileSync(file, key, { mode: 0o600, flag: "wx" });
+        return true;
+      } catch (err2) {
+        if ((err2 as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw err2;
       }
     }
-    // Someone published before us. Their key is the wallet every store will
-    // hold from here on; ours exists only in this heap and must not be shown.
-    const theirs = fs.readFileSync(file, "utf-8").trim();
-    if (theirs) return theirs;
-    // ...unless "someone" is a stale empty placeholder. Replace it in one step.
-    fs.renameSync(tmp, file);
+  };
+  try {
+    fs.writeFileSync(tmp, key, { mode: 0o600 });
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (tryPublish()) break;
+      // Someone published before us. Their key is the wallet every store
+      // will hold from here on; ours exists only in this heap and must not
+      // be shown.
+      let theirs = "";
+      try { theirs = fs.readFileSync(file, "utf-8").trim(); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        continue; // gone between the link and the read: try the link again
+      }
+      if (theirs) break;
+      // A stale empty placeholder. Claim it by renaming it away — the one
+      // process whose rename succeeds is the one that gets to publish; the
+      // others see ENOENT here, retry the link, lose to the claimant's key
+      // and adopt it on the next pass.
+      const aside = `${tmp}.placeholder`;
+      try { fs.renameSync(file, aside); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+      fs.rmSync(aside, { force: true });
+    }
+    // What is on disk is the wallet, whoever put it there. (Four passes of
+    // link/read/claim without a file at the end is not a race any more, it
+    // is a filesystem that will not hold one; write plainly and say so.)
+    let published = "";
+    try { published = fs.readFileSync(file, "utf-8").trim(); } catch { /* fall through */ }
+    if (published) return published;
+    fs.writeFileSync(file, key, { mode: 0o600 });
     return key;
   } finally {
     fs.rmSync(tmp, { force: true });
@@ -606,10 +661,11 @@ function ensureEvmWallet() {
   // sitting there for the same attacker to read.
   //
   // "Holds a key" is the loader's question, asked through the loader: an
-  // empty file is no key (see keyFileHasKey), the legacy wallet.key counts,
-  // and a file we cannot read counts as present so the loader fails loudly
-  // on it instead of a stale keychain entry shadowing it.
-  const onDisk = evmKeyOnDisk();
+  // empty file is no key (see keyFileHasKey), and a file we cannot read
+  // counts as present so the loader fails loudly on it instead of a stale
+  // keychain entry shadowing it. Only .session ranks here — the legacy
+  // wallet.key is read AFTER the keychain (see sessionKeyOnDisk).
+  const onDisk = sessionKeyOnDisk();
   if (onDisk === null && getKeychainMode() !== "off") {
     const read = keychainRead(EVM_KEY_ACCOUNT);
 
@@ -643,10 +699,12 @@ function ensureEvmWallet() {
     }
   }
 
-  if (onDisk !== null) {
-    // The SDK loader's own answer (a file we cannot read is re-read here so
-    // it throws the real error rather than being papered over).
-    const privateKey = (onDisk === "unreadable" ? loadWallet() : onDisk) as `0x${string}` | null;
+  // .session held a key (or could not be read), or the keychain had nothing:
+  // the SDK loader's own answer — .session, then the legacy wallet.key. A
+  // file we cannot read is re-read here so it throws the real error rather
+  // than being papered over.
+  {
+    const privateKey = (onDisk !== null && onDisk !== "unreadable" ? onDisk : loadWallet()) as `0x${string}` | null;
     if (privateKey) {
       _evmWalletInfo = { address: privateKeyToAccount(privateKey).address, privateKey, isNew: false };
       persistKey(EVM_KEY_ACCOUNT, privateKey, WALLET_FILE_PATH);
@@ -1057,6 +1115,9 @@ async function getSolanaUsdcBalance(address: string): Promise<number | null> {
         rpcHeaders = Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]));
       }
     } catch { /* malformed: fall through unauthenticated, as the SDK does */ }
+  } else if (process.env.SOLANA_RPC_API_KEY) {
+    // The SDK's other spelling (resolveRpcConfig): a keyed private RPC.
+    rpcHeaders = { "x-api-key": process.env.SOLANA_RPC_API_KEY };
   }
   try {
     const response = await fetch(rpcUrl, {

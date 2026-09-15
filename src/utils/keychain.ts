@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import { privateKeyToAccount } from "viem/accounts";
 
 /** Keychain service name — one namespace for every BlockRun secret. */
 export const KEYCHAIN_SERVICE = "blockrun";
@@ -46,8 +47,23 @@ const TIMEOUT_MS = 5_000;
 
 /** macOS errSecItemNotFound. */
 const MACOS_ITEM_NOT_FOUND = 44;
-/** secret-tool lookup miss. */
+/**
+ * secret-tool lookup: exit 1 — for a MISS and for a FAULT alike. libsecret's
+ * tool/secret-tool.c returns 1 from the lookup action whether `value == NULL`
+ * or `error != NULL`; the only difference is that the fault path g_printerr()s
+ * its reason first ("Cannot autolaunch D-Bus without X11 $DISPLAY", "The
+ * unlock prompt was dismissed", a StartServiceByName timeout). So the status
+ * cannot decide, and until audit round 4 the Linux branch read every fault as
+ * "absent" — round 3's tri-state was macOS-only, and under strict mode both
+ * provisioners minted over a funded keychain wallet the process could not
+ * open. linuxLookupMissed() reads stderr as well.
+ */
 const LINUX_ITEM_NOT_FOUND = 1;
+
+/** A secret-tool exit 1 that printed nothing is a miss; one that said why is a fault. */
+function linuxLookupMissed(result: { status: number | null; stderr?: string | null }): boolean {
+  return result.status === LINUX_ITEM_NOT_FOUND && !(result.stderr ?? "").trim();
+}
 
 const warned = new Set<string>();
 
@@ -242,9 +258,10 @@ export function keychainRead(account: string): KeychainRead {
         const value = result.stdout.trim();
         return value ? { status: "found", value } : { status: "absent" };
       }
-      if (result.status === LINUX_ITEM_NOT_FOUND) return { status: "absent" };
+      if (linuxLookupMissed(result)) return { status: "absent" };
       if (binaryMissing(result)) return { status: "absent" };
-      return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}` };
+      const said = (result.stderr ?? "").trim().split("\n")[0];
+      return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}${said ? `: ${said}` : ""}` };
     }
 
     return { status: "absent" };
@@ -291,9 +308,10 @@ export function keychainLoad(account: string): string | null {
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
       if (result.status === 0) return result.stdout.trim() || null;
-      if (result.status !== LINUX_ITEM_NOT_FOUND && !binaryMissing(result)) {
+      if (!linuxLookupMissed(result) && !binaryMissing(result)) {
+        const said = (result.stderr ?? "").trim().split("\n")[0];
         warnOnce(
-          `OS keychain read failed (secret-tool exit ${result.status}) — falling back to ~/.blockrun/.session.`,
+          `OS keychain read failed (secret-tool exit ${result.status}${said ? `: ${said}` : ""}) — falling back to ~/.blockrun/.session.`,
         );
       }
       return null;
@@ -412,6 +430,18 @@ function fileHoldsKey(file: string, key: string): boolean {
   return key.startsWith("0x") && !onDisk.startsWith("0x") && `0x${onDisk}` === key;
 }
 
+/** The address behind a stored key, for the replace notice — never the key. */
+function describeKeyOwner(_account: string, key: string): string {
+  // By shape, not by account name: an EVM key is the only one whose address
+  // can be derived here without the SVM dependencies.
+  if (/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    try {
+      return privateKeyToAccount(key as `0x${string}`).address;
+    } catch { /* fall through */ }
+  }
+  return "another wallet";
+}
+
 export function persistKey(
   account: string,
   key: string,
@@ -420,6 +450,21 @@ export function persistKey(
 ): void {
   const mode = getKeychainMode();
   if (mode === "off" || !ops.available()) return;
+
+  // The store is `-U`: it REPLACES whatever the keychain held. The file is
+  // the source of truth by design (rotation by replacing .session), so a
+  // different key is written — but never silently. Round 4 found three ways
+  // a key nobody meant to rotate reached this line (a mis-read Linux
+  // keychain, a lost first-run race, a stale legacy file); each is fixed at
+  // its source, and this line is what makes the next one visible the run it
+  // happens. The address, never the key, is printed.
+  const previous = ops.load(account);
+  if (previous && previous !== key) {
+    console.error(
+      `[blockrun] Replacing the ${account} entry in the OS keychain: it held the key for ${describeKeyOwner(account, previous)}, ` +
+        `the key file now holds a different one. If you did not rotate this wallet on purpose, stop and check ~/.blockrun before spending.`,
+    );
+  }
 
   if (!ops.store(account, key)) return;
 

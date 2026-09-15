@@ -301,3 +301,63 @@ test("a file that HOLDS a key still outranks the keychain (the empty-file fix di
   fs.rmSync(session, { force: true });
   resetEvmWalletCache();
 });
+
+// --- audit round 4: the legacy file ranks BELOW the keychain ---------------
+//
+// evmKeyOnDisk() asks the SDK loader, and the loader reads ~/.blockrun/.session
+// THEN the legacy ~/.blockrun/wallet.key. Under strict mode the .session is
+// retired once its key is in the keychain — but wallet.key never is (persistKey
+// is only ever handed the .session path), so a stale legacy file from an older
+// install outranked the keychain the moment .session was gone, and its key was
+// stored over the funded one with -U. "The keychain becomes authoritative
+// exactly when the file is gone" was false on that branch. The .session is the
+// rotation seam and keeps outranking the keychain; the legacy file is a
+// fallback for a machine with no keychain entry, nothing more.
+test("EVM: a legacy wallet.key does NOT outrank the keychain once .session is retired (strict)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const dir = path.join(home, ".blockrun");
+  fs.rmSync(path.join(dir, ".session"), { force: true });
+  const LEGACY_KEY = "0x" + "33".repeat(32);
+  fs.writeFileSync(path.join(dir, "wallet.key"), LEGACY_KEY, { mode: 0o600 });
+  mode = "strict";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), KEYCHAIN_KEY, "the funded keychain wallet wins over a stale legacy file");
+
+  fs.rmSync(path.join(dir, "wallet.key"), { force: true });
+  mode = "auto";
+  resetEvmWalletCache();
+});
+
+test("EVM: the legacy wallet.key is still honoured when the keychain has nothing", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const dir = path.join(home, ".blockrun");
+  fs.rmSync(path.join(dir, ".session"), { force: true });
+  const LEGACY_KEY = "0x" + "33".repeat(32);
+  fs.writeFileSync(path.join(dir, "wallet.key"), LEGACY_KEY, { mode: 0o600 });
+  mode = "auto";
+  readAnswer = { status: "absent" };
+
+  assert.equal(getOrCreateWalletKey(), LEGACY_KEY, "no keychain entry: the legacy file is the wallet, not a reason to mint");
+
+  fs.rmSync(path.join(dir, "wallet.key"), { force: true });
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+  resetEvmWalletCache();
+});
+
+test("EVM: .session still outranks the keychain in strict mode (rotation by file)", async () => {
+  const { resetEvmWalletCache } = await import("../src/utils/wallet.js");
+  resetEvmWalletCache();
+  const session = path.join(home, ".blockrun", ".session");
+  fs.writeFileSync(session, FILE_KEY, { mode: 0o600 });
+  mode = "strict";
+  readAnswer = { status: "found", value: KEYCHAIN_KEY };
+
+  assert.equal(getOrCreateWalletKey(), FILE_KEY);
+
+  fs.rmSync(session, { force: true });
+  mode = "auto";
+  resetEvmWalletCache();
+});
