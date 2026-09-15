@@ -114,7 +114,17 @@ function isDotSegment(seg: string): boolean {
  * discipline as everything else in this file.
  */
 function cutQueryAndControls(path: string): string {
-  return path.replace(/[\t\n\r]/g, "").replace(/[?#][\s\S]*$/, "");
+  // The parser's FIRST step, before even the tab strip: leading and trailing
+  // C0-control-or-space are removed from the whole input. The slug is the
+  // tail of `${base}${endpoint}` on every rail, so TRAILING applies to it —
+  // `phone/numbers/buy ` left the machine as /v1/phone/numbers/buy and served
+  // the $5.001 route while the exact-match price row missed it and $0.012
+  // was reserved (audit round 4b, P0). Only when nothing follows the slug:
+  // with a query or fragment present the trailing bytes belong to those, and
+  // a space BEFORE the `?` is inside the path, which the parser keeps
+  // percent-encoded (the gateway then 404s it unpaid — the safe direction).
+  const tailStripped = /[?#]/.test(path) ? path : path.replace(/[\u0000-\u0020]+$/, "");
+  return tailStripped.replace(/[\t\n\r]/g, "").replace(/[?#][\s\S]*$/, "");
 }
 
 /**
@@ -161,7 +171,13 @@ export function normalizeClassifyPath(path: string): string {
   // The query cut itself lives in cutQueryAndControls, with hasPathTraversal —
   // its `[?#].*$` predecessor did not cross a line terminator, so
   // `phone/numbers/buy?\n` kept its `?` and priced as the $0.012 unknown.
-  const asSent = cutQueryAndControls(path);
+  // A literal `\` is `/` to the parser for https (hasPathTraversal already
+  // splits on both); an ENCODED %5C is not — it stays a literal backslash in
+  // the segment and the gateway's exact match 404s it unpaid. So the swap
+  // happens on the raw slug, before the decode. Without it `sandbox\create`
+  // classified as the $0.003 op, skipped the handler's gpu/timeout
+  // normalisation, and the gateway served a $192 sandbox/create (round 4b).
+  const asSent = cutQueryAndControls(path).replace(/\\/g, "/");
   let decoded = asSent;
   try { decoded = decodeURIComponent(asSent); } catch { /* malformed %: classify as-sent */ }
   return decoded
