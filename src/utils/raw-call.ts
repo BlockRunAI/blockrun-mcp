@@ -24,7 +24,49 @@ import { OBSERVED_GATEWAY_TX_FEE_USD, TRANSACTION_FEE_USD } from "./tx-fee.js";
 export type RawClient = {
   getWithPaymentRaw: (endpoint: string, params?: Record<string, string>) => Promise<unknown>;
   requestWithPaymentRaw: (endpoint: string, body: unknown) => Promise<unknown>;
+  /** The SDK's cumulative settlement counter (throws on the account rail). Optional for stubs. */
+  getSpending?: () => { totalUsd: number };
 };
+
+/**
+ * The SDK call threw AFTER its own counter recorded a settlement. Both wallet
+ * clients count on the paid retry's 2xx and only then read the body
+ * (SolanaLLMClient.requestWithPaymentRaw: assertPaid → recordSettlement →
+ * json()), so a non-JSON 200 surfaces as a bare SyntaxError — no status, no
+ * transport words, "none" to settlementOnThrow — for a call that was paid.
+ * The counter is the evidence, and this carries it to the tool's catch.
+ */
+export class RawCallSettledError extends Error {
+  readonly settledUsd: number;
+  constructor(message: string, settledUsd: number, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "RawCallSettledError";
+    this.settledUsd = settledUsd;
+  }
+}
+
+function counted(client: RawClient): number | undefined {
+  try {
+    const usd = client.getSpending?.().totalUsd;
+    return typeof usd === "number" && Number.isFinite(usd) ? usd : undefined;
+  } catch {
+    return undefined; // the account rail's client throws here; it never reaches this path
+  }
+}
+
+/** Run the SDK call; a throw after the counter moved is re-thrown as RawCallSettledError. */
+async function countedCall<T>(client: RawClient, run: () => Promise<T>): Promise<T> {
+  const before = counted(client);
+  try {
+    return await run();
+  } catch (err) {
+    const after = counted(client);
+    if (before !== undefined && after !== undefined && after - before > 0) {
+      throw new RawCallSettledError(err instanceof Error ? err.message : String(err), after - before, { cause: err });
+    }
+    throw err;
+  }
+}
 
 export interface RawCallResult {
   data: unknown;
@@ -50,7 +92,7 @@ export async function rawGet(
     const { data, paidUsd } = await apiKeyGet(endpoint, params);
     return { data, paidUsd };
   }
-  return { data: await client.getWithPaymentRaw(endpoint, params), paidUsd: null };
+  return { data: await countedCall(client, () => client.getWithPaymentRaw(endpoint, params)), paidUsd: null };
 }
 
 /** POST a rooted endpoint on whichever rail is active. */
@@ -63,7 +105,7 @@ export async function rawPost(
     const { data, paidUsd } = await apiKeyPost(endpoint, (body ?? {}) as Record<string, unknown>);
     return { data, paidUsd };
   }
-  return { data: await client.requestWithPaymentRaw(endpoint, body), paidUsd: null };
+  return { data: await countedCall(client, () => client.requestWithPaymentRaw(endpoint, body)), paidUsd: null };
 }
 
 /**

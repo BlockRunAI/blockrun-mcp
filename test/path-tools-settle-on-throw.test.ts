@@ -228,3 +228,48 @@ test("a free phone poll (reserve $0) books $0 even when it is aborted", async ()
   assert.equal(budget.spent, 0);
   assert.doesNotMatch(textOf(res), /booked against/);
 });
+
+// Audit round 4: the Solana client records the settlement BEFORE it parses
+// the paid body (requestWithPaymentRaw: assertPaid → recordSettlement →
+// retryResponse.json()), so a non-JSON 200 throws a bare SyntaxError with no
+// status and no transport words — "none" to settlementOnThrow — for a call
+// the SDK's own counter says was paid. The counter is the evidence: rawGet /
+// rawPost read it around the SDK call and hand the delta to the catch, which
+// books it as a CERTAIN charge.
+test("a throw after the SDK counted the settlement books the counted amount, on every wallet rail", async () => {
+  for (const r of ["base", "solana"] as const) {
+    rail = r;
+    let total = 0;
+    const settling = {
+      getSpending: () => ({ totalUsd: total }),
+      getWithPaymentRaw: async () => { total += 0.003; throw new SyntaxError("Unexpected token < in JSON at position 0"); },
+      requestWithPaymentRaw: async () => { total += 0.003; throw new SyntaxError("Unexpected token < in JSON at position 0"); },
+    };
+    const { rawGet, rawPost } = await import("../src/utils/raw-call.js");
+    for (const call of [() => rawGet(settling as never, "/v1/x"), () => rawPost(settling as never, "/v1/x", {})]) {
+      await assert.rejects(call, (err: Error & { settledUsd?: number }) => {
+        assert.equal(err.name, "RawCallSettledError", `${r}: ${err.message}`);
+        assert.ok(Math.abs((err.settledUsd ?? 0) - 0.003) < 1e-9, `${r}: settledUsd=${err.settledUsd}`);
+        assert.match(err.message, /Unexpected token/);
+        return true;
+      });
+    }
+  }
+});
+
+test("a path tool renders a settled-then-failed call as a charge that stands, booked at the counted amount", async () => {
+  rail = "solana";
+  const { rawPost } = await import("../src/utils/raw-call.js");
+  let total = 0;
+  const settling = { getSpending: () => ({ totalUsd: total }), requestWithPaymentRaw: async () => { total += 0.003; throw new SyntaxError("Unexpected token <"); } };
+  let thrown: unknown;
+  try { await rawPost(settling as never, "/v1/rpc/ethereum", {}); } catch (e) { thrown = e; }
+  const { pathToolFailure } = await import("../src/utils/path-tool-catch.js");
+  const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
+  const res = pathToolFailure(thrown, { budget, sentUsd: withTxFee(RPC_PRICE_USD) });
+  const t = textOf(res);
+  assert.ok(Math.abs(budget.spent - 0.003) < 1e-9, `spent=${budget.spent}`);
+  assert.match(t, /charge stands/);
+  assert.match(t, /\$0\.0030/);
+  assert.doesNotMatch(t, /MAY have gone through|Try again in a few minutes/);
+});

@@ -34,7 +34,7 @@ import type { BudgetState } from "../types.js";
 import { recordActualSpend } from "./budget.js";
 import { settlementOnThrow } from "./chat-stream.js";
 import { isApiKeyMode } from "./auth.js";
-import { ledgerFallback } from "./raw-call.js";
+import { ledgerFallback, RawCallSettledError } from "./raw-call.js";
 import { basePaymentReplayHedge, extractErrorMessage, formatError, isExplicitlyUncharged } from "./errors.js";
 
 // Statuses an edge or a load balancer returns when the ORIGIN did not answer
@@ -83,6 +83,21 @@ export type PathToolFailure = {
  * Returns the MCP error result the handler returns as-is.
  */
 export function pathToolFailure(err: unknown, opts: PathToolFailureOpts): PathToolFailure {
+  // The SDK's counter moved before the throw: a CERTAIN charge at a known
+  // amount (see RawCallSettledError), not a maybe at the reserve.
+  if (err instanceof RawCallSettledError) {
+    recordActualSpend(opts.budget, err.settledUsd, opts.sentUsd, opts.agentId);
+    return {
+      content: [{
+        type: "text",
+        text: `Error: ${err.message}
+
+The payment settled before this failure, so the charge stands — $${err.settledUsd.toFixed(4)} is booked against your budget. ` +
+          `The gateway answered but the response could not be read; retrying pays again. Check blockrun_wallet action:"report" first.`,
+      }],
+      isError: true,
+    };
+  }
   const message = extractErrorMessage(err);
   const rail = isApiKeyMode() ? "account" : "wallet";
   const verdict = settlementOnThrow(err, { rail, estimateUsd: opts.sentUsd });
