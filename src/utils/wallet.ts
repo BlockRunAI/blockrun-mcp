@@ -566,37 +566,57 @@ function publishMintedKey(file: string, key: string): string {
       }
     }
   };
+  const readFile = (): string | null => {
+    try { return fs.readFileSync(file, "utf-8").trim(); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      return null;
+    }
+  };
   try {
     fs.writeFileSync(tmp, key, { mode: 0o600 });
-    for (let attempt = 0; attempt < 4; attempt++) {
-      if (tryPublish()) break;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      if (tryPublish()) {
+        // Ours is the file — unless a peer's claim (below) moved it in the
+        // gap before this read; then theirs is, and the loop adopts it.
+        const now = readFile();
+        if (now === key) return key;
+        if (now) return now;
+        continue;
+      }
       // Someone published before us. Their key is the wallet every store
       // will hold from here on; ours exists only in this heap and must not
       // be shown.
-      let theirs = "";
-      try { theirs = fs.readFileSync(file, "utf-8").trim(); } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-        continue; // gone between the link and the read: try the link again
-      }
-      if (theirs) break;
-      // A stale empty placeholder. Claim it by renaming it away — the one
-      // process whose rename succeeds is the one that gets to publish; the
-      // others see ENOENT here, retry the link, lose to the claimant's key
-      // and adopt it on the next pass.
+      const theirs = readFile();
+      if (theirs === null) continue; // gone between the link and the read
+      if (theirs) return theirs;
+      // A stale empty placeholder. Claim it by renaming it away — exactly
+      // one process's rename of a given name succeeds — then retry the link.
+      // The rename is by NAME and the file may have changed since the read:
+      // a peer that claimed first and linked its key in the gap would have
+      // that key renamed aside here. So the aside is INSPECTED, never
+      // discarded blind — a key found there is linked back under the
+      // exclusive name and adopted (round 4b: round 4's rm-after-rename
+      // deleted a peer's freshly published key).
       const aside = `${tmp}.placeholder`;
       try { fs.renameSync(file, aside); } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        continue;
+      }
+      let moved = "";
+      try { moved = fs.readFileSync(aside, "utf-8").trim(); } catch { /* treat as empty */ }
+      if (moved) {
+        try { fs.linkSync(aside, file); } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        }
+        fs.rmSync(aside, { force: true });
+        continue; // adopt whatever now holds the name
       }
       fs.rmSync(aside, { force: true });
     }
-    // What is on disk is the wallet, whoever put it there. (Four passes of
-    // link/read/claim without a file at the end is not a race any more, it
-    // is a filesystem that will not hold one; write plainly and say so.)
-    let published = "";
-    try { published = fs.readFileSync(file, "utf-8").trim(); } catch { /* fall through */ }
-    if (published) return published;
-    fs.writeFileSync(file, key, { mode: 0o600 });
-    return key;
+    // Eight passes of link/read/claim without settling is not a race any
+    // more, it is a filesystem that will not hold the file: say so rather
+    // than write plainly over a name a peer may own.
+    throw new Error(`Could not publish the wallet key to ${file}: the file kept changing under this process. Retry, or set the key in the environment.`);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
@@ -1163,7 +1183,13 @@ async function getBaseUsdcBalance(address: string): Promise<number | null> {
     params: [{ to: USDC_ADDRESS, data: `0x70a08231000000000000000000000000${address.slice(2)}` }, "latest"],
     id: 1,
   };
-  for (const rpcUrl of BASE_RPC_URLS) {
+  // BASE_RPC_URL first when set — the SDK's own getBalance honours it, and
+  // the Solana read honours its SOLANA_RPC_* siblings; this read was the one
+  // that ignored the operator's endpoint (round 4b). The public fallbacks
+  // stay behind it.
+  const configured = (process.env.BASE_RPC_URL ?? "").trim();
+  const rpcUrls = configured ? [configured, ...BASE_RPC_URLS.filter((u) => u !== configured)] : BASE_RPC_URLS;
+  for (const rpcUrl of rpcUrls) {
     try {
       const response = await fetch(rpcUrl, {
         method: "POST",

@@ -117,3 +117,26 @@ test("SOLANA_RPC_HEADERS outranks SOLANA_RPC_API_KEY, the SDK's precedence", asy
   assert.equal(captured.headers["authorization"], "Bearer t");
   assert.equal(captured.headers["x-api-key"], undefined, "the JSON form replaces, it does not merge");
 });
+
+// Round 4b (RP-4): the Base balance read walked the public fallback list and
+// ignored BASE_RPC_URL, which the SDK's own getBalance honours — rail parity
+// with the Solana read above.
+test("BASE_RPC_URL is tried first on the Base balance read", async () => {
+  const saved = process.env.BASE_RPC_URL;
+  process.env.BASE_RPC_URL = "https://private.rpc.example/base";
+  const realFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(String(input));
+    // 100 USDC (6 decimals) as a 32-byte hex word
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x" + (100_000_000).toString(16).padStart(64, "0") }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const balance = await getChainBalance("base", "0x0000000000000000000000000000000000000001");
+    assert.equal(urls[0], "https://private.rpc.example/base");
+    assert.equal(balance, 100);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (saved === undefined) delete process.env.BASE_RPC_URL; else process.env.BASE_RPC_URL = saved;
+  }
+});

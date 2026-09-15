@@ -179,3 +179,36 @@ test("the session files are created mode 0600", async () => {
     assert.equal(fs.statSync(f).mode & 0o777, 0o600, f);
   }
 });
+
+// Round 4b (P1, a regression of round 4's placeholder claim): the claim is a
+// rename by NAME after a read that saw an empty file. A peer that claimed the
+// same placeholder and linked ITS key in the gap had that key renamed aside
+// and deleted; this process then published its own and the peer signed with
+// a key that was on disk nowhere. The aside is now inspected and a key found
+// there is linked back and adopted. Simulated by making the "empty" read
+// happen on a file a peer fills before this process's rename lands: node:fs
+// is mocked so the FIRST readFileSync of the session file returns "" while
+// the real file already holds the peer's key.
+test("Base: a peer's key published into the placeholder gap is adopted, never renamed aside and deleted", async () => {
+  const processB = realLlm.createWallet();
+  fs.writeFileSync(SESSION, "", { mode: 0o600 }); // the placeholder both processes lose to
+  const realRead = fs.readFileSync;
+  let staleReads = 1;
+  const spy = mock.method(fs, "readFileSync", (p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (String(p) === SESSION && staleReads > 0) {
+      staleReads--;
+      // The peer wins the claim and publishes between this read and our rename.
+      fs.writeFileSync(SESSION, processB.privateKey, { mode: 0o600 });
+      return "";
+    }
+    return (realRead as any)(p, ...rest);
+  });
+  try {
+    const key = wallet.getOrCreateWalletKey();
+    assert.equal(key, processB.privateKey, "the peer's key survived the claim and is what this process signs with");
+    assert.equal(realRead(SESSION, "utf-8").trim(), processB.privateKey, "and it is still on disk");
+    assert.deepEqual(fs.readdirSync(blockrunDir).filter((f) => f.includes("placeholder") || f.endsWith(".tmp")), [], "no aside or temp file left behind");
+  } finally {
+    spy.mock.restore();
+  }
+});
