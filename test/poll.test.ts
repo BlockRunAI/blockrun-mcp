@@ -36,3 +36,24 @@ test("pollTimeoutFor never lets a poll finish past the deadline", () => {
     );
   }
 });
+
+// JobFailedError is the typed "the gateway answered the poll with a terminal
+// status and nothing was charged" the three async loops (Base video, Base
+// music, the Solana helper) throw, so a tool's catch can recognise it without
+// reading prose. The prose mattered: MiniMax's own failure text is "The
+// operation was aborted due to timeout", which isTimeoutError's substring
+// fallback matched, and the Solana give-up branch then booked a full render
+// for a job the gateway had just said was not charged (audit round 3, C13).
+test("JobFailedError is a distinct class that carries the job id and stays a plain Error otherwise", async () => {
+  const { JobFailedError } = await import("../src/utils/poll.js");
+  const err = new JobFailedError("Video generation failed upstream: The operation was aborted due to timeout. No payment was taken.", { jobId: "vid_1" });
+  assert.ok(err instanceof Error);
+  assert.ok(err instanceof JobFailedError);
+  assert.equal(err.name, "JobFailedError");
+  assert.equal(err.jobId, "vid_1");
+  assert.match(err.message, /No payment was taken/);
+  // instanceof, not name: a plain Error whose message merely looks alike is
+  // not a gateway verdict.
+  assert.equal(new Error(err.message) instanceof JobFailedError, false);
+  assert.equal(new JobFailedError("x").jobId, undefined);
+});

@@ -52,6 +52,7 @@ const {
   SEEDANCE_RESOLUTIONS,
   VIDEO_TOTAL_BUDGET_MS,
   VIDEO_POLL_TIMEOUT_MS,
+  POLL_INTERVAL_MS,
   VIDEO_PAYMENT_AUTH_SECONDS,
 } = await import("../src/tools/video.js");
 
@@ -352,9 +353,14 @@ test("video polling allows slow 30s jobs while staying inside payment authorizat
   );
 
   // The clamp is load-bearing, not cosmetic: unclamped, the real worst case is
-  // budget + interval + poll timeout, which overruns the authorization.
+  // budget + interval + poll timeout, which overruns the authorization. Stated
+  // with the interval included, because that is the actual worst case — a poll
+  // is ENTERED after the sleep, so the sleep is part of the overrun. (Written
+  // as > authMs against a 90s poll timeout, where the timeout alone cleared it;
+  // at the gateway route's own 60s cap it is the interval that carries the
+  // margin, which is exactly why the clamp cannot be dropped.)
   assert.ok(
-    VIDEO_TOTAL_BUDGET_MS + VIDEO_POLL_TIMEOUT_MS > authMs,
+    VIDEO_TOTAL_BUDGET_MS + POLL_INTERVAL_MS + VIDEO_POLL_TIMEOUT_MS > authMs,
     "unclamped worst case would overrun the authorization — do not remove pollTimeoutFor",
   );
 });

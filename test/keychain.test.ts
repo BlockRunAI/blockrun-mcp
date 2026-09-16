@@ -175,7 +175,65 @@ test("a failed store never reaches the delete branch", () => {
   persistKey("evm", KEY, file, ops);
 
   assert.ok(fs.existsSync(file));
-  assert.equal(calls.filter((c) => c.startsWith("load:")).length, 0);
+  // One load is the pre-store "am I replacing a different key?" check; the
+  // strict READ-BACK (the second load) must never run after a failed store.
+  assert.equal(calls.filter((c) => c.startsWith("load:")).length, 1);
+});
+
+// The read-back proved the KEYCHAIN holds `key`. It said nothing about the
+// FILE, which was deleted on `existsSync` alone. An env override (a different
+// key from BLOCKRUN_WALLET_KEY) reached this branch and the file holding the
+// funded wallet went with it. The caller no longer persists env keys, but the
+// last line of defence has to hold on its own.
+test("strict mode never deletes a plaintext file that holds a DIFFERENT key than the one verified", () => {
+  process.env.BLOCKRUN_KEYCHAIN = "strict";
+  const file = seedKeyFile("strict-other-key.key"); // holds KEY
+  const OTHER = "0x" + "ef".repeat(32);
+  const { ops, items } = fakeOps();
+
+  persistKey("evm", OTHER, file, ops);
+
+  assert.equal(items.get("evm"), OTHER, "the store itself is not the guard");
+  assert.ok(fs.existsSync(file), "a file holding a key we did not verify must never be removed");
+  assert.equal(fs.readFileSync(file, "utf-8"), KEY);
+});
+
+test("strict mode still retires a file whose key matches modulo whitespace and the 0x prefix", () => {
+  // The SDK loader trims and 0x-normalises the file, so these are the same key
+  // on disk as far as every reader is concerned; keeping them would leave the
+  // plaintext copy strict mode exists to remove.
+  process.env.BLOCKRUN_KEYCHAIN = "strict";
+  for (const onDisk of [`${KEY}\n`, `  ${KEY}  `, KEY.slice(2), `${KEY.slice(2)}\n`]) {
+    const file = path.join(tmp, `strict-normalised-${Math.random().toString(36).slice(2)}.key`);
+    fs.writeFileSync(file, onDisk, { mode: 0o600 });
+    const { ops } = fakeOps();
+
+    persistKey("evm", KEY, file, ops);
+
+    assert.equal(fs.existsSync(file), false, `must retire ${JSON.stringify(onDisk)}`);
+  }
+});
+
+test("strict mode retires an EMPTY placeholder file — it holds nothing to lose", () => {
+  process.env.BLOCKRUN_KEYCHAIN = "strict";
+  const file = path.join(tmp, "strict-empty.key");
+  fs.writeFileSync(file, "  \n", { mode: 0o600 });
+  const { ops } = fakeOps();
+
+  persistKey("evm", KEY, file, ops);
+
+  assert.equal(fs.existsSync(file), false);
+});
+
+test("strict mode keeps a plaintext file it cannot READ — unverifiable is not verified", () => {
+  process.env.BLOCKRUN_KEYCHAIN = "strict";
+  const dir = path.join(tmp, "unreadable.key"); // a directory: readFileSync throws EISDIR
+  fs.mkdirSync(dir);
+  const { ops } = fakeOps();
+
+  persistKey("evm", KEY, dir, ops);
+
+  assert.ok(fs.existsSync(dir), "must not remove what it could not compare");
 });
 
 test("strict mode with no plaintext path just stores", () => {
@@ -211,4 +269,46 @@ test("a key containing a line break is refused, not truncated into the keychain"
 test("the escape helper still covers the characters it CAN quote", () => {
   assert.equal(escapeForSecurityInteractive('a"b'), 'a\\"b');
   assert.equal(escapeForSecurityInteractive("a\\b"), "a\\\\b");
+});
+
+// Audit round 4: replacing a DIFFERENT key in the keychain is the destructive
+// step behind three findings (a second launch on a mis-read Linux keychain, a
+// lost first-run race, a stale legacy file). The file-is-truth design means
+// the mirror does get rewritten on a deliberate rotation, so the store is not
+// refused — but it is never silent: the previous key's address is named on
+// stderr, so a rotation the user did not intend is visible the run it happens.
+test("replacing a different key in the keychain is announced, with the address being replaced", async () => {
+  const OTHER = "0x" + "5e".repeat(32);
+  const file = seedKeyFile("rotate.key");
+  const { ops, items } = fakeOps();
+  items.set("evm", OTHER);
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  try {
+    persistKey("evm", KEY, file, ops);
+  } finally {
+    console.error = original;
+  }
+  assert.equal(items.get("evm"), KEY, "the file's key is the wallet; the mirror follows it");
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /replac/i);
+  assert.match(lines[0], /0x[0-9a-fA-F]{40}/, "names the address whose key is being replaced");
+  assert.doesNotMatch(lines[0], new RegExp(OTHER), "never prints the key itself");
+});
+
+test("mirroring the same key, or a first key, says nothing", () => {
+  const file = seedKeyFile("same.key");
+  const { ops, items } = fakeOps();
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  try {
+    persistKey("evm", KEY, file, ops);
+    persistKey("evm", KEY, file, ops);
+  } finally {
+    console.error = original;
+  }
+  assert.equal(items.get("evm"), KEY);
+  assert.deepEqual(lines, []);
 });

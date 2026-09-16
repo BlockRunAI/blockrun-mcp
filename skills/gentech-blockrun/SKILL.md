@@ -259,8 +259,11 @@ if float(balance["usdcBalance"]) < 0.50:
 
 ```python
 # For async operations (video, music):
-# They auto-poll until complete. If timeout, no charge.
-# Retry with same parameters.
+# They auto-poll until complete. On a timeout READ THE ERROR: on the Base
+# wallet payment settles on completion, so a timeout is not charged and a
+# retry is safe; Solana music and every account-rail media job are billed
+# at submit, so the timed-out job IS charged, the error names it, and a
+# retry bills a second job. Check blockrun_wallet action:"report" first.
 ```
 
 ---
@@ -291,7 +294,7 @@ blockrun_wallet(action="chain", chain="base")
 blockrun_wallet(action="chain")
 ```
 
-**Note:** Base is required for music, speech, and realface. Image and video pay on either chain. Solana works for price, wallet, dex, rpc, markets, etc.
+**Note:** Every paid media tool (image, video, music, speech, realface) pays on either chain. Base-only: `blockrun_modal`, `blockrun_defi`, `claude-*` chat with `thinking` (a plain claude-* call takes the compat path on Solana), and Polymarket funding. Solana works for price, wallet, dex, rpc, markets, etc.
 
 ---
 

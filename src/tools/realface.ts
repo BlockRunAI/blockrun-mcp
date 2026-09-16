@@ -2,14 +2,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { z } from "zod";
-import { amountToUsd, reserveBudget, recordActualSpend } from "../utils/budget.js";
+import { amountToUsd, assertQuoteNearEstimate, recordActualSpend, reserveBudget } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
 import { formatError, isPaymentRejectionError } from "../utils/errors.js";
 import { fetchWithTimeout } from "../utils/http.js";
+import { sendPaid, settleGiveUp, trackPaidRequest, type PaidRequest } from "../utils/in-flight.js";
+import { parseCostHeader } from "../utils/api-key-call.js";
 import type { BudgetState } from "../types.js";
-import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
-import { apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
+import { getApiBase, getChain, getOrCreateWalletKey, resolveSolanaKey } from "../utils/wallet.js";
+import { PORTAL_CREDITS_URL, apiAuthHeaders, isApiKeyMode, requireWalletMode } from "../utils/auth.js";
 import { generateUrlQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
 import { privateKeyToAccount } from "viem/accounts";
@@ -36,18 +38,42 @@ async function payAndPostJson(
   path: string,
   reqBody: string,
   fallbackDescription: string,
+  /**
+   * The caller's per-call tracker for "a request carrying a payment is
+   * outstanding". Armed here on every rail the moment the paid request is
+   * about to go out, settled the moment a response arrives; the handler's
+   * catch reads it to book a give-up. Handed in rather than kept here because
+   * the MCP SDK dispatches calls concurrently and this function is shared: a
+   * module-level flag (0.50.0) made one call's outstanding payment book a
+   * phantom charge against another call's unrelated failure (audit round 3).
+   */
+  paid: PaidRequest,
+  /**
+   * Called with the authoritative quote BEFORE anything is signed, on whichever
+   * rail is active. Throwing aborts unpaid. realface was the one manual-402
+   * tool with no such hook: it read the 402 amount and signed it five lines
+   * later, so a gateway quoting a different product (as sol.blockrun.ai did for
+   * azure/sora-2 on 2026-09-08) was paid without a word.
+   */
+  onQuote?: (quotedUsd: number | null, quotedFor?: string) => void,
 ): Promise<{ status: number; data: Record<string, any>; settledUsd: number | null }> {
   // ---- Rail 1: account API key. ----
   if (isApiKeyMode()) {
-    const resp = await fetchWithTimeout(`${getApiBase()}${path}`, {
+    // No 402 on this rail: one POST, billed by the account. There is no quote
+    // to sanity-check, which is why onQuote is not called here. The Bearer is
+    // the payment, so the POST is armed like a signed one.
+    const resp = await sendPaid(paid, () => fetchWithTimeout(`${getApiBase()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...apiAuthHeaders() },
       body: reqBody,
-    }, 90_000);
+    }, 90_000));
     const data = await resp.json().catch(() => ({})) as Record<string, any>;
-    // settledUsd null: the account API returns no per-call cost, so callers fall
-    // back to ENROLLMENT_PRICE_USD as an estimate.
-    return { status: resp.status, data, settledUsd: null };
+    // The account API reports what it settled in x-blockrun-cost-usd (since
+    // 2026-09-05 — see utils/api-key-call.ts). Absent reads as null, and the
+    // callers then fall back to ENROLLMENT_PRICE_USD; that estimate carries
+    // the $0.002 tx fee this rail does not charge, so booking it for a
+    // settled $0.010 over-counted every enrolment by 20%.
+    return { status: resp.status, data, settledUsd: parseCostHeader(resp.headers.get("x-blockrun-cost-usd")) };
   }
 
   // ---- Rail 2: Solana wallet. sol.blockrun.ai serves both enroll routes
@@ -55,15 +81,33 @@ async function payAndPostJson(
   if (getChain() === "solana") {
     const { solanaPaidPost } = await import("../utils/solana-402.js");
     try {
-      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000);
+      // The quote, captured for the tracker: armed at the helper's
+      // onPaidRequest (the line before the signed POST leaves) and settled at
+      // onPaidResponse (any status), so a refused quote (thrown from onQuote,
+      // nothing signed) never books and an answered 5xx is never a maybe.
+      let solQuotedUsd: number | null = null;
+      const r = await solanaPaidPost(path, JSON.parse(reqBody) as Record<string, unknown>, 90_000, {
+        onPaidRequest: () => paid.arm(solQuotedUsd),
+        onPaidResponse: () => paid.settle(),
+        onQuote: (quotedUsd, quoteDetails) => {
+          onQuote?.(quotedUsd, quoteDetails?.resource?.description);
+          solQuotedUsd = quotedUsd;
+        },
+      });
       return { status: 200, data: r.data as Record<string, any>, settledUsd: r.paidUsd };
     } catch (err) {
-      // solanaPaidPost throws on a non-2xx terminal response. Recover the status
-      // when it is one the callers branch on, so a 422 still reads as "rejected,
-      // not charged" rather than as an opaque failure.
-      const msg = err instanceof Error ? err.message : String(err);
-      const m = /\b(4\d\d|5\d\d)\b/.exec(msg);
-      if (m) return { status: Number(m[1]), data: { error: msg }, settledUsd: null };
+      // solanaPaidPost throws on a non-2xx answer to the PAID request with the
+      // status on the error (`statusCode`, the SDK's shape): a 422 still reads
+      // as "rejected, not charged" and a 402 as the wallet's refusal. Read
+      // the property, never the prose — the regex this replaces turned any
+      // quote fault whose text mentioned "402" (an unreadable amount, a
+      // missing feePayer) into "out of funds" plus a top-up page, for a call
+      // where nothing had been signed (audit round 4).
+      const status = (err as { statusCode?: unknown } | undefined)?.statusCode;
+      if (typeof status === "number") {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { status, data: { error: msg }, settledUsd: null };
+      }
       throw err;
     }
   }
@@ -90,6 +134,7 @@ async function payAndPostJson(
   const paymentRequired = parsePaymentRequired(prHeader);
   const details = extractPaymentDetails(paymentRequired);
 
+  onQuote?.(amountToUsd(details.amount), details.resource?.description);
   const paymentPayload = await createPaymentPayload(
     privateKey,
     account.address,
@@ -104,14 +149,16 @@ async function payAndPostJson(
     }
   );
 
-  const resp = await fetchWithTimeout(url, {
+  // Armed for exactly this fetch — the signature is on it — and settled by a
+  // response of any status before the status is read.
+  const resp = await sendPaid(paid, () => fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "PAYMENT-SIGNATURE": paymentPayload,
     },
     body: reqBody,
-  }, 90_000);
+  }, 90_000), amountToUsd(details.amount));
 
   const data = await resp.json().catch(() => ({})) as Record<string, any>;
   return { status: resp.status, data, settledUsd: amountToUsd(details.amount) };
@@ -152,6 +199,19 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
+      // THIS call's outstanding-payment state, read by the catch below. Per
+      // call on purpose — see payAndPostJson.
+      const paid = trackPaidRequest();
+      // The amount booked once settlement was OBSERVED. Read by the catch: a
+      // settled 2xx whose body carried no asset id is a real charge with an
+      // unusable result, and the message must say so and point at
+      // action:"list" — not "failed", which invites a second paid enrolment
+      // (round 4b: the D13 step the other media tools have).
+      let bookedUsd: number | null = null;
+      const book = (settledUsd: number | null) => {
+        recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+        bookedUsd = settledUsd ?? ENROLLMENT_PRICE_USD;
+      };
       try {
         // ---- init (free) ----
         if (action === "init") {
@@ -254,7 +314,39 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           // getOrCreateWalletKey() below from minting one to ask with.
           const listBlock = requireWalletMode('blockrun_realface action:"list"');
           if (listBlock) return { content: [{ type: "text", text: listBlock }], isError: true };
-          const account = privateKeyToAccount(getOrCreateWalletKey());
+          // The ACTIVE chain's payer address against the ACTIVE chain's
+          // gateway. Assets are stored under whichever wallet paid the
+          // enrolment, and sol.blockrun.ai's /v1/wallet/{address} routes
+          // accept base58 only (probed 2026-09-13: an 0x address is a 400,
+          // "expected Solana base58"). 0.46.0 pointed this URL at getApiBase()
+          // and left the address EVM, so on the default chain every list
+          // failed — and minted an EVM keypair on a Solana-only install just
+          // to ask (audit round 3). On Solana the key is READ, never minted:
+          // a free listing must not provision a wallet.
+          const chain = getChain();
+          let address: string;
+          if (chain === "solana") {
+            const solanaKey = resolveSolanaKey();
+            if (!solanaKey) {
+              // Dynamic so the handler suites that mock utils/wallet.js by
+              // name (and predate this branch) keep linking; the same reason
+              // the Solana helper below is imported lazily.
+              const { solanaKeyUnavailableReason } = await import("../utils/wallet.js");
+              const why = solanaKeyUnavailableReason?.();
+              return {
+                content: [{ type: "text", text: formatError(why
+                  ? `Cannot list RealFace assets: ${why}. Unlock the keychain and retry.`
+                  : `No Solana wallet yet, so there is nothing enrolled to list. Run blockrun_wallet action:"setup" to provision one, or switch to Base (blockrun_wallet action:"chain" chain:"base") to list assets paid from the Base wallet.`) }],
+                isError: true,
+              };
+            }
+            const { solanaPublicKey } = await import("@blockrun/llm");
+            address = await solanaPublicKey(solanaKey);
+          } else {
+            address = privateKeyToAccount(getOrCreateWalletKey()).address;
+          }
+          const account = { address };
+          const chainLabel = chain === "solana" ? "Solana" : "Base";
           const [rfResp, vpResp] = await Promise.all([
             fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
             fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/portraits`, { method: "GET" }, 30_000)
@@ -284,13 +376,13 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
               ? `\n⚠️ The Virtual Portrait lookup failed, so this covers RealFace only — do NOT re-enroll a portrait on the strength of this listing; retry first.`
               : "";
             return {
-              content: [{ type: "text", text: `No RealFace${portraitsUnavailable ? "" : " or Virtual Portrait"} assets enrolled for ${account.address}.${caveat}\nEnroll one: blockrun_realface action:"init" name:"…" (real person) or action:"portrait" name:"…" image_url:"https://…" (AI character).` }],
-              structuredContent: { wallet: account.address, realfaces: [], portraits: [], count: 0, portraitsUnavailable },
+              content: [{ type: "text", text: `No RealFace${portraitsUnavailable ? "" : " or Virtual Portrait"} assets enrolled for ${account.address} (${chainLabel} wallet — assets are per paying wallet and per chain).${caveat}\nEnroll one: blockrun_realface action:"init" name:"…" (real person) or action:"portrait" name:"…" image_url:"https://…" (AI character).` }],
+              structuredContent: { wallet: account.address, chain, realfaces: [], portraits: [], count: 0, portraitsUnavailable },
             };
           }
           const first = faces[0] ?? portraits[0];
           const lines = [
-            `Assets for ${account.address} (${faces.length} RealFace, ${portraits.length} Virtual Portrait):`,
+            `Assets for ${account.address} on ${chainLabel} (${faces.length} RealFace, ${portraits.length} Virtual Portrait; assets are per paying wallet and per chain):`,
             ...faces.map((f) => `  • ${f.assetId}  —  "${f.name}" [realface]${f.createdAt ? `  (${f.createdAt})` : ""}`),
             ...portraits.map((p) => `  • ${p.assetId}  —  "${p.name}" [portrait]${p.createdAt ? `  (${p.createdAt})` : ""}`),
             ``,
@@ -298,7 +390,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           ];
           return {
             content: [{ type: "text", text: lines.join("\n") }],
-            structuredContent: { wallet: account.address, realfaces: faces, portraits, count: faces.length + portraits.length },
+            structuredContent: { wallet: account.address, chain, realfaces: faces, portraits, count: faces.length + portraits.length },
           };
         }
 
@@ -325,6 +417,21 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/portrait/enroll",
             JSON.stringify({ name, image_url }),
             "BlockRun Virtual Portrait enrollment",
+            paid,
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "portrait enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
@@ -334,7 +441,8 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError(`Portrait rejected — ${data.hint || data.message || "use a clear front-facing character image"}. No payment taken.`) }], isError: true };
           }
           if (status < 200 || status >= 300) {
-            throw new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`);
+            // Status on the error, as the realface branch below (round 4b).
+            throw Object.assign(new Error(`Portrait enroll error ${status}: ${data.error || JSON.stringify(data)}`), { statusCode: status });
           }
 
           // The gateway answers 2xx only AFTER settling, so the charge is real
@@ -342,7 +450,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
           // a truncated or asset-less body used to throw first, the catch
           // formatted a failure, and finally released the reservation — a real
           // charge the ledger never saw (same ordering video.ts and speech.ts fixed).
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+          book(settledUsd);
 
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Portrait response missing asset_id: ${JSON.stringify(data)}`);
@@ -352,7 +460,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             `✅ Virtual Portrait enrolled!`,
             `Asset ID: ${assetId}`,
             `Name: ${data.name || name}`,
-            `Cost: $${ENROLLMENT_PRICE_USD.toFixed(2)} USDC`,
+            `Cost: $${(settledUsd ?? ENROLLMENT_PRICE_USD).toFixed(4)} USDC`,
             ...(txHash ? [`Tx: ${txHash}`] : []),
             ``,
             `Use it: blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"${assetId}" prompt:"…".`,
@@ -364,7 +472,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
               group_id: data.group_id,
               name: data.name || name,
               image_url: data.image_url,
-              price_usd: ENROLLMENT_PRICE_USD,
+              price_usd: settledUsd ?? ENROLLMENT_PRICE_USD,
               ...(txHash ? { txHash } : {}),
             },
           };
@@ -396,6 +504,21 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             "/v1/realface/enroll",
             JSON.stringify({ name, image_url, group_id }),
             "BlockRun RealFace enrollment",
+            paid,
+            (quotedUsd, quotedFor) => {
+              // Same rule as video, music, image and speech: refuse a quote far
+              // above the published rate before signing, then re-check the cap
+              // at the REAL price.
+              assertQuoteNearEstimate(quotedUsd, ENROLLMENT_PRICE_USD, {
+                what: "RealFace enrollment",
+                quotedFor,
+                hint: `Report the quote — the published rate is $${ENROLLMENT_PRICE_USD.toFixed(4)}.`,
+              });
+              if (quotedUsd === null || quotedUsd <= ENROLLMENT_PRICE_USD) return;
+              gate?.release();
+              gate = reserveBudget(budget, agent_id, quotedUsd);
+              if (!gate.allowed) throw new Error(`${gate.reason}. Use blockrun_wallet action:"report" to see usage or action:"delegate" to increase agent budget. No charge was made.`);
+            },
           );
 
           if (status === 402) {
@@ -408,12 +531,15 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             return { content: [{ type: "text", text: formatError(`Face match failed — ${data.hint || "use a clearer front-facing photo of the same person"}. No payment taken.`) }], isError: true };
           }
           if (status < 200 || status >= 300) {
-            throw new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`);
+            // With the status on it, so the catch can tell an edge 504 (the
+            // origin may still be enrolling and settling — a maybe) from the
+            // gateway's own refusal (round 4b).
+            throw Object.assign(new Error(`Enroll error ${status}: ${data.error || JSON.stringify(data)}`), { statusCode: status });
           }
 
           // Book before validating the payload — see the portrait action above:
           // a settled 2xx with a malformed body must not un-record the charge.
-          recordActualSpend(budget, settledUsd, ENROLLMENT_PRICE_USD, agent_id);
+          book(settledUsd);
 
           const assetId: string | undefined = data.asset_id;
           if (!assetId) throw new Error(`Enroll response missing asset_id: ${JSON.stringify(data)}`);
@@ -423,7 +549,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             `✅ RealFace enrolled!`,
             `Asset ID: ${assetId}`,
             `Name: ${data.name || name}`,
-            `Cost: $${ENROLLMENT_PRICE_USD.toFixed(2)} USDC`,
+            `Cost: $${(settledUsd ?? ENROLLMENT_PRICE_USD).toFixed(4)} USDC`,
             ...(txHash ? [`Tx: ${txHash}`] : []),
             ``,
             `Use it: blockrun_video model:"bytedance/seedance-2.0" real_face_asset_id:"${assetId}" prompt:"…".`,
@@ -434,7 +560,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
               asset_id: assetId,
               group_id: data.group_id || group_id,
               name: data.name || name,
-              price_usd: ENROLLMENT_PRICE_USD,
+              price_usd: settledUsd ?? ENROLLMENT_PRICE_USD,
               ...(txHash ? { txHash } : {}),
             },
           };
@@ -443,12 +569,33 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
         return { content: [{ type: "text", text: formatError(`Unknown action: ${action}`) }], isError: true };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (isPaymentRejectionError(errMsg)) {
+        // 1. Settlement was observed and booked, then the body could not be
+        //    used. First, before any word-based branch can misread it.
+        const booked = bookedUsd as number | null;
+        if (booked !== null) {
+          const where = isApiKeyMode() ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report"`;
           return {
-            content: [{ type: "text", text: `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `RealFace ${action} settled and the charge stands — $${booked.toFixed(4)} is booked against your budget — but the response could not be used: ${errMsg}\nRun blockrun_realface action:"list" to find the asset before enrolling again; check ${where} first.` }],
             isError: true,
           };
         }
+        if (isPaymentRejectionError(errMsg)) {
+          return {
+            content: [{ type: "text", text: isApiKeyMode()
+              ? `RealFace enrollment was refused for lack of credit on your BlockRun account — top it up at ${PORTAL_CREDITS_URL}.\nError: ${errMsg}`
+              : `RealFace enrollment needs USDC — your wallet is out of funds. ${(await launchTopUp()).note}\nError: ${errMsg}` }],
+            isError: true,
+          };
+        }
+        // The request carrying the payment never answered. The gateway
+        // settles on its own clock, so this is not "no charge" — book it
+        // conservatively (the quote where one was seen, else the reserve) and
+        // say what is and is not known. Same trade-off video and music make:
+        // over-counting a request that settled nothing is recoverable,
+        // under-counting a real charge is not. `paid` is this call's own
+        // tracker, so another call's outstanding payment cannot land here.
+        const giveUp = settleGiveUp(paid, err, { budget, agentId: agent_id, estimateUsd: ENROLLMENT_PRICE_USD, what: `RealFace ${action}` });
+        if (giveUp) return { content: [{ type: "text", text: giveUp.text }], isError: true };
         return { content: [{ type: "text", text: formatError(`RealFace ${action} failed: ${errMsg}`) }], isError: true };
       } finally {
         gate?.release();

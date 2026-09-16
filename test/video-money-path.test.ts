@@ -243,7 +243,7 @@ test("a paid poll still in flight at the deadline MAY have settled: say so, book
   const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
   const text = res.content.map((c: any) => c.text).join("\n");
   assert.equal(res.isError, true, text);
-  assert.match(text, /MAY have settled/);
+  assert.match(text, /MAY have gone through/);
   assert.match(text, /blockrun_wallet action:"report"/);
   assert.match(text, /claimable.*job vid_1/);
   assert.doesNotMatch(text, /please try again/);

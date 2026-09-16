@@ -30,8 +30,9 @@ const ONRAMP_ENDPOINT = "https://blockrun.ai/api/v1/onramp/token";
 /**
  * Mint a one-time Coinbase Onramp URL for the given Base address (which MUST be
  * the active wallet — the gateway binds the link to the signing wallet). Runs
- * the standard two-step x402 flow at a $0 price. Throws on any gateway error or
- * if the returned URL isn't a Coinbase Onramp link.
+ * the standard two-step x402 flow at a $0 price — and REFUSES to sign if the
+ * 402 quotes anything but a literal zero. Throws on any gateway error or if
+ * the returned URL isn't a Coinbase Onramp link.
  */
 export async function mintOnrampUrl(address: string): Promise<string> {
   const privateKey = getOrCreateWalletKey();
@@ -52,6 +53,25 @@ export async function mintOnrampUrl(address: string): Promise<string> {
   const prHeader = resp402.headers.get("payment-required") || resp402.headers.get("PAYMENT-REQUIRED");
   if (!prHeader) throw new Error("no PAYMENT-REQUIRED header in 402 response");
   const details = extractPaymentDetails(parsePaymentRequired(prHeader));
+
+  // The $0 is a contract, and this is where it is enforced. Every media tool's
+  // out-of-funds catch lands here — including on wallets that DO hold USDC (a
+  // replayed nonce after an upstream 5xx reads as "rejected" too, see
+  // basePaymentReplayHedge) — and until audit round 3 the amount was signed
+  // as quoted, with the "free" living only in the comment above and the test
+  // fixture. A gateway regression or a hijacked route that quoted a real
+  // amount would have been signed against a funded wallet by the very path
+  // that runs when something has already gone wrong. Refuse anything that is
+  // not a literal zero: an absent or malformed amount is not "free", it is
+  // unknown (and `Number("")` is 0, so a numeric compare would wave an empty
+  // field through — the same trap api-key-call's parseCostHeader documents).
+  const amountStr = typeof details.amount === "string" ? details.amount.trim() : "";
+  if (!/^0+$/.test(amountStr)) {
+    throw new Error(
+      `the onramp quote was not free (the gateway asked for ${JSON.stringify(details.amount)} atomic USDC; ` +
+        `the link must cost $0) — refusing to sign it. Nothing was signed and no charge was made.`,
+    );
+  }
 
   // Sign the (free, $0) authorization — the gateway recovers the signer to prove
   // wallet ownership; nothing settles on-chain.

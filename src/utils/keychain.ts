@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import { privateKeyToAccount } from "viem/accounts";
 
 /** Keychain service name — one namespace for every BlockRun secret. */
 export const KEYCHAIN_SERVICE = "blockrun";
@@ -46,8 +47,42 @@ const TIMEOUT_MS = 5_000;
 
 /** macOS errSecItemNotFound. */
 const MACOS_ITEM_NOT_FOUND = 44;
-/** secret-tool lookup miss. */
+/**
+ * secret-tool lookup: exit 1 — for a MISS and for a FAULT alike. libsecret's
+ * tool/secret-tool.c returns 1 from the lookup action whether `value == NULL`
+ * or `error != NULL`; the only difference is that the fault path g_printerr()s
+ * its reason first ("Cannot autolaunch D-Bus without X11 $DISPLAY", "The
+ * unlock prompt was dismissed", a StartServiceByName timeout). So the status
+ * cannot decide, and until audit round 4 the Linux branch read every fault as
+ * "absent" — round 3's tri-state was macOS-only, and under strict mode both
+ * provisioners minted over a funded keychain wallet the process could not
+ * open. linuxLookupMissed() reads stderr as well.
+ */
 const LINUX_ITEM_NOT_FOUND = 1;
+
+/**
+ * secret-tool's stderr when there is NO secrets service to talk to at all — no
+ * D-Bus session (SSH, containers, systemd units), or a session bus with no
+ * keyring provider (Fedora and Arch ship secret-tool in the base libsecret
+ * package). That is a keychain that does not exist, not one that would not
+ * open: nothing funded can be in it. Round 4 read every stderr as a fault,
+ * and a fresh install on such a host could never mint a wallet — every paid
+ * tool refused with "your existing one is most likely still in the keychain"
+ * until the user found BLOCKRUN_KEYCHAIN=off (round 4b).
+ */
+const LINUX_NO_SECRETS_SERVICE = /cannot autolaunch d-bus|was not provided by any \.service files|could not connect|failed to connect to socket|no such interface|org\.freedesktop\.secrets|name is not activatable|dbus/i;
+
+/**
+ * What a secret-tool exit 1 meant: a miss printed nothing; a service that is
+ * not there printed one of the lines above; anything else it printed (a locked
+ * collection, a dismissed unlock prompt) is a fault a funded key may sit behind.
+ */
+function linuxLookupVerdict(result: { status: number | null; stderr?: string | null }): "miss" | "unavailable" | "fault" {
+  if (result.status !== LINUX_ITEM_NOT_FOUND) return "fault";
+  const said = (result.stderr ?? "").trim();
+  if (!said) return "miss";
+  return LINUX_NO_SECRETS_SERVICE.test(said) ? "unavailable" : "fault";
+}
 
 const warned = new Set<string>();
 
@@ -188,9 +223,33 @@ export type KeychainRead =
   | { status: "error"; detail: string };
 
 /**
+ * Did the helper binary fail to launch at all?
+ *
+ * spawnSync does NOT throw for a nonexistent path: it returns `{status: null,
+ * error: ENOENT}`. Before this was checked, the linux branch fell through its
+ * exit-code tests and reported `secret-tool exit timeout` as a keychain ERROR
+ * — and both provisioners rightly refuse to mint on "error", so a fresh
+ * Ubuntu/Debian/WSL/Docker install (libsecret-tools is not installed by
+ * default) could never create a wallet on either chain, with a message
+ * blaming BLOCKRUN_KEYCHAIN=strict on a machine that had never set it. A
+ * keychain that does not exist cannot be holding a funded key: a missing
+ * binary is "unavailable", never a fault, and the header above promises the
+ * MCP stays file-based there.
+ */
+function binaryMissing(result: { error?: NodeJS.ErrnoException }): boolean {
+  return result.error?.code === "ENOENT";
+}
+
+/**
  * Read a secret, preserving WHY a read came back empty.
  */
 export function keychainRead(account: string): KeychainRead {
+  // Without a keychain there is nothing to read and nothing to spawn. This is
+  // the same check persistKey() makes before writing; a reader that asked a
+  // narrower question than the writer is how the ENOENT above got classified
+  // as a fault.
+  if (!isKeychainAvailable()) return { status: "absent" };
+
   const platform = os.platform();
   try {
     if (platform === "darwin") {
@@ -204,6 +263,7 @@ export function keychainRead(account: string): KeychainRead {
         return value ? { status: "found", value } : { status: "absent" };
       }
       if (result.status === MACOS_ITEM_NOT_FOUND) return { status: "absent" };
+      if (binaryMissing(result)) return { status: "absent" };
       return { status: "error", detail: `security exit ${result.status ?? "timeout"}` };
     }
 
@@ -217,8 +277,10 @@ export function keychainRead(account: string): KeychainRead {
         const value = result.stdout.trim();
         return value ? { status: "found", value } : { status: "absent" };
       }
-      if (result.status === LINUX_ITEM_NOT_FOUND) return { status: "absent" };
-      return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}` };
+      if (linuxLookupVerdict(result) !== "fault") return { status: "absent" };
+      if (binaryMissing(result)) return { status: "absent" };
+      const said = (result.stderr ?? "").trim().split("\n")[0];
+      return { status: "error", detail: `secret-tool exit ${result.status ?? "timeout"}${said ? `: ${said}` : ""}` };
     }
 
     return { status: "absent" };
@@ -231,10 +293,12 @@ export function keychainRead(account: string): KeychainRead {
  * Read a secret. Returns null when absent, unavailable, or unreadable.
  *
  * Convenience wrapper for callers where "absent" and "error" lead to the same
- * safe action. Anywhere the difference decides whether to CREATE a wallet, use
- * keychainRead() instead.
+ * safe action. Anywhere the difference decides whether to CREATE a wallet — or
+ * which chain to select — use keychainRead() instead.
  */
 export function keychainLoad(account: string): string | null {
+  if (!isKeychainAvailable()) return null;
+
   const platform = os.platform();
   try {
     if (platform === "darwin") {
@@ -248,7 +312,7 @@ export function keychainLoad(account: string): string | null {
       // a locked keychain returns a different code, and silently creating a
       // SECOND wallet because we could not read the first one is the worst
       // possible failure here — the user's funds appear to vanish.
-      if (result.status !== MACOS_ITEM_NOT_FOUND) {
+      if (result.status !== MACOS_ITEM_NOT_FOUND && !binaryMissing(result)) {
         warnOnce(
           `OS keychain read failed (security exit ${result.status}) — falling back to ~/.blockrun/.session.`,
         );
@@ -263,9 +327,10 @@ export function keychainLoad(account: string): string | null {
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
       if (result.status === 0) return result.stdout.trim() || null;
-      if (result.status !== LINUX_ITEM_NOT_FOUND) {
+      if (linuxLookupVerdict(result) === "fault" && !binaryMissing(result)) {
+        const said = (result.stderr ?? "").trim().split("\n")[0];
         warnOnce(
-          `OS keychain read failed (secret-tool exit ${result.status}) — falling back to ~/.blockrun/.session.`,
+          `OS keychain read failed (secret-tool exit ${result.status}${said ? `: ${said}` : ""}) — falling back to ~/.blockrun/.session.`,
         );
       }
       return null;
@@ -278,7 +343,20 @@ export function keychainLoad(account: string): string | null {
   }
 }
 
-/** Delete a secret. Returns true when the entry is gone (including "was never there"). */
+/**
+ * Delete a secret. Returns true when the entry is gone, including when it was
+ * never there — callers care about the end state, not about who removed it.
+ *
+ * Both backends have to spell that out, and only the macOS branch used to.
+ * `secret-tool clear` is not consistent across versions about whether a miss
+ * exits 0 or 1, so accept LINUX_ITEM_NOT_FOUND alongside success; the entry is
+ * absent either way. Returning false there would tell a caller the key is
+ * still in the keychain when it is not — the exact direction that turns a
+ * cleanup into a retry loop or a refusal to re-provision.
+ *
+ * A platform with no keychain returns false: nothing was deleted and nothing
+ * can be, which keychainAvailable() already reports the same way.
+ */
 export function keychainDelete(account: string): boolean {
   const platform = os.platform();
   try {
@@ -297,7 +375,7 @@ export function keychainDelete(account: string): boolean {
         ["clear", "app", KEYCHAIN_SERVICE, "account", account],
         { timeout: TIMEOUT_MS, encoding: "utf-8" },
       );
-      return result.status === 0;
+      return result.status === 0 || result.status === LINUX_ITEM_NOT_FOUND;
     }
 
     return false;
@@ -350,6 +428,39 @@ const defaultOps: KeychainOps = {
   load: keychainLoad,
 };
 
+/**
+ * Does the plaintext file hold exactly `key`, as its loader would read it?
+ *
+ * The loaders trim and (for EVM) 0x-prefix the file, so `KEY\n` and the bare
+ * hex are the same key on disk. Missing or empty is "yes": there is nothing
+ * there to lose. Unreadable is "no": unverifiable is not verified.
+ */
+function fileHoldsKey(file: string, key: string): boolean {
+  let raw: string;
+  try {
+    if (!fs.existsSync(file)) return true;
+    raw = fs.readFileSync(file, "utf-8");
+  } catch {
+    return false;
+  }
+  const onDisk = raw.trim();
+  if (onDisk === "") return true;
+  if (onDisk === key) return true;
+  return key.startsWith("0x") && !onDisk.startsWith("0x") && `0x${onDisk}` === key;
+}
+
+/** The address behind a stored key, for the replace notice — never the key. */
+function describeKeyOwner(_account: string, key: string): string {
+  // By shape, not by account name: an EVM key is the only one whose address
+  // can be derived here without the SVM dependencies.
+  if (/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    try {
+      return privateKeyToAccount(key as `0x${string}`).address;
+    } catch { /* fall through */ }
+  }
+  return "another wallet";
+}
+
 export function persistKey(
   account: string,
   key: string,
@@ -359,6 +470,21 @@ export function persistKey(
   const mode = getKeychainMode();
   if (mode === "off" || !ops.available()) return;
 
+  // The store is `-U`: it REPLACES whatever the keychain held. The file is
+  // the source of truth by design (rotation by replacing .session), so a
+  // different key is written — but never silently. Round 4 found three ways
+  // a key nobody meant to rotate reached this line (a mis-read Linux
+  // keychain, a lost first-run race, a stale legacy file); each is fixed at
+  // its source, and this line is what makes the next one visible the run it
+  // happens. The address, never the key, is printed.
+  const previous = ops.load(account);
+  if (previous && previous !== key) {
+    console.error(
+      `[blockrun] Replacing the ${account} entry in the OS keychain: it held the key for ${describeKeyOwner(account, previous)}, ` +
+        `the key file now holds a different one. If you did not rotate this wallet on purpose, stop and check ~/.blockrun before spending.`,
+    );
+  }
+
   if (!ops.store(account, key)) return;
 
   if (mode !== "strict" || !plaintextFile) return;
@@ -366,6 +492,22 @@ export function persistKey(
   if (ops.load(account) !== key) {
     warnOnce(
       "BLOCKRUN_KEYCHAIN=strict: keychain read-back did not match — keeping the plaintext key file.",
+    );
+    return;
+  }
+
+  // The read-back proved the KEYCHAIN holds `key`. It says nothing about the
+  // FILE, and the file is what gets deleted. Before this check, a key that
+  // arrived from BLOCKRUN_WALLET_KEY went through here: stored over the
+  // funded key with -U, read back as itself, and the .session still holding
+  // the funded key was removed — both copies of the wallet gone in one run,
+  // behind the success message below. The caller no longer persists env keys
+  // at all, but the delete must be safe on its own: remove the file only when
+  // it holds the very key we just verified, and never remove what we could
+  // not read. Empty is fine to remove — it holds nothing to lose.
+  if (!fileHoldsKey(plaintextFile, key)) {
+    warnOnce(
+      `BLOCKRUN_KEYCHAIN=strict: ${plaintextFile} holds a different key than the one verified in the keychain — keeping it.`,
     );
     return;
   }

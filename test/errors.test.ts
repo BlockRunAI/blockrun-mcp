@@ -1,7 +1,7 @@
 // Run with: npm test  (tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractErrorMessage, formatError, isPaymentRejectionError } from "../src/utils/errors.js";
+import { extractErrorMessage, formatError, hasLabelledServerStatus, isPaymentRejectionError } from "../src/utils/errors.js";
 
 test("model-unavailable (token360) → steers to a sibling model, not a generic blip", () => {
   const msg = "Video generation failed: API error 500: token360 video submit failed: Model 'seedance-2.0-fast' not found or not active for requested provider";
@@ -55,17 +55,24 @@ test("a pre-payment validation error that says no payment was made is not fundin
   assert.doesNotMatch(out, /funding instructions/);
 });
 
-test("post-payment 5xx still reads as an outage even without a parseable status", () => {
+test("post-payment 5xx is never an empty wallet, even without a parseable status", () => {
+  // Since audit round 3 (C38) an UNMARKED post-payment 5xx is hedged ("the
+  // charge MAY have gone through") rather than sold as an outage to retry;
+  // the per-rail wording is pinned in errors-rails.test.ts. What this test
+  // guards is the older mistake: the "payment" keyword reading as "fund".
   for (const msg of [
     "API error after payment: 500 Internal Server Error",
     "API error after payment: 502 Bad Gateway",
     "API error after payment: upstream provider unavailable",
-    "Request failed with status code 503",
   ]) {
     const out = formatError(msg);
-    assert.match(out, /temporary API issue/, msg);
+    assert.match(out, /MAY have gone through/, msg);
     assert.doesNotMatch(out, /needs funding/, msg);
   }
+  // A 5xx with no payment attached is still the plain outage.
+  const out = formatError("Request failed with status code 503");
+  assert.match(out, /temporary API issue/);
+  assert.doesNotMatch(out, /needs funding|MAY have gone through/);
 });
 
 test("an incidental 5xx-shaped number is not sold to the user as an outage", () => {
@@ -147,17 +154,20 @@ test("extractErrorMessage surfaces the SDK's `detail` field (blockrun-llm-ts#39)
 });
 
 test("a post-payment 5xx WITHOUT the gateway's uncharged marker never claims nothing was charged", () => {
-  // The formatter must never invent a settlement claim: only the gateway's own
-  // marker in the message earns the "nothing was charged" line.
+  // The formatter must never invent a settlement claim in EITHER direction:
+  // only the gateway's own marker earns "nothing was charged", and the
+  // post-payment hedge says MAY, never "the charge stands".
   for (const msg of [
     "API error after payment: 502\nRequest failed",
     "API error after payment: 500 Internal Server Error",
-    "error 500 occurred",
   ]) {
     const out = formatError(msg);
-    assert.match(out, /temporary API issue/, msg);
-    assert.doesNotMatch(out, /nothing was charged|not settled/, msg);
+    assert.match(out, /MAY have gone through/, msg);
+    assert.doesNotMatch(out, /nothing was charged|not settled|charge stands|Try again in a few minutes/, msg);
   }
+  const out = formatError("error 500 occurred");
+  assert.match(out, /temporary API issue/);
+  assert.doesNotMatch(out, /nothing was charged|not settled/);
 });
 
 test("extractErrorMessage does not repeat a detail identical to the message", () => {
@@ -195,6 +205,106 @@ test("a post-payment 501 does not claim nothing was charged", () => {
 
 test("the SDK's post-payment prefix counts as a labelled status", () => {
   // "API error after payment: 502" — the word before the number is "payment".
+  // It classifies as a 5xx (hasLabelledServerStatus), and because the payment
+  // had been sent it is the hedged branch, not the plain outage and not
+  // funding advice.
+  assert.equal(hasLabelledServerStatus("API error after payment: 502\nRequest failed"), true);
   const out = formatError("API error after payment: 502\nRequest failed");
-  assert.match(out, /temporary API issue/);
+  assert.match(out, /MAY have gone through/);
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+// --- the account rail's own error shape (audit round 2) ---
+//
+// @blockrun/llm's account client writes `BlockRun account API error: ${status}.${hint}`
+// — with a sentence-ending period. The status boundary excluded a dot outright
+// (so "$402.50" could not read as a status), which meant every account-rail
+// status fell through unclassified: the identical wallet-rail message got
+// guidance, the account one got none.
+
+test("an account-rail 5xx is classified like the wallet rail's", () => {
+  for (const msg of [
+    "BlockRun account API error: 502.",
+    "BlockRun account API error: 503. Retry-After: 30",
+    "BlockRun account API error: 500. Check https://user.blockrun.ai/dashboard/activity",
+  ]) {
+    const out = formatError(msg);
+    assert.match(out, /temporary API issue/, msg);
+    assert.doesNotMatch(out, /needs funding/, msg);
+  }
+});
+
+test("an account-rail 402 is classified as a payment problem, not an outage", () => {
+  // This file runs on whatever rail the machine is on; the rail-specific
+  // remedy (credit top-up vs wallet funding) is pinned under a mocked auth.js
+  // in errors-rails.test.ts. The earlier version of this test matched
+  // /Insufficient/, a word the echoed input already contains, so it could not
+  // fail either way (C28).
+  const out = formatError("BlockRun account API error: 402. Insufficient credit");
+  const guidance = out.slice(out.indexOf("\n\n"));
+  assert.match(guidance, /needs funding|out of credit/);
+  assert.doesNotMatch(out, /temporary API issue/);
+});
+
+test("an account-rail 501 is 'not served', and says nothing was charged", () => {
+  const out = formatError("BlockRun account API error: 501.");
+  assert.match(out, /does not serve this endpoint/);
+  assert.match(out, /nothing was charged/);
+});
+
+test("a decimal amount is STILL not a status code after the boundary change", () => {
+  // The whole reason a dot was excluded. A dot followed by a digit is a decimal
+  // point; a dot not followed by one is punctuation.
+  for (const msg of ["Charged $402.50 for this render", "cost was $1.4020 total", "price 500.25 usd"]) {
+    const out = formatError(msg);
+    assert.doesNotMatch(out, /temporary API issue/, msg);
+    assert.doesNotMatch(out, /does not serve this endpoint/, msg);
+    assert.doesNotMatch(out, /wallet needs funding/, msg);
+  }
+});
+
+test("hasLabelledServerStatus agrees with formatError on the dotted shape", () => {
+  assert.equal(hasLabelledServerStatus("BlockRun account API error: 502."), true);
+  assert.equal(hasLabelledServerStatus("error 500. something"), true);
+  assert.equal(hasLabelledServerStatus("charged $500.25"), false);
+  assert.equal(hasLabelledServerStatus("batch of 501 items"), false);
+});
+
+// --- "nothing was charged" must never carry "fund your wallet" (round 2) ---
+//
+// explicitlyUncharged gated only the `payment` keyword sub-clause, so a bare
+// 402, "balance" or "insufficient" still earned the funding footer. Two of this
+// repo's own messages did exactly that.
+
+test("the video tool's unreadable-quote refusal does not tell a funded wallet to top up", () => {
+  const out = formatError(
+    "The gateway's 402 quote carried an unreadable amount (\"garbage\"). Refusing to sign a payment " +
+    "for an amount that could not be validated — no charge was made. This is a gateway fault; retry, " +
+    "and report it if it persists.",
+  );
+  assert.doesNotMatch(out, /needs funding/);
+  assert.doesNotMatch(out, /Send USDC/);
+});
+
+test("RealFace's 'No payment taken' is recognised as uncharged", () => {
+  const out = formatError("Portrait rejected — the image did not pass the liveness check. No payment taken.");
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("the quote guard's own refusal does not read as a funding problem", () => {
+  const out = formatError(
+    "The gateway quoted $1.1355 for azure/sora-2 video, but this tool expected about $0.4220 " +
+    "(2.7x the published rate). Refusing to sign it — no charge was made.",
+  );
+  assert.doesNotMatch(out, /needs funding/);
+});
+
+test("a genuine empty wallet STILL gets funding advice", () => {
+  for (const msg of [
+    "API error: 402 Payment Required",
+    "Payment rejected: insufficient balance",
+    "insufficient funds for this call",
+  ]) {
+    assert.match(formatError(msg), /needs funding|Send USDC/, msg);
+  }
 });

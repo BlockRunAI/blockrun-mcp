@@ -1,6 +1,6 @@
 ---
 name: rpc
-description: Use when the user needs raw blockchain JSON-RPC access — contract reads (eth_call), native balances, blocks, transactions, logs, gas estimates, or any chain-native RPC method across 40 chains. One endpoint per chain via BlockRun's Tatum-backed gateway, $0.0030 per call, no node, no API key. Prefer blockrun_price / blockrun_dex / blockrun_surf when they already cover the question.
+description: Use when the user needs raw blockchain JSON-RPC access — contract reads (eth_call), native balances, blocks, transactions, logs, gas estimates, or any chain-native RPC method across 40 chains. One endpoint per chain via BlockRun's Tatum-backed gateway, $0.0030 per call, no node, no API key. Prefer blockrun_price / blockrun_dex / the paid tools when they already cover the question.
 triggers:
   - "rpc"
   - "json-rpc"

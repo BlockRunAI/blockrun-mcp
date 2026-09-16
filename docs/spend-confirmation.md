@@ -39,9 +39,11 @@ Free calls never prompt: `blockrun_chat mode:"free"`, crypto/FX/commodity `block
 `blockrun_dex`, `blockrun_models`, `blockrun_wallet`, and the free `blockrun_phone` and
 `blockrun_realface` actions.
 
-`blockrun_polymarket` is not behind this gate. Bets are real funds on Polygon, not x402
-fees, and they already require an explicit `confirm:true` on every order, approval and
-redemption — a per-order contract that is stronger than a session-wide dialog.
+`blockrun_polymarket` is behind this gate too since 0.51.0: `buy`, `sell`, `fund` and
+`withdraw` ask at the same dialog with the real notional, right before they sign.
+`confirm:true` is still required underneath — it is the model's floor, not the human's
+answer — and a `$0.004` rpc call getting the dialog while a `$25` bet did not was the
+reason the gate was extended.
 
 ## Enable it
 

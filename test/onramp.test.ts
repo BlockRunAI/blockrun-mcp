@@ -37,12 +37,17 @@ mock.module("../src/utils/wallet.js", {
     getWalletInfo: async () => ({ address: "0x34913A202138c83D0ed5FcA84E15da456d24402E" }),
   },
 });
+// What the 402 quotes. The onramp link is FREE by contract ($0 = the signature
+// is wallet authentication, nothing settles); a test flips this to prove the
+// client refuses to sign anything else.
+let quotedAmount: unknown = "0";
+let signCalls = 0;
 mock.module("@blockrun/llm", {
   namedExports: {
-    createPaymentPayload: async () => "0xpaymentpayloadmock",
+    createPaymentPayload: async () => { signCalls++; return "0xpaymentpayloadmock"; },
     parsePaymentRequired: () => ({}),
     extractPaymentDetails: () => ({
-      amount: "0", recipient: "0x0000000000000000000000000000000000000001",
+      amount: quotedAmount, recipient: "0x0000000000000000000000000000000000000001",
       network: "eip155:8453", resource: { url: "https://blockrun.ai/api/v1/onramp/token" },
       maxTimeoutSeconds: 300, extra: {},
     }),
@@ -50,6 +55,63 @@ mock.module("@blockrun/llm", {
 });
 
 const { launchTopUp, mintOnrampUrl } = await import("../src/utils/onramp.js");
+
+const ADDRESS = "0x34913A202138c83D0ed5FcA84E15da456d24402E";
+
+// --- the "$0" promise is enforced, not assumed (audit round 3, critic) ---
+//
+// mintOnrampUrl is reached from every media tool's out-of-funds catch — on
+// wallets that DO hold USDC (a replayed nonce reads as "rejected" too). Until
+// now it signed whatever `details.amount` the 402 quoted; the $0 lived only in
+// a comment and this file's fixture. A gateway bug or a hijacked route that
+// quoted a real amount would have been signed against a funded wallet.
+
+test("a 402 that quotes a non-zero amount is refused before anything is signed", async () => {
+  fetchCall = 0; signCalls = 0; quotedAmount = "1000";
+  try {
+    await assert.rejects(
+      () => mintOnrampUrl(ADDRESS),
+      (e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        assert.match(msg, /not free/i, msg);
+        assert.match(msg, /1000/, msg);
+        assert.match(msg, /nothing was signed/i, msg);
+        return true;
+      },
+    );
+    assert.equal(signCalls, 0, "createPaymentPayload must not run for a priced quote");
+    assert.equal(fetchCall, 1, "no second (signed) POST");
+  } finally {
+    quotedAmount = "0";
+  }
+});
+
+test("an unreadable quoted amount is refused the same way — absence is not zero", async () => {
+  for (const bad of [undefined, "", "abc", null]) {
+    fetchCall = 0; signCalls = 0; quotedAmount = bad;
+    try {
+      await assert.rejects(() => mintOnrampUrl(ADDRESS), /not free|nothing was signed/i, String(bad));
+      assert.equal(signCalls, 0, `signed against amount ${String(bad)}`);
+    } finally {
+      quotedAmount = "0";
+    }
+  }
+});
+
+test("launchTopUp degrades a priced quote to the manual-funding note, still without signing", async () => {
+  fetchCall = 0; signCalls = 0; openCalls = []; quotedAmount = "1000";
+  try {
+    const r = await launchTopUp();
+    assert.equal(r.opened, false);
+    assert.equal(r.url, undefined);
+    assert.equal(signCalls, 0);
+    assert.equal(openCalls.length, 0);
+    assert.match(r.note, /not free/i, r.note);
+    assert.match(r.note, /Fund manually/, r.note);
+  } finally {
+    quotedAmount = "0";
+  }
+});
 
 test("mintOnrampUrl returns the Coinbase URL from the gateway", async () => {
   fetchCall = 0;

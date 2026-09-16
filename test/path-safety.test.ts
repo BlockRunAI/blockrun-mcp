@@ -55,9 +55,82 @@ test("hasPathTraversal catches tab/newline-obfuscated traversal (URL parser stri
   }
 });
 
-test("hasPathTraversal tolerates a malformed percent and legit encoded chars", () => {
-  assert.equal(hasPathTraversal("foo%zzbar"), false); // malformed % must not throw
+test("hasPathTraversal tolerates legit encoded chars", () => {
   assert.equal(hasPathTraversal("search/web%20query"), false); // %20 → space, no traversal
+  assert.equal(hasPathTraversal("polymarket/wallet/0xabc%2Fdef"), false); // decodes to a slash, not a dot-segment
+});
+
+// ── ONE malformed escape ANYWHERE used to blind the whole check ──
+//
+// The guard decoded the entire caller string in one decodeURIComponent. A
+// single malformed `%` — trivially a lone `%` after `?` or `#`, which the URL
+// parser assigns to the query/fragment and never decodes — made the decode
+// throw, the catch kept the raw string, and the literal segment `%2e%2e` was
+// not `..` to the equality check. The parser, meanwhile, resolves `%2e%2e` /
+// `.%2e` / `%2e.` as dot-segments natively and ends the path at `?`/`#`, so the
+// request left this process already re-routed out of the tool's namespace:
+//
+//   blockrun_modal({ path: "%2e%2e/phone/numbers/buy#%" })
+//     -> guard false, classified as a $0.003 modal op, POSTs /v1/phone/numbers/buy ($5.001)
+//   blockrun_phone({ path: "phone/%2e%2e/modal/sandbox/create#%", body: { gpu: "H100", timeout: 86400 } })
+//     -> guard false, passes the phone/ namespace pin, reserves $0.012, buys a $192 sandbox
+//
+// The old test at this spot pinned `foo%zzbar` -> false, i.e. it pinned the
+// fallback that created the hole. Now: the query/fragment is dropped first (the
+// parser never routes on it), `%2e` is read as `.` the way the parser reads it,
+// each segment is decoded on its own so one bad escape cannot hide another, and
+// a malformed escape in the ROUTE part is refused outright — over-blocking is
+// the safe direction, and the gateway would 4xx such a path before payment.
+test("hasPathTraversal is not blinded by a malformed escape in the query or fragment", () => {
+  const BASE = "https://blockrun.ai/api/v1/exa/";
+  const escapes = (p: string) => !new URL(BASE + p).pathname.startsWith("/api/v1/exa/");
+  for (const p of [
+    "%2e%2e/phone/numbers/buy?%",
+    "%2e%2e/phone/numbers/buy#%",
+    "%2e%2e/phone/numbers/buy%",
+    ".%2e/phone/numbers/buy?%zz",
+    "%2e./phone/numbers/buy?%",
+    "%2E%2E/phone/numbers/buy#%",
+    "%2e%2e\\phone/numbers/buy?%",
+    "%\t2e%\t2e/phone/numbers/buy?%",
+  ]) {
+    assert.equal(escapes(p), true, `precondition: ${JSON.stringify(p)} must actually escape the namespace`);
+    assert.equal(hasPathTraversal(p), true, `${JSON.stringify(p)} reaches ${new URL(BASE + p).pathname} but was not blocked`);
+  }
+  // A namespace-internal hop with the same trick: the parser resolves it to
+  // /api/v1/exa/modal/sandbox/create, i.e. a different route than typed.
+  assert.equal(hasPathTraversal("phone/%2e%2e/modal/sandbox/create#%"), true);
+  assert.equal(hasPathTraversal("phone/%2e%2e/modal/sandbox/create?%"), true);
+});
+
+test("hasPathTraversal refuses a malformed escape in the route part", () => {
+  // fetch sends `foo%zzbar` verbatim; the gateway's router cannot decode it and
+  // 4xxs before payment. Refusing here costs nothing and closes the class.
+  assert.equal(hasPathTraversal("foo%zzbar"), true);
+  assert.equal(hasPathTraversal("phone/numbers/buy%"), true);
+  assert.equal(hasPathTraversal("%2e%2e%/phone/numbers/buy"), true);
+});
+
+test("hasPathTraversal ignores dot-segments the parser assigns to the query/fragment", () => {
+  // These never leave /api/v1/exa/ — the parser puts `../..` in the search
+  // string — so blocking them would refuse a harmless (if odd) call.
+  const BASE = "https://blockrun.ai/api/v1/exa/";
+  for (const p of ["search?next=../..", "search#..", "contents?u=%2e%2e"]) {
+    assert.equal(new URL(BASE + p).pathname.startsWith("/api/v1/exa/"), true, p);
+    assert.equal(hasPathTraversal(p), false, p);
+  }
+  // …but a `..` immediately BEFORE the `?` is still a route segment.
+  assert.equal(hasPathTraversal("../phone/numbers/buy?x=1"), true);
+  assert.equal(hasPathTraversal("..?x=1"), true);
+});
+
+test("hasPathTraversal still refuses an encoded slash that decodes into a dot-segment", () => {
+  // The gateway decodes %2F when routing; `phone%2F..%2Fmodal` becomes
+  // phone/../modal on the far side. Per-segment decoding must split AGAIN
+  // after decoding or this regresses (it was caught by the whole-string
+  // decode before).
+  assert.equal(hasPathTraversal("phone%2F..%2Fmodal/sandbox/create"), true);
+  assert.equal(hasPathTraversal("a/%2e%2e%2fb"), true);
 });
 
 test("hasPathTraversal allows legitimate passthrough paths", () => {
@@ -135,6 +208,36 @@ test("normalizeClassifyPath decodes once, as the gateway router does", () => {
   assert.equal(normalizeClassifyPath("phone/lookup%zz"), "phone/lookup%zz");
 });
 
+// ── `[?#].*$` did not cross a line terminator ──
+//
+// The query cut ran BEFORE the tab/LF/CR strip and used `.`, which in JS never
+// matches LF, CR, U+2028 or U+2029; `$` without the `m` flag is end-of-input
+// only. So the cut simply failed to match when a line terminator followed the
+// `?`/`#`, the later strip removed the LF, and `phone/numbers/buy?` reached the
+// exact-match price table — which priced it as the $0.012 unknown while fetch
+// deleted the same LF and the gateway served the $5.001 buy route. The
+// round-2 `?x=1` fix re-opened by one character; probed on the pure pipeline
+// (no handler run) 2026-09-13.
+test("normalizeClassifyPath cuts the query/fragment even when a line terminator follows it", () => {
+  const BASE = "https://blockrun.ai/api/v1/";
+  for (const raw of [
+    "phone/numbers/buy?\n",
+    "phone/numbers/buy#\r",
+    "phone/numbers/buy?x\ry",
+    "phone/numbers/buy?x\u2028y",
+    "phone/numbers/buy#\u2029",
+    "phone/numbers/buy?\n\n\n",
+    "phone/numbers/buy?a=1\nb=2",
+  ]) {
+    // The parser deletes LF/CR outright and percent-encodes U+2028 into the
+    // query; the PATH it sends is the full buy route every time.
+    assert.equal(new URL(BASE + raw).pathname, "/api/v1/phone/numbers/buy", JSON.stringify(raw));
+    assert.equal(normalizeClassifyPath(raw), "phone/numbers/buy", JSON.stringify(raw));
+  }
+  assert.equal(normalizeClassifyPath("contents?\n"), "contents");
+  assert.equal(normalizeClassifyPath("markets/listings?\n"), "markets/listings");
+});
+
 test("normalizeClassifyPath keeps the query string off the classified route", () => {
   // Order matters: the query is dropped from the RAW string before decoding, so
   // an encoded `?` inside a segment cannot truncate the path to a cheaper tier.
@@ -180,4 +283,39 @@ test("hasPathTraversal survives a tab splitting a dot-escape (namespace escape)"
     assert.equal(new URL(BASE + raw).pathname, "/api/v1/phone/numbers/buy", raw);
     assert.equal(hasPathTraversal(raw), true, raw);
   }
+});
+
+// Audit round 4b (two P0s, same class as the tab-in-escape hole): the WHATWG
+// parser does two more things to the slug before routing that the classifier
+// did not. It strips TRAILING C0-control-or-space from the whole URL input —
+// and the slug is the tail of `${base}${endpoint}` on every rail — so
+// `phone/numbers/buy ` (an ordinary tokenisation slip) leaves the machine as
+// /v1/phone/numbers/buy and the gateway serves the $5.001 route while the
+// exact-match price row missed and $0.012 was reserved. And for special
+// schemes it treats a literal `\` as `/`, so `sandbox\create` classified as
+// the $0.003 op while the gateway served a sandbox/create of up to $192 —
+// and the handler's gpu/timeout normalisation block was skipped with it.
+test("normalizeClassifyPath strips trailing C0/space the way the parser strips the URL's tail", () => {
+  assert.equal(normalizeClassifyPath("phone/numbers/buy "), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("voice/call" + String.fromCharCode(0)), "voice/call");
+  assert.equal(normalizeClassifyPath("contents " + String.fromCharCode(31) + " "), "contents");
+  // A trailing space BEFORE a query is inside the path and the parser keeps
+  // it (percent-encoded), so the gateway 404s unpaid — the safe direction; the
+  // classifier must not turn it into the real route either.
+  assert.equal(normalizeClassifyPath("phone/numbers/buy ?x=1"), "phone/numbers/buy ");
+});
+
+test("normalizeClassifyPath reads a literal backslash as a slash, as the parser does for https", () => {
+  assert.equal(normalizeClassifyPath("sandbox\\create"), "sandbox/create");
+  assert.equal(normalizeClassifyPath("phone/numbers\\buy"), "phone/numbers/buy");
+  assert.equal(normalizeClassifyPath("phone\\lookup\\fraud"), "phone/lookup/fraud");
+  // An ENCODED %5C stays a literal backslash inside the segment: the parser
+  // leaves it and the gateway's exact match 404s unpaid.
+  assert.equal(normalizeClassifyPath("sandbox%5Ccreate"), "sandbox\\create");
+});
+
+test("hasPathTraversal sees a `..` last segment with trailing C0/space, which the parser resolves", () => {
+  assert.equal(hasPathTraversal("phone/.. "), true);
+  assert.equal(hasPathTraversal("phone/.." + String.fromCharCode(0)), true);
+  assert.equal(hasPathTraversal("phone/%2e%2e "), true);
 });

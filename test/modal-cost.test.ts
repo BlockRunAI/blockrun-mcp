@@ -52,7 +52,10 @@ test("estimateModalCost never reserves the flat rate for an expensive sandbox", 
   assert.ok(expensive > cheap * 1000, `24h H100 ($${expensive}) must dwarf a flat create ($${cheap})`);
 });
 
-test("estimateModalCost falls back to the CPU rate for an unknown gpu, like the gateway", () => {
+// The gateway does NOT price an unknown gpu — it 400s it before payment, and the
+// handler refuses it before the reserve (unsupportedModalGpu, see
+// modal-gpu-trim.test.ts). The estimator merely has to stay total and finite.
+test("estimateModalCost falls back to the CPU rate for an unknown gpu (the handler refuses it first)", () => {
   assert.equal(estimateModalCost("sandbox/create", { timeout: 300, gpu: "NOPE" }), 0.012);
   assert.equal(estimateModalCost("sandbox/create", { timeout: 3600, gpu: "NOPE" }), 0.102001);
 });

@@ -30,19 +30,19 @@ const realDateNow = Date.now;
 
 function makeFakeClient(timeout?: number) {
   return {
-    chat: async (model: string) => {
+    chatCompletion: async (model: string) => {
       attempts.push(model);
       // Emulate the SDK's AbortController: a model slower than its timeout burns
       // the whole timeout and then rejects. Time passes on the virtual clock.
       const budgetMs = timeout ?? 600_000;
       if (modelLatencyMs >= budgetMs) {
         now += budgetMs;
-        throw new Error(`timeout after ${budgetMs}ms`);
+        throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
       }
       now += modelLatencyMs;
-      return "hello from " + model;
+      return { model, choices: [{ message: { content: "hello from " + model }, finish_reason: "stop" }] };
     },
-    getSpending: () => 0,
+    getSpending: () => ({ totalUsd: 0 }),
   };
 }
 

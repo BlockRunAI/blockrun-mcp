@@ -112,9 +112,23 @@ function fakeNative() {
   };
 }
 
+// The native path STREAMS (see streamNativeMessage): the fake is the SDK's
+// MessageStream surface, capturing the params it was built with.
+function fakeStreamingClient(onParams: (p: any) => void) {
+  return {
+    messages: {
+      stream: (p: any) => {
+        onParams(p);
+        const self = { on: () => self, off: () => self, abort: () => undefined, response: null, finalMessage: async () => fakeNative() };
+        return self;
+      },
+    },
+  };
+}
+
 test("handleAnthropicNative folds json_object into the system prompt", async () => {
   let captured: any;
-  const client = { messages: { create: async (p: any) => { captured = p; return fakeNative(); } } };
+  const client = fakeStreamingClient((p) => { captured = p; });
   await handleAnthropicNative({
     client: client as any,
     model: "anthropic/claude-haiku-4.5",
@@ -128,7 +142,7 @@ test("handleAnthropicNative folds json_object into the system prompt", async () 
 
 test("handleAnthropicNative sends a data:image/jpg URI as a base64 image source", async () => {
   let captured: any;
-  const client = { messages: { create: async (p: any) => { captured = p; return fakeNative(); } } };
+  const client = fakeStreamingClient((p) => { captured = p; });
   await handleAnthropicNative({
     client: client as any,
     model: "anthropic/claude-haiku-4.5",
@@ -146,7 +160,7 @@ test("handleAnthropicNative sends a data:image/jpg URI as a base64 image source"
 
 test("handleAnthropicNative adds no JSON instruction for plain text", async () => {
   let captured: any;
-  const client = { messages: { create: async (p: any) => { captured = p; return fakeNative(); } } };
+  const client = fakeStreamingClient((p) => { captured = p; });
   await handleAnthropicNative({
     client: client as any,
     model: "anthropic/claude-haiku-4.5",
@@ -454,4 +468,32 @@ test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => 
   assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.098218);
   // The old row booked $0.146827 for the same call.
   assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.146827 * 0.7);
+});
+
+// ── free[] must route ids that answer for THEMSELVES on both chains ──
+//
+// $0 POST probes with a realistic ~3,000-character prompt, both gateways,
+// 2026-09-13 (no payment header; free models answer 200). Six of the eleven
+// routed ids answered as ANOTHER model on both chains — gpt-oss-120b (free[0]
+// since July, "the gateway's own free fallback") as nemotron-3-nano-omni on
+// Base and nemotron-3.5-lightning on Solana; nemotron-3-ultra-550b, step-3.7-
+// flash, mistral-nemotron and both nemotron-nano-* as nemotron-3-super-120b /
+// nano-omni — so a saturated backend was retried under five names inside the
+// 150s deadline, and the loop reported "did not answer" having tried ONE
+// model. The alias TARGET moves between probes (the gateway serves whatever
+// has capacity), which is exactly why the tier keys on ids that echo their
+// own name: those are distinct backends. The pruned ids stay in
+// FREE_CHAT_MODELS so an explicit call still reserves $0 (D56).
+test("free[] is the self-serving, both-chain set from the 2026-09-13 probe, fastest first", () => {
+  assert.deepEqual([...MODEL_TIERS.free], [
+    "nvidia/gpt-oss-20b",                              // itself, 0.7s sol / 1.7s base
+    "cohere/north-mini-code",                          // itself, 1.0s / 3.0s
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",   // itself (…-nim on sol), 2.3s / 3.6s
+    "poolside/laguna-xs-2.1",                          // itself on sol 0.7s; 429 capacity on base that day
+    "nvidia/llama-3.2-11b-vision",                     // itself on sol 9.8s; no answer in 90s on base — last
+  ]);
+  for (const aliased of ["nvidia/gpt-oss-120b", "nvidia/nemotron-3-ultra-550b", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2"]) {
+    assert.ok(FREE_CHAT_MODELS.has(aliased), `${aliased} is still $0 — an explicit call must reserve nothing`);
+    assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(aliased), `${aliased} answers as another model on both chains — not a fallback rung`);
+  }
 });

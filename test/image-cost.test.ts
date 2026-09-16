@@ -59,7 +59,15 @@ let networkCalls = 0;
 mock.module("../src/utils/http.js", {
   namedExports: {
     fetchWithTimeout: async () => { networkCalls++; throw new Error("network call escaped the mocks"); },
-    isTimeoutError: () => false,
+    // The real predicate, restated. A `() => false` stub here (as this suite
+    // had until audit round 3) hides the timeout branch from every test in
+    // the file — which is how a dead in-flight booking stayed green.
+    isTimeoutError: (err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError" || name === "TimeoutError") return true;
+      const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      return msg.includes("abort") || msg.includes("timeout") || msg.includes("timed out") || msg.includes("did not complete within");
+    },
   },
 });
 
@@ -85,16 +93,23 @@ function makeHarness() {
 }
 
 // The Cost footer and the ledger must report what the user is CHARGED, not the
-// catalog base. The gateway settles catalog x 1.05 + $0.002 (verified live:
-// cogview-4 base $0.015 -> charged $0.017751), so reporting the catalog figure
-// understated real spend in the footer, the confirmSpend prompt and the ledger.
-test("generate result includes a Cost line at the CHARGED price, not the catalog base", async () => {
-  const { call } = makeHarness();
+// catalog base and not the reserve. The gateway settles catalog x 1.05 + a
+// transaction fee; the RESERVE (estimateCost) carries that fee at $0.002, the
+// higher figure it has flip-flopped through, on purpose (see utils/tx-fee.ts).
+// What the Base gateway is OBSERVED to charge is $0.001 — an unpaid 402 probe
+// of /v1/images/generations on 2026-09-13 quoted cogview-4 at 16750 micro
+// ($0.016750 = 0.015 x 1.05 + $0.001) against a $0.017751 reserve — so the
+// footer and the ledger carry ledgerFallback(reserve): reserve - $0.002 +
+// $0.001, never more than the reserve. Booking the reserve verbatim tripped
+// caps one fee early on every Base image (audit round 3).
+test("generate result includes a Cost line at the CHARGED price, not the catalog base or the reserve", async () => {
+  const { call, budget } = makeHarness();
   const res = await call({ prompt: "a red cube", model: "openai/gpt-image-2", size: "1024x1024" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.0650/); // 0.06 catalog x 1.05 + $0.002
-  assert.equal(res.structuredContent.cost_usd, 0.065);
+  assert.match(text, /Cost: \$0\.0640/); // 0.06 catalog x 1.05 + $0.001 observed (reserve is $0.065)
+  assert.equal(res.structuredContent.cost_usd, 0.064);
   assert.equal(res.isError, undefined);
+  assert.equal(budget.spent, 0.064, "the ledger books the observed charge, not the $0.065 reserve");
   assert.equal(networkCalls, 0, "the mocked ImageClient must be the only rail this suite touches");
 });
 
@@ -102,24 +117,64 @@ test("large gpt-image-2 render is billed at the large-size CHARGED price", async
   const { call } = makeHarness();
   const res = await call({ prompt: "wide banner", model: "openai/gpt-image-2", size: "1536x1024" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.1280/);
-  assert.equal(res.structuredContent.cost_usd, 0.128);
+  assert.match(text, /Cost: \$0\.1270/); // reserve $0.128
+  assert.equal(res.structuredContent.cost_usd, 0.127);
 });
 
 test("cheapest model (cogview-4) shows its own price", async () => {
   const { call } = makeHarness();
   const res = await call({ prompt: "a cat", model: "zai/cogview-4" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.0178/);
+  assert.match(text, /Cost: \$0\.0168/); // the 2026-09-13 live quote: $0.016750 (booked as 0.016751, the reserve's ceil drift)
+});
+
+test("Base: the SDK call dropping mid-payment is booked and reported as a possible charge", async () => {
+  // The SDK signs and sends the payment inside generate(); an abort out of it
+  // is the paid retry (or its poll) that never answered. 0.50.0 never set the
+  // in-flight flag on this rail at all, so this returned a plain "failed" with
+  // $0 booked and the reservation released (audit round 3).
+  const abort = new Error("This operation was aborted");
+  abort.name = "AbortError";
+  const original = fakeImageClient.generate;
+  fakeImageClient.generate = async () => { throw abort; };
+  try {
+    const { call, budget } = makeHarness();
+    const res = await call({ prompt: "a red cube", model: "openai/gpt-image-2", size: "1024x1024" });
+    const text = res.content.map((c: any) => c.text).join("\n");
+    assert.equal(res.isError, true);
+    assert.match(text, /MAY have gone through/);
+    assert.match(text, /action:"report"/);
+    assert.doesNotMatch(text, /No payment was taken/);
+    assert.equal(budget.spent, 0.064, "the observed charge is booked, and the reservation is released on top");
+  } finally {
+    fakeImageClient.generate = original;
+  }
+});
+
+test("Base: an SDK API error (a response arrived) books nothing and is not a maybe", async () => {
+  const original = fakeImageClient.generate;
+  fakeImageClient.generate = async () => { throw new Error("API error 400: size not supported"); };
+  try {
+    const { call, budget } = makeHarness();
+    const res = await call({ prompt: "a red cube", model: "openai/gpt-image-2", size: "1024x1024" });
+    const text = res.content.map((c: any) => c.text).join("\n");
+    assert.equal(res.isError, true);
+    assert.doesNotMatch(text, /MAY have/);
+    assert.equal(budget.spent, 0);
+  } finally {
+    fakeImageClient.generate = original;
+  }
 });
 
 test("budget records the same amount that is reported to the user", async () => {
   const { call, budget } = makeHarness();
-  await call({ prompt: "a dog", model: "google/nano-banana" });
-  // The CHARGED price, not the $0.05 catalog base: 0.05 * 1.05 + $0.002, ceiled to
-  // micro-USDC exactly as the gateway does. Footer and ledger must agree on it —
-  // that is what this test is for.
-  assert.equal(budget.spent, 0.054501);
+  const res = await call({ prompt: "a dog", model: "google/nano-banana" });
+  // The CHARGED price, not the $0.05 catalog base and not the $0.054501
+  // reserve: 0.05 * 1.05 + the observed $0.001 fee, ceiled to micro-USDC
+  // exactly as the gateway does. Footer and ledger must agree on it — that is
+  // what this test is for.
+  assert.equal(budget.spent, 0.053501);
+  assert.equal(res.structuredContent.cost_usd, 0.053501);
 });
 
 // The large-size tier was a single >1024 rule for every model, which is wrong for
@@ -139,7 +194,7 @@ test("nano-banana-2 bills its flat 1024 price and is accepted for edits", async 
   const { call } = makeHarness();
   const res = await call({ prompt: "a pear", model: "google/nano-banana-2" });
   const text = res.content.map((c: any) => c.text).join("\n");
-  assert.match(text, /Cost: \$0\.0965/); // 0.09 catalog x 1.05 + $0.002
+  assert.match(text, /Cost: \$0\.0955/); // 0.09 catalog x 1.05 + $0.001 observed (reserve is $0.0965)
   assert.equal(res.isError, undefined);
   // Edit support: the gateway's EDIT_SUPPORTED_MODELS includes nano-banana-2,
   // so the local gate must not reject it before the paid call.

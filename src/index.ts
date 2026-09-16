@@ -105,8 +105,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // resolveTools falls back to "full" for a name it does not know. Say so:
-  // a user who typed `--profile tradng` wanted 9 tools and got 20, and the
-  // "20 tools" startup line alone reads as if the flag was honoured.
+  // a user who typed `--profile tradng` wanted the trading set and got the full
+  // one, and a startup line that states only the count reads as if the flag was
+  // honoured. (The numbers moved with the Surf removal; the point did not, so
+  // this says which profile rather than how many tools.)
   const requestedProfile = resolveProfileName();
   if (requestedProfile !== profile) {
     console.error(

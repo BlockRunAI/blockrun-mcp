@@ -11,9 +11,10 @@ import { z } from "zod";
 import { reserveBudget, recordSpending, recordActualSpend } from "../utils/budget.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { withTxFee } from "../utils/tx-fee.js";
-import { baseOnlyMessage, getClient } from "../utils/wallet.js";
-import { type RawClient, rawGet } from "../utils/raw-call.js";
-import { formatError, extractErrorMessage } from "../utils/errors.js";
+import { baseOnlyMessage, buildClient } from "../utils/wallet.js";
+import { ledgerFallback, rawGet, type RawClient } from "../utils/raw-call.js";
+import { formatError } from "../utils/errors.js";
+import { pathToolFailure } from "../utils/path-tool-catch.js";
 import { hasPathTraversal } from "../utils/path-safety.js";
 import type { BudgetState } from "../types.js";
 
@@ -52,6 +53,9 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
       },
     },
     async ({ path, agent_id }) => {
+      // The reserve of the paid request in flight, for the catch: 0 until the
+      // line before rawGet, so nothing thrown earlier can book a charge.
+      let sentUsd = 0;
       try {
         // sol.blockrun.ai does not serve /v1/defillama/* at all — it 404s, which
         // reaches the agent as a bare "Not Found" with nothing to act on. Probed
@@ -83,9 +87,17 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           // reservation. No-ops when off, sub-threshold, or unsupported by the client.
           const confirm = await confirmSpend(server, { usd: estimatedCost, label: `defi · ${cleanPath}` });
           if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
-          const client = getClient() as unknown as RawClient;
+          // A FRESH client per call, never the shared singleton: rawGet/rawPost
+          // read the SDK's cumulative spend counter around the call to tell a
+          // settled-then-failed request from a free refusal, and the MCP SDK
+          // dispatches tool calls concurrently — on a shared client a
+          // concurrent call's settlement landed inside this call's window and
+          // was booked to it as "the charge stands" (audit round 4b). Same
+          // reason blockrun_chat builds its own.
+          const client = buildClient() as unknown as RawClient;
+          sentUsd = estimatedCost;
           const { data: result, paidUsd } = await rawGet(client, `/v1/defillama/${cleanPath}`);
-          recordActualSpend(budget, paidUsd, estimatedCost, agent_id);
+          recordActualSpend(budget, paidUsd, ledgerFallback(estimatedCost), agent_id);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             structuredContent: (typeof result === "object" && result !== null && !Array.isArray(result)
@@ -96,10 +108,13 @@ Use blockrun_price (free) for plain spot quotes, blockrun_dex (free) for DEX pai
           gate.release();
         }
       } catch (err) {
-        return {
-          content: [{ type: "text", text: formatError(extractErrorMessage(err)) }],
-          isError: true,
-        };
+        // Books the reserve when the payment went out and no origin answer came
+        // back (utils/path-tool-catch.ts). The gateway's defillama route, like
+        // exa's, answers an upstream 5xx with "Payment was NOT charged" WITHOUT
+        // releasing the payment nonce, so on Base the SDK's same-header retry is
+        // refused as a replay and surfaces as "Payment was rejected. Check your
+        // wallet balance." — replayUpstream adds the second reading on Base only.
+        return pathToolFailure(err, { budget, agentId: agent_id, sentUsd, replayUpstream: "DefiLlama" });
       }
     }
   );

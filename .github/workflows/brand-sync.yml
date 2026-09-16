@@ -12,6 +12,19 @@
 # branch is protected the push fails and the fallback opens a PR instead.
 # No third-party actions beyond actions/checkout — supply-chain surface stays
 # at one GitHub-owned action.
+#
+# In THIS repo main is protected (required check `test`), so the direct push
+# always fails, and GitHub Actions is not permitted to open PRs in this org
+# (PR #141: "it pushed brand-sync/20260905 and left it for a manual PR"). The
+# fallback's `|| echo …` then swallowed that too, and the run went GREEN having
+# landed nothing — a stale count sat in the README for 26 days (#123) behind a
+# green badge, which is the exact failure the header above promises cannot
+# happen. A drift this job cannot land is a FAILURE: the run is red until a
+# human opens the PR, and the branch name is fixed (`brand-sync`, force-pushed)
+# so a month of Mondays does not leave a month of orphan branches.
+# To make the fallback land on its own: enable "Allow GitHub Actions to create
+# and approve pull requests" in the org/repo Actions settings, or give the step
+# a PAT with pull-requests:write.
 name: brand-sync
 on:
   schedule:
@@ -41,11 +54,29 @@ jobs:
           git commit -m "chore: sync brand numbers from blockrun.ai/brand/numbers.json"
           if git push origin "HEAD:${GITHUB_REF_NAME}"; then
             echo "pushed to ${GITHUB_REF_NAME}"
-          else
-            BR="brand-sync/$(date +%Y%m%d)"
-            git push -f origin "HEAD:${BR}"
-            gh pr create --head "$BR" \
-              --title "chore: sync brand numbers" \
-              --body "Automated marker refresh from https://blockrun.ai/brand/numbers.json (scripts/sync-brand-numbers.mjs --refresh). Opened as a PR because the default branch is protected." \
-              || echo "PR creation unavailable — branch ${BR} pushed, needs manual PR"
+            exit 0
           fi
+          # One fixed branch, force-pushed: the rewrite is regenerated from the
+          # artifact every run, so the previous week's branch has nothing worth
+          # keeping and a dated name per run only accumulates orphans.
+          BR="brand-sync"
+          git push -f origin "HEAD:${BR}"
+          # The PR a human opened last time is still open: the force-push just
+          # refreshed it, and `gh pr create` would fail with "already exists" —
+          # which the fallback below used to report as "PR creation is
+          # unavailable, open it by hand" (round 4b).
+          if EXISTING=$(gh pr list --head "$BR" --state open --json number -q '.[0].number') && [ -n "$EXISTING" ]; then
+            echo "refreshed the open PR #${EXISTING} from ${BR}"
+            exit 0
+          fi
+          if gh pr create --head "$BR" \
+              --title "chore: sync brand numbers" \
+              --body "Automated marker refresh from https://blockrun.ai/brand/numbers.json (scripts/sync-brand-numbers.mjs --refresh). Opened as a PR because the default branch is protected."; then
+            echo "opened a PR from ${BR}"
+            exit 0
+          fi
+          # Not a warning. The numbers drifted, this job could not land the fix,
+          # and a green run here is how a stale count sat in the README for 26
+          # days. Red until a human opens the PR from the pushed branch.
+          echo "::error::brand numbers drifted and could not be landed: push to ${GITHUB_REF_NAME} was rejected and PR creation is unavailable to GITHUB_TOKEN. Branch ${BR} is pushed — open the PR by hand (or enable 'Allow GitHub Actions to create and approve pull requests')."
+          exit 1

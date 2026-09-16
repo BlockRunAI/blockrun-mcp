@@ -55,15 +55,38 @@ export interface PolymarketState {
    * while this is set and unresolved. Cleared on confirm/failure.
    */
   pendingWithdraw?: { transactionID: string; deadline: number };
+  /**
+   * A funding call whose gateway response was lost, 5xx, or success:false
+   * after the signed EIP-3009 authorization had already been POSTed. The
+   * authorization stays executable by the facilitator until `deadline` (unix
+   * seconds), so a fresh one signed before then can DOUBLE-SEND the full
+   * amount — fund refuses to sign while this is set and unexpired. Cleared on
+   * a confirmed submit or a definite 4xx rejection.
+   */
+  pendingFund?: { amountUsd: number; deadline: number };
+}
+
+/**
+ * Thrown when a state file EXISTS but cannot be read or parsed. Distinct from
+ * absent on purpose: the fund/withdraw double-send guards live in this file,
+ * and a loader that answered "nothing pending" for a file it could not read
+ * let a second full authorization be signed inside the window — and the next
+ * save then merged onto {} and overwrote the evidence (round 4b).
+ */
+export class StateUnreadableError extends Error {
+  constructor(file: string, cause: unknown) {
+    super(`${file} exists but could not be read: ${cause instanceof Error ? cause.message : String(cause)}. Fix or move the file before signing anything — it holds the trading credentials and the double-send guards.`);
+    this.name = "StateUnreadableError";
+  }
 }
 
 function readJsonFile<T>(file: string): T | null {
+  if (!fs.existsSync(file)) return null;
   try {
-    if (!fs.existsSync(file)) return null;
     const raw = fs.readFileSync(file, "utf-8").trim();
     return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new StateUnreadableError(file, err);
   }
 }
 

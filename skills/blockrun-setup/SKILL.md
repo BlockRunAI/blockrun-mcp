@@ -107,10 +107,13 @@ install works. Do not "test" with a paid tool.
 
 ## 4. The wallet and how paying works
 
-- The server **creates a wallet on first run**: an EVM key in `~/.blockrun/.session`
-  (`0600`). On macOS/Linux it is also mirrored into the OS keychain, but the file stays
-  authoritative unless the user opts into `BLOCKRUN_KEYCHAIN=strict`. Tell the user to
-  **back that file up** — it is the only copy of the key; BlockRun cannot recover it.
+- The server **creates the wallets on first use**: an EVM key in `~/.blockrun/.session`
+  and a Solana key in `~/.blockrun/.solana-session` (both `0600`). On a new install the
+  **funded one is the Solana key** — that is where the USDC goes by default. On macOS/Linux
+  both are also mirrored into the OS keychain, but the files stay authoritative unless the
+  user opts into `BLOCKRUN_KEYCHAIN=strict` (then the keychain entries are the copies to
+  export). Tell the user to **back up both files** — they are the only copies of the keys;
+  BlockRun cannot recover them.
 - Payment is **per call**, and there are two ways to pay. Free tools (`blockrun_wallet`,
   `blockrun_models`, `blockrun_dex`, crypto `blockrun_price`, `blockrun_chat mode:"free"`)
   need neither.
@@ -122,7 +125,7 @@ install works. Do not "test" with a paid tool.
   — Coinbase (pick "Solana"), Phantom, Solflare or Backpack. $5 covers hundreds of calls.
 - To use Base instead: `blockrun_wallet action:"chain" chain:"base"` then `action:"setup"`,
   and send USDC on the Base network. No restart either way.
-- Only `blockrun_defi`, `blockrun_modal` and native `claude-*` chat are Base-only; they say
+- Only `blockrun_defi`, `blockrun_modal` and `claude-*` chat with `thinking` are Base-only; they say
   so rather than charging.
 
 **API key (for teams who cannot hand a wallet to an agent).** Ask the user whether they want

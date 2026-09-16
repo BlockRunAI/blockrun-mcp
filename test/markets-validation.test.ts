@@ -3,10 +3,78 @@ import assert from "node:assert/strict";
 import { describeDegradedSportsFailure, isDegradedSportsPath, validateMarketRequest } from "../src/utils/markets-validation.js";
 
 test("markets/listings is retired upstream and blocked before payment", () => {
-  // Verified live 2026-07-29: settles payment, THEN returns 410 Gone. The
-  // gateway still registers and prices it, but the gateway only proxies —
-  // registry presence is not evidence that a route still serves.
-  assert.match(validateMarketRequest("markets/listings", { venue: "polymarket" }, undefined) ?? "", /410 Gone/);
+  // It settled-then-410'd in July 2026; since 2026-08-04 the registry no
+  // longer routes it and it 404s BEFORE payment ("Unknown Predexon endpoint",
+  // re-probed unauthenticated 2026-09-13). The block stays — it saves the
+  // round-trip and carries the steer — but it must not claim a charge the
+  // gateway cannot make.
+  const msg = validateMarketRequest("markets/listings", { venue: "polymarket" }, undefined) ?? "";
+  assert.match(msg, /404/);
+  assert.match(msg, /before payment/i);
+  assert.match(msg, /markets\/search/);
+  assert.doesNotMatch(msg, /410|after settling/i, "the pm route settles only on an upstream 2xx");
+});
+
+// ── Money claims the gateway cannot make ──
+//
+// The pm route returns on any upstream !ok BEFORE settlePaymentWithRetry, and
+// its 4xx bodies say "(payment NOT charged)". So no rule here is guarding a
+// PAID 4xx; it is saving an unpaid round-trip and a confusing error. Wording
+// that says otherwise teaches the next maintainer that relaxing a rule risks
+// money, and gets a valid call blocked "to be safe".
+test("no validation message claims a 4xx that settles", () => {
+  const messages = [
+    validateMarketRequest("markets/listings", {}, undefined),
+    validateMarketRequest("polymarket/candlesticks/token/123", { interval: "1h" }, undefined),
+    validateMarketRequest("polymarket/orderbooks", {}, undefined),
+    validateMarketRequest("polymarket/market/0xabc/smart-money", {}, undefined),
+    validateMarketRequest("polymarket/markets", { active: "true" }, undefined),
+  ];
+  for (const m of messages) {
+    assert.ok(m, "precondition: every one of these is a rule hit");
+    assert.doesNotMatch(m, /paid 4\d\d|after settling|settles? (a |the )?payment/i, m);
+    assert.match(m, /No payment was made/, m);
+  }
+});
+
+// ── A query string in `path` bypassed every rule and false-blocked valid calls ──
+//
+// validateMarketRequest normalised the path (stripping `?…`) so the rule
+// MATCHED on the slug, but read the query from `params` alone. The gateway
+// forwards request.nextUrl.searchParams to Predexon, which returns 200 +
+// UNFILTERED data on an unknown param name (it never 400s), so:
+//   (a) "polymarket/markets?active=true" passed validation, paid, and came
+//       back unfiltered — the exact outcome the Gamma-param rule exists for;
+//   (b) "polymarket/orderbooks?token_id=1&start_time=1&end_time=2" was refused
+//       as "missing" although the request was complete;
+//   (c) on the account rail path-query + params concatenated into
+//       "…?limit=5?status=open", so `limit` became "5?status=open".
+// The tool's own contract is "Pass query params via 'params'", so a `?` or `#`
+// in the path is refused up front with that instruction. Pre-payment, every
+// rail, no exceptions — the first rule that reads params must never see one.
+test("a query string or fragment in `path` is refused with the params instruction, before any param rule", () => {
+  for (const path of [
+    "polymarket/markets?active=true&limit=5",
+    "polymarket/orderbooks?token_id=123&start_time=1700000000000&end_time=1700003600000",
+    "polymarket/market/0xabc/smart-money?min_trades=100",
+    "polymarket/markets/keyset?pagination_key=abc",
+    "polymarket/wallets/profiles?addresses=0xabc",
+    "markets/search?q=NBA",
+    "kalshi/markets#frag",
+    "polymarket/events?",
+  ]) {
+    const msg = validateMarketRequest(path, undefined, undefined) ?? "";
+    assert.match(msg, /params/, `${JSON.stringify(path)}: ${msg}`);
+    assert.match(msg, /No payment was made/, msg);
+    // Not the misleading "missing token_id" / "needs a criterion" — the
+    // caller DID supply them, in the wrong place.
+    assert.doesNotMatch(msg, /requires params\.token_id|smart-wallet criterion|Gamma-only/, msg);
+  }
+  // The same path with the query moved into params is the working call.
+  assert.equal(validateMarketRequest("polymarket/orderbooks", { token_id: "123", start_time: "1700000000000", end_time: "1700003600000" }, undefined), null);
+  assert.equal(validateMarketRequest("polymarket/market/0xabc/smart-money", { min_trades: "100" }, undefined), null);
+  // A retired route is still reported as retired first — the more specific steer.
+  assert.match(validateMarketRequest("markets/listings?venue=polymarket", {}, undefined) ?? "", /404/);
 });
 
 test("Gamma-only market discovery params are rejected before payment", () => {
@@ -95,17 +163,20 @@ test("a decorated path cannot step around a rule", () => {
     "markets/listings#x",
     "markets/listings\t",
     "/markets/listings/",
+    "markets/listings?\n",
   ]) {
     assert.match(
       validateMarketRequest(path, {}, undefined) ?? "",
-      /410 Gone/,
+      /404/,
       `${JSON.stringify(path)} must not bypass the retired-route block`,
     );
   }
 
+  // A query in the path is refused outright (see the `?`/`#` test above), so
+  // it cannot reach a param rule with an empty `query` either.
   assert.match(
     validateMarketRequest("polymarket/market/0xabc/smart-money?window=7d", {}, undefined) ?? "",
-    /smart-wallet criterion/,
+    /params/,
   );
   assert.match(
     validateMarketRequest("POLYMARKET/ORDERBOOKS", {}, undefined) ?? "",

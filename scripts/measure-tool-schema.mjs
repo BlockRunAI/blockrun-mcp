@@ -34,7 +34,7 @@
  * percent higher on JSON, so every number here is a slight UNDER-count.
  */
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, realpathSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
 
@@ -79,9 +79,26 @@ export function listTools(cmd, { timeoutMs = 120_000 } = {}) {
     };
 
     const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
+    // Reject on a JSON-RPC error rather than resolving with a message that has
+    // no `result`. Callers destructure `{ result }`, so swallowing an error
+    // handed them `undefined` -> `result?.tools ?? []` -> a measurement of ZERO
+    // tokens across ZERO tools, printed as a real figure with exit 0. With
+    // --svg that reaches the cards as "0.0K tokens" and, because `cut` divides
+    // by the total, a literal "NaN% less". A server answering `initialize`
+    // with an error -- the foreign-server case this tool advertises, when the
+    // package wants auth -- is all it takes.
     const rpc = (method, params) =>
-      new Promise((res) => {
-        pending.set(++id, res);
+      new Promise((res, rej) => {
+        pending.set(++id, (msg) => {
+          if (msg.error) {
+            rej(new Error(
+              `${cmd.join(" ")} answered ${method} with JSON-RPC error ` +
+              `${msg.error.code}: ${msg.error.message ?? "(no message)"}`,
+            ));
+            return;
+          }
+          res(msg);
+        });
         send({ jsonrpc: "2.0", id, method, params });
       });
 
@@ -103,6 +120,15 @@ export function listTools(cmd, { timeoutMs = 120_000 } = {}) {
     // EPIPE rather than an unhandled crash when the child is already gone.
     child.stdin.on("error", () => {});
 
+    // Decode as a STREAM. Without this each Buffer is toString()'d on its own,
+    // so a multi-byte character split across a chunk boundary becomes U+FFFD.
+    // JSON.parse still succeeds (U+FFFD is a legal string char) and only the
+    // token count comes out wrong -- and the tool descriptions this measures
+    // are full of em dashes. The payload is ~50KB against a 16KB pipe buffer,
+    // so multi-chunk delivery is the normal case, and the in-process test that
+    // pins these numbers uses InMemoryTransport and never exercises this
+    // reader. The disagreement would surface as an unexplainable README diff.
+    child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       buf += chunk;
       let i;
@@ -198,7 +224,11 @@ export function renderCard({ total, tradingTotal, cut, dark }) {
 
 // Importable: test/schema-tokens.test.ts reuses measure()/asK() to pin the
 // published number, so the CLI half must not run on import.
-const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// realpath BOTH sides. Node realpaths the ESM main entry but leaves
+// process.argv[1] as resolve(cwd, arg), so any checkout reached through a
+// symlink (macOS /tmp -> /private/tmp, npm link, a symlinked working dir) made
+// these differ and the CLI half silently did nothing at exit 0.
+const isCli = process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 if (!isCli) { /* library use */ } else await main();
 
 async function main() {
@@ -207,7 +237,18 @@ for (const profile of PROFILES) {
   const cmd = userCmd.length
     ? userCmd
     : ["node", SERVER, ...(profile && profile !== "full" ? ["--profile", profile] : [])];
-  results[profile ?? userCmd.join(" ")] = measure(await listTools(cmd), PREFIX);
+  const tools = await listTools(cmd);
+  // A profile that projects nothing is a broken measurement, not a small one.
+  // Every figure downstream (the README table, the badge, the percentage) is
+  // derived from these totals, and printing 0 with exit 0 publishes a wrong
+  // number rather than reporting a failure.
+  if (tools.length === 0) {
+    throw new Error(
+      `${cmd.join(" ")} listed no tools for profile "${profile ?? "custom"}" — ` +
+      `refusing to report a measurement of zero.`,
+    );
+  }
+  results[profile ?? userCmd.join(" ")] = measure(tools, PREFIX);
 }
 
 if (flags.has("--svg")) {

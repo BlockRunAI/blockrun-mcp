@@ -24,6 +24,25 @@
 // The header is x402Version 2, so the field is `amount` (micro-USDC). v1's
 // `maxAmountRequired` is absent; read that key and you get `null`, which reads
 // as "free" rather than raising. Hence the explicit check below.
+//
+// THE ACCOUNT RAIL (api.blockrun.ai, Bearer key, no tx fee) CANNOT BE PROBED
+// PER ROUTE. Probed 2026-09-13: with no credential, or an invalid one, every
+// path answers 401 `invalid_api_key` — including GET /v1/models — and there is
+// no dry-run or quote-only header. With a VALID key a paid route bills; that is
+// the rail's whole design, and a script that attaches a real key to sixty
+// routes is a script that spends. So the per-route rows below stay wallet-
+// only, and the account rail is covered where it CAN be, for free: it prices
+// chat "from this sheet by design" (blockrun's src/lib/models.ts), and the
+// sheet is public at blockrun.ai/api/pricing. The catalogue sweep reads it as
+// a third source. What this does NOT cover on the account rail: media, pm,
+// modal, search, exa, phone — every non-chat estimator is verified on the
+// wallet gateways only, and the account rail's ledger books whatever
+// x-blockrun-cost-usd says (an overrun past the reserve is visible there, after
+// the fact, not here). That is a known gap, not an oversight.
+//
+// EXIT CODES: 0 verified clean; 1 a confirmed under-reserve; 2 the run could
+// not verify enough to say (see ./verify-prices-verdict.ts). 2 exists because
+// this used to exit 0 with every row printing `?`.
 import { estimateModalCost } from "../src/tools/modal.js";
 import { estimatePhoneCost } from "../src/tools/phone.js";
 import { estimateSearchCost } from "../src/tools/search.js";
@@ -34,6 +53,7 @@ import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS } from "../src/utils/constants.js";
+import { verdict } from "./verify-prices-verdict.js";
 
 // TWO gateways, and they do not agree. Base and Solana are separate deployments
 // with separate env, and TRANSACTION_FEE_USD is env-overridable in the gateway —
@@ -52,6 +72,11 @@ import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIER
 // users, which is a release blocker exactly like a Base shortfall.
 const BASE = "https://blockrun.ai/api/v1/";
 const SOL = "https://sol.blockrun.ai/api/v1/";
+// The public price sheet the ACCOUNT rail bills chat from (see the header).
+// Free, unauthenticated, and not the /v1/models population: it carries the
+// hidden-but-served SKUs that the catalogue omits, which is exactly the set
+// api.blockrun.ai settled at $0 for a week because nothing priced them (#516).
+const ACCOUNT_SHEET = "https://blockrun.ai/api/pricing";
 
 type Probe = {
   label: string;
@@ -62,15 +87,34 @@ type Probe = {
   // which model a tier will settle on until after the call). For those, over-
   // reserving is the design, not drift — but under-reserving is still a bug.
   allowOver?: boolean;
+  // A combination the CLIENT refuses before payment, probed to check that the
+  // gateway refuses it too. An unpaid 4xx with no 402 is the expected answer
+  // and counts as verified, not unreachable; a quote is the finding — the
+  // gateway sells a tier this client's guard says it cannot render.
+  expectRefused?: boolean;
 };
 
 type Quote = { usd: number; description?: string };
 
+// A probe that THROWS (reset, DNS, TLS, a gateway that accepts the socket and
+// never answers) is an unreachable ROW, not a crash: uncaught it rejected the
+// top-level await and Node exited 1 — the "confirmed under-reserve" code — with
+// none of the verdict lines printed (round 4b). Bounded so a hung gateway
+// cannot stall the release gate for undici's five-minute headers timeout.
+const PROBE_TIMEOUT_MS = 30_000;
+
 async function quote(host: string, path: string, body?: unknown): Promise<Quote | string> {
-  const res = await fetch(host + path, {
-    method: body === undefined ? "GET" : "POST",
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(host + path, {
+      method: body === undefined ? "GET" : "POST",
+      ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const why = err instanceof Error ? (err.name === "TimeoutError" ? `no answer in ${PROBE_TIMEOUT_MS / 1000}s` : err.message) : String(err);
+    return `unreachable (${why})`;
+  }
   const header = res.headers.get("payment-required");
   if (!header) return `no 402 (HTTP ${res.status})`;
   let parsed: { accepts?: Array<{ amount?: string; extra?: { description?: string } }>; resource?: { description?: string } };
@@ -179,13 +223,15 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-2.5", 30, undefined],
     // A combination the client-side guard REFUSES, probed anyway because a
     // guard is a claim about the gateway and this is the only thing checking
-    // it: the gateway still QUOTES 2.5@1080p ($3.55) even though token360
-    // rejects it at submit (probed 2026-08-07) — a known gateway defect, fixed
-    // by blockrun PR #353. Once that deploys, this probe reports `no 402` and
-    // the guard is vindicated. (2.0@360p left the matrix: 360p is out of the
-    // schema for every model and out of this client's enum, so the estimator
-    // now throws on it — it can no longer even be expressed from here.)
-    ["bytedance/seedance-2.5", undefined, "1080p"],
+    // it. The gateway used to QUOTE 2.5@1080p ($3.55) even though token360
+    // rejected it at submit (probed 2026-08-07); blockrun PR #353 deployed and
+    // since 2026-09-15 the probe answers 400 with no 402 — the guard is
+    // vindicated, and the row is marked so that answer reads as verified
+    // rather than as an unreachable route. (2.0@360p left the matrix: 360p is
+    // out of the schema for every model and out of this client's enum, so the
+    // estimator now throws on it — it can no longer even be expressed from
+    // here.)
+    ["bytedance/seedance-2.5", undefined, "1080p", true],
     // Each model probed at (or near) its ceiling and floor tier, so a gateway
     // whose capability surface diverges from SEEDANCE_RESOLUTIONS — in either
     // direction — shows up here as `no 402` or a price mismatch. 1.5-pro@1080p
@@ -195,9 +241,10 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-2.0-fast", undefined, "480p"],
     ["bytedance/seedance-2.5", undefined, "480p"],
     ["bytedance/seedance-2.0", undefined, "480p"],
-  ] as Array<[string, number | undefined, string | undefined]>).map(([model, seconds, resolution]) => ({
+  ] as Array<[string, number | undefined, string | undefined, boolean?]>).map(([model, seconds, resolution, expectRefused]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",
+    ...(expectRefused ? { expectRefused: true } : {}),
     body: {
       model,
       prompt: "a cube rotating",
@@ -299,6 +346,28 @@ for (const probe of PROBES) {
     quote(BASE, probe.path, probe.body),
     quote(SOL, probe.path, probe.body),
   ]);
+  if (probe.expectRefused) {
+    // The guard says this cannot render; the gateway is expected to refuse
+    // it unpaid. Either side quoting it is the finding, on whichever chain.
+    const refused = (q: Quote | string) => typeof q === "string" && /no 402 \(HTTP 4\d\d\)/.test(q);
+    // A 5xx, an undecodable header or a thrown probe is neither a refusal nor
+    // a quote: the row was not verified. Tally it as such rather than as "the
+    // gateway sells it" (round 4b).
+    const unverified = (q: Quote | string) => typeof q === "string" && !refused(q);
+    if (unverified(liveQ) || unverified(solQ)) {
+      console.log(`  ?  ${probe.label.padEnd(26)} ${[unverified(liveQ) ? `Base ${liveQ}` : "", unverified(solQ) ? `Solana ${solQ}` : ""].filter(Boolean).join("; ")}`);
+      unreachable++;
+    } else if (refused(liveQ) && refused(solQ)) {
+      console.log(`  ✓  ${probe.label.padEnd(26)} refused unpaid on both gateways, as the client-side guard expects`);
+    } else {
+      const sold = [
+        !refused(liveQ) ? `Base ${typeof liveQ === "string" ? liveQ : `quotes $${liveQ.usd.toFixed(6)}`}` : "",
+        !refused(solQ) ? `Solana ${typeof solQ === "string" ? solQ : `quotes $${solQ.usd.toFixed(6)}`}` : "",
+      ].filter(Boolean).join("; ");
+      console.log(`  !  ${probe.label.padEnd(26)} the client refuses this tier but the gateway does not: ${sold} — the guard still blocks it before payment`);
+    }
+    continue;
+  }
   const live = typeof liveQ === "string" ? liveQ : liveQ.usd;
   const solLive = typeof solQ === "string" ? solQ : solQ.usd;
   const liveProduct = typeof liveQ === "string" ? undefined : product(liveQ.description);
@@ -384,7 +453,8 @@ console.log(
   `\n${short} under-reserving, ${over} over-reserving, ${unreachable} unreachable, ` +
     `${PROBES.length - short - over - unreachable} exact`,
 );
-if (unreachable) console.log("Unreachable routes were NOT verified — treat them as unknown, not as passing.");
+// The unreachable verdict is printed once, at the end, by verdict() — with the
+// exit code it now carries.
 
 console.log(
   `Solana: ${solShort} under-reserved (BLOCKER), ${solDearer} dearer than Base but covered, ${solCheaper} cheaper, ${solMissing} not served, ${solSubstituted} substituted`,
@@ -450,12 +520,43 @@ async function catalogue(host: string): Promise<CatalogueModel[] | string> {
   }
 }
 
+// The account rail's sheet, reshaped to the catalogue's row so one loop judges
+// all three sources. `inputPricePerMillion` is the billed rate (margin already
+// applied — chatMarginPercent is 0 today, but the field is the one that would
+// move if that changed); `inputPrice` is the pre-margin figure and is NOT what
+// settles. Long-context ladders (a model repricing above N input tokens) are
+// on the sheet too and are deliberately not compared: no estimator in this
+// repo models them, so they are a separate finding, not a row here.
+type SheetModel = { id: string; available?: boolean; billingMode?: string; inputPricePerMillion?: unknown; outputPricePerMillion?: unknown };
+
+async function accountSheet(): Promise<CatalogueModel[] | string> {
+  try {
+    const res = await fetch(ACCOUNT_SHEET);
+    if (!res.ok) return `HTTP ${res.status}`;
+    const body = (await res.json()) as { models?: unknown };
+    if (!Array.isArray(body.models)) return "no `models` array in the response";
+    return (body.models as SheetModel[]).map((m) => ({
+      id: m.id,
+      available: m.available,
+      pricing: { input: m.inputPricePerMillion, output: m.outputPricePerMillion },
+    }));
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 const catalogueGaps: string[] = []; // fail
 const catalogueNotes: string[] = []; // report only
 let catalogueUnreachable = 0;
+const CATALOGUES: Array<[string, () => Promise<CatalogueModel[] | string>]> = [
+  ["Base", () => catalogue(BASE)],
+  ["Solana", () => catalogue(SOL)],
+  ["Account (pricing sheet)", accountSheet],
+];
 console.log("\nCatalogue sweep: every live chat model must be covered by its price row, by the default, or by FREE_CHAT_MODELS");
-for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
-  const models = await catalogue(host);
+console.log("  (Base and Solana: GET /v1/models. Account rail: the public sheet api.blockrun.ai bills chat from — its other routes cannot be quoted without a key that would be charged.)");
+for (const [name, read] of CATALOGUES) {
+  const models = await read();
   if (typeof models === "string") {
     console.log(`  ?  ${name.padEnd(26)} ${models}`);
     catalogueUnreachable++;
@@ -471,7 +572,11 @@ for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
     if (typeof input !== "number" || typeof output !== "number") continue;
     // Base marks retired rows `available:false`; Solana omits the field
     // entirely, and an omitted flag is a served model, not an unknown one.
-    if (m.available === false) continue;
+    //
+    // A model FREE_CHAT_MODELS claims is free is checked even when unavailable:
+    // the dangerous direction is a $0 reserve for a call that costs money, and
+    // "retired today" does not promise "still free when it comes back".
+    if (m.available === false && !FREE_CHAT_MODELS.has(m.id)) continue;
     checked++;
     listed.add(m.id);
     const isFree = FREE_CHAT_MODELS.has(m.id);
@@ -503,14 +608,23 @@ for (const [name, host] of [["Base", BASE], ["Solana", SOL]] as const) {
       catalogueNotes.push(`${name}: ${m.id} is billed $0 but FREE_CHAT_MODELS does not list it — an explicit call reserves the default, and an exhausted budget refuses a free call`);
     }
   }
-  for (const id of MODEL_TIERS.free) {
-    if (!listed.has(id)) catalogueNotes.push(`${name}: free[] routes ${id}, which the catalogue does not list — not a death certificate (gpt-oss-120b is hidden-alive); probe with a realistic POST before removing`);
+  // Every id we reserve $0 for, not just the routing tier — FREE_CHAT_MODELS is
+  // the classifier estimateChatCost actually consults, and it has members the
+  // tier list does not. An unlisted one is UNVERIFIED, not verified-free: the
+  // sweep can only price what the catalogue reports.
+  let unverifiedFree = 0;
+  for (const id of FREE_CHAT_MODELS) {
+    if (listed.has(id)) continue;
+    unverifiedFree++;
+    catalogueNotes.push(`${name}: reserves $0 for ${id}, which the catalogue does not list — UNVERIFIED, not confirmed free (delisting is not death: gpt-oss-120b is hidden-alive). Probe with a realistic POST before trusting or removing it`);
   }
-  console.log(`  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve`);
+  console.log(
+    `  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve` +
+      (unverifiedFree ? `, ${unverifiedFree} free-list members unverified (not in the catalogue)` : ""),
+  );
 }
 for (const g of catalogueGaps) console.log(`  ✗  ${g}`);
 for (const n of catalogueNotes) console.log(`  !  ${n}`);
-if (catalogueUnreachable) console.log("  A catalogue that could not be read was NOT verified — treat it as unknown, not as passing.");
 
 // Under-reserving is a release blocker: it means the budget cap is a lie. That is
 // true per CHAIN — an estimator built off Base is a lie on Solana the moment
@@ -518,11 +632,19 @@ if (catalogueUnreachable) console.log("  A catalogue that could not be read was 
 // true for a catalogue model the table does not know: the gate reserves the
 // default for it, and the default is a claim about the catalogue.
 // Over-reserving only blocks affordable calls, so it warns without failing.
-if (short || solShort || catalogueGaps.length) {
-  const why = [
-    short || solShort ? `an estimator reserves less than the gateway charges${solShort ? " (on Solana)" : ""}` : "",
-    catalogueGaps.length ? `${catalogueGaps.length} live chat model${catalogueGaps.length === 1 ? "" : "s"} disagree${catalogueGaps.length === 1 ? "s" : ""} with the price table in a direction that costs money` : "",
-  ].filter(Boolean).join("; ");
-  console.log(`\nFAIL: ${why}. Fix it before publishing.`);
-  process.exit(1);
-}
+//
+// And a run that could not LOOK is not a run that passed: too many `?` rows, or
+// a catalogue that would not read, exits 2. The decision lives in
+// verify-prices-verdict.ts so a test can pin it without the network.
+const result = verdict({
+  probes: PROBES.length,
+  short,
+  solShort,
+  unreachable,
+  catalogueGaps: catalogueGaps.length,
+  catalogues: CATALOGUES.length,
+  catalogueUnreachable,
+});
+if (result.lines.length) console.log("");
+for (const line of result.lines) console.log(line);
+process.exit(result.code);
