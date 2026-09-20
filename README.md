@@ -334,7 +334,7 @@ Claude reads the odds with `blockrun_markets`. In wallet mode, and only after yo
 
 ### 5. Install the agent skills (optional)
 
-The package ships 16 skills — which tool answers what, worked examples, and a setup / debug / upgrade trio so the agent can install, troubleshoot and update the server on its own.
+The package ships 17 skills — which tool answers what, worked examples, and a setup / debug / upgrade trio so the agent can install, troubleshoot and update the server on its own.
 
 ```bash
 /plugin marketplace add BlockRunAI/blockrun-mcp            # Claude Code

@@ -2,6 +2,37 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.52.0
+
+**A judgment endpoint as a skill, not a tool.** BlockRun now serves
+`POST api.blockrun.ai/v1/decide` — typed yes/no, labelled-choice and
+scored-rung judgments over a text or JSON state, served by OpenJev, free
+behind a registered key. The obvious move was a `blockrun_decide` tool. It was
+not made: every caller of this server is already a frontier model and a better
+one-off judge than a 4B NLI cross-encoder, the default install is a wallet with
+no key, and a tool taxes every user's context on every turn for an experiment
+few run. The endpoint earns its place when someone wants one fixed ruler over
+many items, or is prototyping a judgment they will later run from a pipeline
+without a model — and that is a `curl` recipe, which is what a skill is for.
+
+### Skills
+
+- **`feat(skills)` — `decide`.** The seventeenth skill: the request shape, the
+  three question types and their limits (1–64 questions, 2–255 criteria), the
+  response, an eval loop over the user's own labelled rows, and the errors. Two
+  things it says because every surface has to: the `confidence` on a choice is
+  a share of the agreement found, not the probability the answer is correct
+  (equal-weak and equal-strong support are indistinguishable once the scores
+  are normalised), and OpenJev is not Jev — unaffiliated, MIT, no published
+  comparison and none invented. It also tells the agent to export the key in
+  the shell rather than write `~/.blockrun/.api-key`, because that file moves
+  every paid tool to account billing at the next start.
+- **`docs` — the router skill points a fixed-ruler question at `decide`**, and
+  the README, CONTRIBUTING and setup skill count seventeen.
+
+Nothing in `src/` changed: the tool count, the schema cost and every price
+table are as they were in 0.51.1.
+
 ## 0.51.1
 
 **Round four, second half.** 0.51.0 shipped with seven of round four's ten

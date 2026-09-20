@@ -84,6 +84,11 @@
       "name": "gentech-blockrun",
       "source": "./skills/gentech-blockrun",
       "description": "GenTech Labs' integration patterns for BlockRun from Hermes Agent — daily usage patterns, cost-optimized workflows, multi-tool pipelines and error handling across the full toolset."
+    },
+    {
+      "name": "decide",
+      "source": "./skills/decide",
+      "description": "Use when the user wants to try BlockRun's free typed-judgment endpoint (POST api.blockrun.ai/v1/decide, served by OpenJev) on their own data — yes/no, labelled choice, or scored-rung questions over a text or JSON state. Not an MCP tool; called with curl. Explains what the confidence number means and why OpenJev is not Jev."
     }
   ]
 }

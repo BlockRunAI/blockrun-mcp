@@ -116,6 +116,7 @@ Deeper wallet, budget and x402 mechanics — including calling the HTTP API dire
 | Run code in a remote container / on a GPU | `blockrun_modal` | Prefer local for normal repo work |
 | Which models exist, and what they cost | `blockrun_models` | |
 | Balance, funding, spend caps | `blockrun_wallet` | |
+| A fixed yes/no, choice or score over many items, free | *(no tool)* — `curl api.blockrun.ai/v1/decide` | Needs a free key; see the `decide` skill. You are the better one-off judge |
 
 The crypto tools overlap heavily. Prefer the free ones (`blockrun_price`, `blockrun_dex`) when
 they already answer the question, and reach for `blockrun_defi` or `blockrun_markets` only when
@@ -177,7 +178,7 @@ authoritative** — this list would go stale within a release.
 
 Install from the same marketplace for depth on one area: `search`, `exa-research`,
 `crypto-data`, `surf`, `rpc`, `prediction-markets`, `polymarket-trading`, `image-prompting`,
-`phone`, `modal`.
+`phone`, `modal`, `decide`.
 
 ```bash
 /plugin marketplace add BlockRunAI/blockrun-mcp

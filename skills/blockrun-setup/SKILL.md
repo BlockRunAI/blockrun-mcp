@@ -146,7 +146,7 @@ keypair and are unavailable; everything else works.
 
 ## 5. Optional: install the agent skills
 
-The package ships 16 skills (which tool to use, worked examples, this one). Claude Code
+The package ships 17 skills (which tool to use, worked examples, this one). Claude Code
 users: `/plugin marketplace add BlockRunAI/blockrun-mcp`. Everyone else:
 
 ```bash
