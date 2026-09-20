@@ -2,6 +2,27 @@
 
 All notable changes to BlockRun MCP will be documented in this file.
 
+## 0.52.1
+
+**JSON mode kept half its promise on Claude.** `response_format: "json_object"`
+says "no markdown fences" and "works across all providers". On the native
+`claude-*` path it injected the instruction and never stripped the fence Claude
+adds anyway, so `JSON.parse(response)` threw on the leading backtick — on
+exactly the models most likely to be asked for JSON.
+
+### Fixes
+
+- **`fix(chat)` — `json_object` unwraps a fenced reply on the native path.**
+  Only a reply that IS one fenced block is unwrapped; prose round a fence is
+  the model ignoring the instruction and is returned as-is rather than trimmed
+  into JSON that was never the whole answer. `structuredContent.native` keeps
+  the fence as upstream evidence, and thinking blocks are untouched — the
+  compat path would have done the strip for free at the cost of the native
+  thinking channel. Pinned by six cases in
+  `test/chat-anthropic-json-fence.test.ts`, including the verbatim
+  haiku-4.5 reproduction. Reported by a sibling session reading the gateway's
+  `stripJsonFence` call sites, neither of which is on `/v1/messages`.
+
 ## 0.52.0
 
 **A judgment endpoint as a skill, not a tool.** BlockRun now serves
