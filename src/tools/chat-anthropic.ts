@@ -355,6 +355,19 @@ function isThinkingBlock(b: Anthropic.ContentBlock): b is Anthropic.ThinkingBloc
   return b.type === "thinking";
 }
 
+/**
+ * Unwrap a reply that IS one fenced code block; leave anything else alone.
+ *
+ * Only the whole-reply case, deliberately: prose around a fence means the
+ * model ignored the instruction, and cutting the prose would hand back JSON
+ * that was never the whole answer. A caller who gets the fenced string back
+ * sees exactly what happened; one who gets a silently trimmed one does not.
+ */
+export function stripJsonFence(text: string): string {
+  const m = text.trim().match(/^```[A-Za-z0-9_-]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/);
+  return m ? m[1] : text;
+}
+
 export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<McpResult> {
   const {
     client, model, message, system, messages,
@@ -483,7 +496,15 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
 
   const thinkingBlocks = native.content.filter(isThinkingBlock);
   const textBlocks = native.content.filter(isTextBlock);
-  const answerText = textBlocks.map((b) => b.text).join("\n");
+  // JSON mode is two halves: the instruction above, and this. Claude fences
+  // JSON even when told not to (haiku-4.5, 2026-09-20: the instruction quoted
+  // the keys and the fence stayed), and the gateway's compat path strips it
+  // (ai-providers.ts stripJsonFence) — which is what "no markdown fences" in
+  // the tool description promises. /v1/messages never sees response_format, so
+  // the strip has to live here or the promise is false on exactly the models
+  // most likely to be asked. `native` below keeps the fence: it is evidence.
+  const rawAnswer = textBlocks.map((b) => b.text).join("\n");
+  const answerText = responseFormat?.type === "json_object" ? stripJsonFence(rawAnswer) : rawAnswer;
   const thinkingText = thinkingBlocks.map((b) => b.thinking).join("\n");
   const signaturePresent = thinkingBlocks.some(
     (b) => typeof b.signature === "string" && b.signature.length > 0,
