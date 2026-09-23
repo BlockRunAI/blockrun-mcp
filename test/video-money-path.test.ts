@@ -111,6 +111,9 @@ const respPoll = (body: unknown) => ({ status: 200, ok: true, headers: headers({
 test("SSRF: non-http(s) schemes and private-resolving hosts are refused before ANY network call", async () => {
   for (const args of [
     { image_url: "file:///etc/passwd" },
+    { reference_image_urls: ["http://169.254.169.254/portrait.png"] },
+    { reference_videos: [{ url: "https://127.0.0.1.nip.io/motion.mp4" }] },
+    { reference_audios: [{ url: "file:///etc/music.mp3" }] },
     { image_url: "http://169.254.169.254/latest/meta-data/" },
     { image_url: "https://127.0.0.1.nip.io/a.png" },
     { image_url: "https://ok.example.com/a.png", last_frame_url: "http://169.254.169.254/b.png" },
@@ -166,12 +169,13 @@ test("a malformed completed poll still BOOKS the settled spend (the money alread
 });
 
 test("the happy path books the settled amount exactly once", async () => {
-  script = [resp402, respSubmit, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  script = [resp402, respSubmit, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8, last_frame_url: "https://blockrun.ai/media/last.png", last_frame_backed_up: true }] })];
   quotedAmount = "400000";
   const { call, budget } = makeHarness();
   const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
   assert.notEqual(res.isError, true, res.content?.[0]?.text);
   assert.equal(res.structuredContent.cost_usd, 0.4);
+  assert.equal(res.structuredContent.last_frame_url, "https://blockrun.ai/media/last.png");
   assert.ok(Math.abs(budget.spent - 0.4) < 1e-9, `booked once, not twice: spent=${budget.spent}`);
 });
 
@@ -204,7 +208,7 @@ test("a 402 far above the published rate is refused BEFORE signing — nothing s
 });
 
 test("a quote inside the tolerance still re-reserves and pays (4K renders exceed the estimate by design)", async () => {
-  script = [resp402, respSubmit, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  script = [resp402, respSubmit, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8, last_frame_url: "https://blockrun.ai/media/last.png", last_frame_backed_up: true }] })];
   quotedAmount = "450000"; // $0.45 against a $0.40 estimate: 1.125x
   const { call, budget } = makeHarness();
   const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
@@ -225,7 +229,7 @@ test("a transient poll rejection is retried inside the deadline, not fatal", asy
   // One ECONNRESET used to throw out of the loop after (potentially) eight
   // minutes of render, with no job id and no charge statement.
   clockOffset = 0;
-  script = [resp402, respSubmit, () => { throw new TypeError("fetch failed"); }, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  script = [resp402, respSubmit, () => { throw new TypeError("fetch failed"); }, () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8, last_frame_url: "https://blockrun.ai/media/last.png", last_frame_backed_up: true }] })];
   quotedAmount = "400000";
   const { call, budget } = makeHarness();
   const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });

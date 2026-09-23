@@ -17,6 +17,9 @@ import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
 import { pollTimeoutFor } from "../src/utils/poll.js";
 
+// Model/parameter tests are offline; DNS policy is exercised in video-money-path.
+mock.module("../src/utils/ssrf.js", { namedExports: { isBlockedFetchHostResolved: async () => false } });
+
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
 // fetch is mocked to a SENTINEL throw rather than left unmocked. Every case here
@@ -185,17 +188,10 @@ test("seedance-2.5 rejects RealFace assets before paying", async () => {
   assert.match(text, /seedance-2\.0/);
 });
 
-test("seedance-2.5 rejects first-and-last-frame interpolation", async () => {
-  const text = await errorText({
-    prompt: "a cube",
-    model: "bytedance/seedance-2.5",
-    image_url: "https://example.com/a.png",
-    last_frame_url: "https://example.com/b.png",
-  });
-  // Match the capability guard's own wording — /last_frame_url/ alone also
-  // matches the two sibling guards, so it stayed green if the wrong one fired.
-  assert.match(text, /does not support first-and-last-frame interpolation/);
-  assert.match(text, /seedance-1\.5-pro/);
+test("seedance-2.5 accepts first-and-last-frame interpolation", async () => {
+  const body = await bodySentFor({ prompt: "a cube", model: "bytedance/seedance-2.5", image_url: "https://example.com/a.png", last_frame_url: "https://example.com/b.png", output_format: "mov" });
+  assert.equal(body.last_frame_url, "https://example.com/b.png");
+  assert.equal(body.output_format, "mov");
 });
 
 test("first-and-last-frame rejects its two invalid combinations", async () => {
@@ -468,4 +464,31 @@ test("grok's resolution reaches the request body — the whole point of acceptin
   // default), so it must still be dropped rather than forwarded.
   const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "720p" });
   assert.equal(sora.resolution, undefined);
+});
+
+
+test("mixed reference inputs are forwarded and included in budget estimates", async () => {
+  const args = { prompt: "test", model: "bytedance/seedance-2.0", reference_image_urls: ["https://example.com/person.png"], reference_videos: [{ url: "https://example.com/motion.mp4" }], reference_audios: [{ url: "https://example.com/music.mp3" }], bitrate_mode: "high", return_last_frame: true, input_type: "reference" };
+  const body = await bodySentFor(args);
+  for (const field of ["reference_image_urls", "reference_videos", "reference_audios", "bitrate_mode", "return_last_frame", "input_type"] as const) assert.deepEqual(body[field], args[field]);
+  const mixed = estimateVideoCost(args.model, 5, "720p", { videos: 1, audios: 1 });
+  const plain = estimateVideoCost(args.model, 5, "720p");
+  assert.ok(mixed > plain * 2.29 && mixed < plain * 2.31);
+  const { estimate } = await reservedFor(args);
+  assert.ok(Math.abs(Number(estimate.slice(1)) - mixed) < 0.01);
+});
+
+test("reference media errors never reach the network", async () => {
+  const audio = [{ url: "https://example.com/a.mp3" }];
+  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.0", reference_audios: audio }), /requires a reference image or video/);
+  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.5", reference_audios: audio }), /requires Seedance 2.0/);
+  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.0", image_url: "https://example.com/i.png", reference_videos: [{ url: "https://example.com/v.mp4" }] }), /cannot be combined with frame seeds/);
+});
+
+
+test("1.5 camera and seed controls preserve false and zero", async () => {
+  const body = await bodySentFor({ prompt: "test", model: "bytedance/seedance-1.5-pro", seed: 0, camera_fixed: false, watermark: false, safety_identifier: "test" });
+  assert.equal(body.seed, 0);
+  assert.equal(body.camera_fixed, false);
+  assert.equal(body.watermark, false);
 });
