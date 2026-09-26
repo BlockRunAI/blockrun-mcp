@@ -398,6 +398,17 @@ test("one DNS resolution per HOST, not per URL", async () => {
   assert.deepEqual(resolved, ["cdn.example.com"], `resolved ${resolved.length} times for one host`);
 });
 
+test("a bad resolution or duration is also refused before any DNS work", async () => {
+  // Same principle as the guard block above: every purely in-memory check now
+  // sits ahead of the resolver, so no caller-chosen hostname is looked up for
+  // a request the tool was always going to refuse.
+  resolved.length = 0;
+  await errorText({ prompt: "t", model: "bytedance/seedance-2.5", resolution: "4K", image_url: "https://attacker.example.com/a.png" });
+  assert.deepEqual(resolved, [], "a rejected resolution still resolved a hostname");
+  await errorText({ prompt: "t", model: "bytedance/seedance-2.0", duration_seconds: 99, image_url: "https://attacker.example.com/a.png" });
+  assert.deepEqual(resolved, [], "a rejected duration still resolved a hostname");
+});
+
 test("an unsupported combination is refused BEFORE any DNS work", async () => {
   // The guards used to sit below the resolver, so a model that rejects
   // reference images outright still paid for every lookup first — a free,

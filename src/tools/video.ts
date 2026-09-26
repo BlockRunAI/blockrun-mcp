@@ -579,6 +579,40 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           return reject(`input_type "${input_type}" does not match the inputs given — expected "${inferredInput}". Leave it unset and it is derived for you.`);
         }
 
+        // Resolution ceilings, per model. Seedance and Grok both honour the
+        // parameter and are checked against their own supported sets; only Sora
+        // truly ignores it (probed: `resolution:"720p"` quotes the same
+        // $0.421001 as the default), so for Sora alone it is DROPPED from the
+        // body below rather than rejected — forwarding it there earns a gateway
+        // 400, which is the opposite of "ignored".
+        const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel] ?? GROK_RESOLUTIONS[selectedModel];
+        if (resolution && seedanceRes && !seedanceRes.resolutions.has(resolution)) {
+          return {
+            content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}. ${seedanceRes.note}. Supported: ${[...seedanceRes.resolutions].join(", ")}.`) }],
+            isError: true,
+          };
+        }
+
+        const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;
+
+        // Duration window — the gateway 400s these before quoting, so failing
+        // here just replaces a round trip with a specific message.
+        const range = VIDEO_DURATION_RANGE[selectedModel];
+        if (range) {
+          if (range.allowed && !range.allowed.includes(billedSeconds)) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} accepts duration_seconds of exactly ${range.allowed.join(", ")} — got ${billedSeconds}.`) }],
+              isError: true,
+            };
+          }
+          if (billedSeconds < range.min || billedSeconds > range.max) {
+            return {
+              content: [{ type: "text", text: formatError(`${selectedModel} supports ${range.min}-${range.max}s — got duration_seconds=${billedSeconds}.${range.max < 30 ? " For longer clips use bytedance/seedance-2.5 (up to 30s)." : ""}`) }],
+              isError: true,
+            };
+          }
+        }
+
         // SSRF guard on caller-supplied URLs, mirroring blockrun_image
         // (src/tools/image.ts). This process never fetches these URLs — the
         // GATEWAY's fetcher does — so this is defense-in-depth plus a saved
@@ -617,40 +651,6 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           if (await isBlockedFetchHostResolved(parsed.hostname)) {
             return {
               content: [{ type: "text", text: formatError(`${name} resolves to a private/loopback/link-local address (${parsed.hostname}) — refusing to forward it to the gateway.`) }],
-              isError: true,
-            };
-          }
-        }
-
-        // Resolution ceilings, per model. Seedance and Grok both honour the
-        // parameter and are checked against their own supported sets; only Sora
-        // truly ignores it (probed: `resolution:"720p"` quotes the same
-        // $0.421001 as the default), so for Sora alone it is DROPPED from the
-        // body below rather than rejected — forwarding it there earns a gateway
-        // 400, which is the opposite of "ignored".
-        const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel] ?? GROK_RESOLUTIONS[selectedModel];
-        if (resolution && seedanceRes && !seedanceRes.resolutions.has(resolution)) {
-          return {
-            content: [{ type: "text", text: formatError(`${selectedModel} does not render ${resolution}. ${seedanceRes.note}. Supported: ${[...seedanceRes.resolutions].join(", ")}.`) }],
-            isError: true,
-          };
-        }
-
-        const billedSeconds = duration_seconds ?? VIDEO_DEFAULT_DURATION[selectedModel] ?? 8;
-
-        // Duration window — the gateway 400s these before quoting, so failing
-        // here just replaces a round trip with a specific message.
-        const range = VIDEO_DURATION_RANGE[selectedModel];
-        if (range) {
-          if (range.allowed && !range.allowed.includes(billedSeconds)) {
-            return {
-              content: [{ type: "text", text: formatError(`${selectedModel} accepts duration_seconds of exactly ${range.allowed.join(", ")} — got ${billedSeconds}.`) }],
-              isError: true,
-            };
-          }
-          if (billedSeconds < range.min || billedSeconds > range.max) {
-            return {
-              content: [{ type: "text", text: formatError(`${selectedModel} supports ${range.min}-${range.max}s — got duration_seconds=${billedSeconds}.${range.max < 30 ? " For longer clips use bytedance/seedance-2.5 (up to 30s)." : ""}`) }],
               isError: true,
             };
           }
