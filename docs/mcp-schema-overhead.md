@@ -10,19 +10,19 @@ Harness: [`scripts/measure-tool-schema.mjs`](../scripts/measure-tool-schema.mjs)
 which fails the build when the README card disagrees with a live measurement.
 
 Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0. Numbers re-measured
-2026-09-23 for the Seedance video parameter expansion.
+2026-09-26 for the Seedance video parameter expansion and its review pass.
 
 ## Our number
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 13,456 |
+| `full` *(default)* | 19 | 13,981 |
 | `trading` | 8 | 5,411 |
-| `media` | 7 | 6,240 |
+| `media` | 7 | 6,765 |
 | `research` | 5 | 2,752 |
 | `chat` | 3 | 2,079 |
 
-Descriptions are ~54% of it, input schemas ~41%. `--profile trading` costs 60% less than the
+Descriptions are ~54% of it, input schemas ~42%. `--profile trading` costs 61% less than the
 default for the same workflow.
 
 These figures move with every description edit, so they are not the source of truth — the README
