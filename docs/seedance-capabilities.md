@@ -111,8 +111,14 @@ video. An upstream that omits the frame produces no invented URL.
 Automatic duration (`-1`), 2.5 editing/extension task modes, 2.5 1080p,
 draft/flex service tiers, callbacks, and task-list/cancel APIs are not exposed.
 The first group needs verified cost/output bounds; the lifecycle features need
-a separate ownership and settlement design. Unsupported request controls are
-rejected before payment rather than silently discarded.
+a separate ownership and settlement design.
+
+A control this tool DOES declare but the chosen model does not support is
+rejected before payment, naming the model and the field. A field the tool does
+not declare at all — `callback_url`, `draft`, `service_tier` and the rest — is
+stripped by schema validation before the handler sees it, so the job proceeds
+without it rather than failing. Do not rely on one of those reaching the
+gateway.
 
 Reference-video/audio jobs are additionally subject to the gateway's own
 `R2V_ENABLED` operational switch, which answers `503` when off. That is
