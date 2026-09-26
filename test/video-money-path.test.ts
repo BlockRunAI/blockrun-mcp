@@ -110,10 +110,11 @@ const respPoll = (body: unknown) => ({ status: 200, ok: true, headers: headers({
 
 test("SSRF: non-http(s) schemes and private-resolving hosts are refused before ANY network call", async () => {
   for (const args of [
+    // The reference_* fields are NOT exercised here: this suite is the wallet
+    // rail, where they are refused as account-rail-only before the SSRF loop
+    // ever runs. Their SSRF coverage — including a private host hiding behind
+    // a public first element — lives in video-reference-media.test.ts.
     { image_url: "file:///etc/passwd" },
-    { reference_image_urls: ["http://169.254.169.254/portrait.png"] },
-    { reference_videos: [{ url: "https://127.0.0.1.nip.io/motion.mp4" }] },
-    { reference_audios: [{ url: "file:///etc/music.mp3" }] },
     { image_url: "http://169.254.169.254/latest/meta-data/" },
     { image_url: "https://127.0.0.1.nip.io/a.png" },
     { image_url: "https://ok.example.com/a.png", last_frame_url: "http://169.254.169.254/b.png" },

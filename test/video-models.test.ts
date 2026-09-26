@@ -467,28 +467,54 @@ test("grok's resolution reaches the request body — the whole point of acceptin
 });
 
 
-test("mixed reference inputs are forwarded and included in budget estimates", async () => {
-  const args = { prompt: "test", model: "bytedance/seedance-2.0", reference_image_urls: ["https://example.com/person.png"], reference_videos: [{ url: "https://example.com/motion.mp4" }], reference_audios: [{ url: "https://example.com/music.mp3" }], bitrate_mode: "high", return_last_frame: true, input_type: "reference" };
-  const body = await bodySentFor(args);
-  for (const field of ["reference_image_urls", "reference_videos", "reference_audios", "bitrate_mode", "return_last_frame", "input_type"] as const) assert.deepEqual(body[field], args[field]);
-  const mixed = estimateVideoCost(args.model, 5, "720p", { videos: 1, audios: 1 });
-  const plain = estimateVideoCost(args.model, 5, "720p");
-  assert.ok(mixed > plain * 2.29 && mixed < plain * 2.31);
-  const { estimate } = await reservedFor(args);
-  assert.ok(Math.abs(Number(estimate.slice(1)) - mixed) < 0.01);
+// This suite runs on the WALLET rail, which is where reference media is refused
+// — both gateways answer any reference_* field with a 400 before quoting, so
+// the tool refuses it first and names the rail that serves it. The forwarding,
+// pricing and per-guard behaviour all live on the account rail and are pinned
+// in video-reference-media.test.ts.
+test("reference media is refused on the wallet rail and points at the account rail", async () => {
+  for (const args of [
+    { reference_image_urls: ["https://example.com/person.png"] },
+    { reference_videos: [{ url: "https://example.com/motion.mp4" }] },
+    { reference_audios: [{ url: "https://example.com/music.mp3" }] },
+  ]) {
+    const text = await errorText({ prompt: "test", model: "bytedance/seedance-2.0", ...args });
+    assert.match(text, /account rail/);
+    assert.match(text, /api\.blockrun\.ai/);
+  }
 });
 
-test("reference media errors never reach the network", async () => {
-  const audio = [{ url: "https://example.com/a.mp3" }];
-  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.0", reference_audios: audio }), /requires a reference image or video/);
-  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.5", reference_audios: audio }), /requires Seedance 2.0/);
-  assert.match(await errorText({ prompt: "t", model: "bytedance/seedance-2.0", image_url: "https://example.com/i.png", reference_videos: [{ url: "https://example.com/v.mp4" }] }), /cannot be combined with frame seeds/);
+test("a reference clip is reserved at the 15.2s ceiling, not at the output duration", async () => {
+  // The count-based term this replaced priced the clip as if it were as long as
+  // the render, which under-reserved 2-3.2x. Assert the property, not a literal:
+  // the surcharge does not move with the output length.
+  const m = "bytedance/seedance-2.0";
+  const plain = estimateVideoCost(m, 5, "720p");
+  const withClip = estimateVideoCost(m, 5, "720p", { videos: 1 });
+  assert.ok(withClip - plain > 3.4, `one 15.2s clip on 2.0 costs ~$3.44, got ${withClip - plain}`);
+  assert.ok(
+    Math.abs((estimateVideoCost(m, 15, "720p", { videos: 1 }) - estimateVideoCost(m, 15, "720p")) - (withClip - plain)) < 1e-6,
+    "the reference surcharge must not scale with the render duration",
+  );
 });
 
 
 test("1.5 camera and seed controls preserve false and zero", async () => {
-  const body = await bodySentFor({ prompt: "test", model: "bytedance/seedance-1.5-pro", seed: 0, camera_fixed: false, watermark: false, safety_identifier: "test" });
+  const body = await bodySentFor({ prompt: "test", model: "bytedance/seedance-1.5-pro", seed: 0, camera_fixed: false, watermark: false, safety_identifier: "end-user-42" });
   assert.equal(body.seed, 0);
   assert.equal(body.camera_fixed, false);
   assert.equal(body.watermark, false);
+  // Sent by the old test but never asserted, so a dropped passthrough was free.
+  assert.equal(body.safety_identifier, "end-user-42");
+});
+
+test("first-and-last-frame names every model that supports it, 2.5 included", async () => {
+  // The rejection text is what steers the retry, and it was hand-maintained
+  // separately from FIRST_LAST_FRAME_MODELS — so when 2.5 joined the set, the
+  // message kept sending callers to the four older models.
+  for (const model of ["xai/grok-imagine-video", "azure/sora-2"]) {
+    const text = await errorText({ prompt: "a cube", model, image_url: "https://example.com/a.png", last_frame_url: "https://example.com/b.png" });
+    assert.match(text, /does not support first-and-last-frame interpolation/);
+    assert.match(text, /seedance-2\.5/, `${model}: the message must list 2.5 now that it is in the set`);
+  }
 });

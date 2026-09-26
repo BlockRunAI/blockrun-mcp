@@ -241,6 +241,15 @@ const PROBES: Probe[] = [
     ["bytedance/seedance-2.0-fast", undefined, "480p"],
     ["bytedance/seedance-2.5", undefined, "480p"],
     ["bytedance/seedance-2.0", undefined, "480p"],
+    // NOT probed here, and not probeable here: the reference-media surcharge.
+    // Both wallet gateways refuse reference_image_urls / reference_videos /
+    // reference_audios with a 400 before quoting (blockrun#728, sol#374), so
+    // this script — which only speaks to blockrun.ai and sol.blockrun.ai — can
+    // never see a 402 that carries it. The reference term in estimateVideoCost
+    // is pinned instead against the gateway's own arithmetic in
+    // test/video-reference-media.test.ts, whose constants come from the
+    // token360 measurement in blockrun#730. A green run here does NOT mean the
+    // surcharge was verified.
   ] as Array<[string, number | undefined, string | undefined, boolean?]>).map(([model, seconds, resolution, expectRefused]) => ({
     label: `video ${model.split("/")[1]}${seconds ? ` ${seconds}s` : ""}${resolution ? ` ${resolution}` : ""}`,
     path: "videos/generations",
