@@ -131,7 +131,13 @@ const REFERENCE_CHARGE: Array<[string, number, number, number, string | undefine
   ["bytedance/seedance-2.0-mini", 5, 1, 0, "720p", 1.605130],
   ["bytedance/seedance-2.0-mini", 4, 3, 3, "720p", 5.024489],
   // 480p: the reference term does NOT scale down — 21,600 was measured at 720p
-  // and scaling below it would bill under the only rate ever probed.
+  // and scaling below it would bill under the only rate ever probed. Honest
+  // label: unlike the rows above, this figure is what the FLOOR produces, not
+  // an independently observed charge. blockrun#730 measured at 720p only, and
+  // neither wallet gateway will quote reference media, so no probe from this
+  // repo can confirm it. It pins the floor against removal, not against
+  // upstream. The gateway's referenceTokens() applies the same Math.max(rf, 1),
+  // so the two agree by construction.
   ["bytedance/seedance-2.0-mini", 5, 1, 0, "480p", 1.405853],
 ];
 
@@ -419,4 +425,27 @@ test("an unsupported combination is refused BEFORE any DNS work", async () => {
     reference_image_urls: Array(30).fill("https://attacker.example.com/a.png"),
   });
   assert.deepEqual(resolved, [], `${resolved.length} hostnames were resolved for a request the tool always refuses`);
+});
+
+test("the rail refusal is answered before every other guard", async () => {
+  // Ranked below the frame-seed guards, a wallet-rail reference request that
+  // also carried last_frame_url cost three round trips: "add image_url", then
+  // "frame seeds and references do not mix", then finally the rail fact that
+  // made all of it moot.
+  apiKeyMode = false;
+  try {
+    for (const args of [
+      { model: "bytedance/seedance-2.5", reference_image_urls: [IMG], last_frame_url: IMG },
+      { model: "bytedance/seedance-2.0", reference_image_urls: [IMG], real_face_asset_id: "ta_abc123" },
+      { model: "xai/grok-imagine-video", reference_image_urls: [IMG], image_url: IMG },
+      // Even a combination that is invalid for other reasons answers the rail
+      // first, because no rail change can make the rest matter.
+      { model: "bytedance/seedance-2.0", reference_image_urls: Array(99).fill(IMG), output_format: "mov" },
+    ]) {
+      const text = await errorText({ prompt: "t", ...args });
+      assert.match(text, /served only by the BlockRun account rail/, JSON.stringify(args));
+    }
+  } finally {
+    apiKeyMode = true;
+  }
 });

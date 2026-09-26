@@ -414,7 +414,7 @@ Models. Every rate below is what you are CHARGED (margin and transaction fee inc
 
 Image-to-video is NOT cheaper than text-to-video on Seedance — same per-second rate. Higher resolutions ARE more expensive (token-priced: 1080p ~2.25x, 4K ~9x the 720p rate); the 402 quote is authoritative and is what gets charged.
 
-Reference media (reference_image_urls / reference_videos / reference_audios) is served ONLY on the BlockRun account rail (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse it with a 400 before quoting, and this tool refuses it there first. Reference CLIPS are expensive: each one is billed at the 15.2s ceiling whatever its real length, and that price does NOT shrink with a shorter render or a lower resolution. On seedance-2.0-mini a 5s 720p render goes ~$0.40 -> ~$1.61 with one reference video (~4x), ~$5.10 with three videos plus three audios (~13x), and the multiples are larger at 480p because only the render half gets the discount. Reference IMAGES cost nothing extra. The account rail bills at submit with no quote to correct against, so check blockrun_wallet action:"report" before a large reference job.
+Reference media (reference_image_urls / reference_videos / reference_audios) is served ONLY on the BlockRun account rail (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse it with a 400 before quoting, and this tool refuses it there first. Reference CLIPS are expensive: each one is billed at the 15.2s ceiling whatever its real length, and that price does NOT shrink with a shorter render or a lower resolution. On seedance-2.0-mini a 5s 720p render goes ~$0.40 -> ~$1.61 with one reference video (~4x), ~$5.10 with three videos plus three audios (~13x), and ~24x at 480p, where the discount reaches the render but not the clip. Reference IMAGES cost nothing extra. The account rail bills at submit with no quote to correct against, so check blockrun_wallet action:"report" before a large reference job.
 
 RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with seedance-2.0, seedance-2.0-fast, or seedance-2.0-mini. Mutually exclusive with image_url.
 
@@ -479,6 +479,22 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
       try {
         const selectedModel = model || "xai/grok-imagine-video";
 
+        const reject = (text: string) => ({ content: [{ type: "text" as const, text: formatError(text) }], isError: true });
+        const refs = Boolean(reference_image_urls?.length || reference_videos?.length || reference_audios?.length);
+
+        // Answered BEFORE every other guard, because the rail fact dominates
+        // them. Reference media is an api.blockrun.ai capability: BOTH wallet
+        // gateways answer any reference_* field with a 400 before quoting
+        // (blockrun#728, blockrun-sol#374; live-probed 2026-09-26 on
+        // blockrun.ai and sol.blockrun.ai). Ranked below the frame-seed guards
+        // it cost three round trips to learn the one thing that mattered — a
+        // 2.5 reference request with last_frame_url was told to add image_url,
+        // then that frame seeds and references do not mix, and only then that
+        // the rail cannot serve it at all.
+        if (refs && !isApiKeyMode()) {
+          return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on every rail. No payment was taken.`);
+        }
+
         // RealFace guardrails — fail fast client-side instead of round-tripping a 400.
         if (real_face_asset_id) {
           if (!REALFACE_MODELS.has(selectedModel)) {
@@ -527,30 +543,28 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // formatError, never a throw: a throw lands in the catch's money
         // classifier and comes back as "Video generation failed", which reads
         // like a render died when in fact nothing left the machine.
-        const reject = (text: string) => ({ content: [{ type: "text" as const, text: formatError(text) }], isError: true });
-        const refs = Boolean(reference_image_urls?.length || reference_videos?.length || reference_audios?.length);
         const media = Boolean(reference_videos?.length || reference_audios?.length);
         const isSeedance = selectedModel.startsWith("bytedance/seedance-");
-        const referenceImageLimit = REFERENCE_IMAGE_LIMIT[selectedModel];
-
-        // Reference media is an api.blockrun.ai capability. BOTH wallet
-        // gateways answer any reference_* field with a 400 BEFORE quoting
-        // (blockrun#728, blockrun-sol#374; live-probed 2026-09-26 on
-        // blockrun.ai and sol.blockrun.ai), so forwarding it on a wallet rail
-        // spends DNS and a round trip to earn an unreadable "Unexpected status
-        // 400". Refuse here and name the rail that serves it.
-        if (refs && !isApiKeyMode()) {
-          return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on every rail. No payment was taken.`);
-        }
+        // hasOwn, not `!== undefined`: a prototype key ("constructor") would
+        // otherwise read as a function here, clear the support check below and
+        // make `length > <function>` a NaN-false that bypasses the count cap.
+        // Unreachable behind the zod enum today; the estimator's tables are
+        // guarded the same way for the same reason.
+        const referenceImageLimit = Object.hasOwn(REFERENCE_IMAGE_LIMIT, selectedModel) ? REFERENCE_IMAGE_LIMIT[selectedModel] : undefined;
 
         if (refs && (image_url || last_frame_url || real_face_asset_id)) {
           return reject(`Reference inputs cannot be combined with frame seeds — reference mode and first-frame seeding are mutually exclusive. Drop ${[image_url && "image_url", last_frame_url && "last_frame_url", real_face_asset_id && "real_face_asset_id"].filter(Boolean).join(" / ")}, and pass character or style images as reference_image_urls instead.`);
         }
-        if (reference_image_urls?.length && referenceImageLimit === undefined) {
-          return reject(`Model ${selectedModel} does not accept reference images (reference_image_urls). Supported: ${Object.keys(REFERENCE_IMAGE_LIMIT).join(", ")}.`);
-        }
-        if (reference_image_urls?.length && reference_image_urls.length > referenceImageLimit) {
-          return reject(`${selectedModel} accepts at most ${referenceImageLimit} reference images — got ${reference_image_urls.length}.`);
+        if (reference_image_urls?.length) {
+          // Two remedies, two messages: "wrong model" and "too many for this
+          // model" are not the same fix, and one shared string left the caller
+          // unable to tell whether to drop an image or switch model.
+          if (referenceImageLimit === undefined) {
+            return reject(`Model ${selectedModel} does not accept reference images (reference_image_urls). Supported: ${Object.keys(REFERENCE_IMAGE_LIMIT).join(", ")}.`);
+          }
+          if (reference_image_urls.length > referenceImageLimit) {
+            return reject(`${selectedModel} accepts at most ${referenceImageLimit} reference images — got ${reference_image_urls.length}.`);
+          }
         }
         if (media && !REFERENCE_MEDIA_MODELS.has(selectedModel)) {
           return reject(`Model ${selectedModel} does not accept reference video or audio clips. Supported: ${[...REFERENCE_MEDIA_MODELS].join(", ")}.${selectedModel === SEEDANCE_25 ? " 2.5 takes reference IMAGES (up to 30) but no reference clips." : ""}`);

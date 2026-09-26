@@ -75,8 +75,15 @@ same. Consequences worth knowing before you call:
 | seedance-2.0-mini, 5s output, 1 reference video | ~$1.61 |
 | seedance-2.0-mini, 4s output, 3 videos + 3 audios | ~$5.03 |
 | seedance-2.0, 5s output, 3 videos + 3 audios | ~$14.54 |
+| seedance-2.0, 5s output at **4K**, 3 videos + 3 audios | ~$130.88 |
+| seedance-2.0-mini, 5s output at **480p**, 3 videos + 3 audios | ~$4.91 |
 
-A single reference clip therefore costs more than the render it conditions.
+A single reference clip therefore costs more than the render it conditions —
+roughly 4x a plain 5s 720p render, and about 24x for three videos plus three
+audios at 480p, because the resolution discount reaches the render but not the
+clip. The 4K row is not a typo: the clip term scales with output resolution
+exactly as the gateway's does, so a 4K reference job genuinely reserves and
+bills over a hundred dollars.
 `bytedance/seedance-2.0-mini` takes the same reference inputs as
 `bytedance/seedance-2.0` at roughly a third of the rate — prefer it unless you
 need 4K.
