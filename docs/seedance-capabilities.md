@@ -55,8 +55,9 @@ file.
 }
 ```
 
-`input_type` is optional and is derived from the inputs; passing a value that
-disagrees with them is rejected.
+`input_type` is not a parameter of this tool. The gateway infers it from the
+fields above, so there is nothing to declare; a clip `role` is likewise omitted,
+since `"reference"` is the only value upstream honours.
 
 ## What reference media costs
 

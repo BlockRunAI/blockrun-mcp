@@ -431,8 +431,8 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5: first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
-        reference_videos: z.array(z.object({ url: z.string().url().max(2048), role: z.literal("reference").optional() })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip roughly triples a 5s render's price."),
-        reference_audios: z.array(z.object({ url: z.string().url().max(2048), role: z.literal("reference").optional() })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Requires a reference image or video alongside. Billed at 0.3x the 15.2s video-clip rate."),
+        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip roughly triples a 5s render's price."),
+        reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Requires a reference image or video alongside. Billed at 0.3x the 15.2s video-clip rate."),
         bitrate_mode: z.enum(["standard", "high"]).optional().describe("Seedance 2.x only (2.0, 2.0-fast, 2.0-mini, 2.5): output bitrate. Defaults to standard."),
         output_format: z.enum(["mp4", "mov"]).optional().describe("Seedance 2.5 only: output container. Every other model returns MP4."),
         camera_fixed: z.boolean().optional().describe("Seedance 1.5-pro only: lock the camera so the shot does not drift."),
@@ -440,11 +440,10 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         seed: z.number().int().min(0).max(2_147_483_647).optional().describe("Seedance 1.5-pro only: reproducibility seed. Same seed + same prompt re-renders the same clip."),
         watermark: z.boolean().optional().describe("Seedance only: burn the provider watermark into the output. Defaults off."),
         return_last_frame: z.boolean().optional().describe("Seedance only: also return the final frame as an image URL, to seed the next clip in a chain."),
-        input_type: z.enum(["text", "image", "first_last_frame", "reference"]).optional().describe("Optional cross-check only. It is derived from the inputs you pass; supplying a value that disagrees is rejected. Leave unset."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, resolution, aspect_ratio, last_frame_url, reference_image_urls, reference_videos, reference_audios, bitrate_mode, output_format, camera_fixed, safety_identifier, seed, watermark, return_last_frame, input_type, model, agent_id }) => {
+    async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, resolution, aspect_ratio, last_frame_url, reference_image_urls, reference_videos, reference_audios, bitrate_mode, output_format, camera_fixed, safety_identifier, seed, watermark, return_last_frame, model, agent_id }) => {
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
@@ -588,10 +587,6 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
             return reject(`${field} requires a Seedance model — got ${selectedModel}.`);
           }
         }
-        const inferredInput = refs ? "reference" : last_frame_url ? "first_last_frame" : image_url || real_face_asset_id ? "image" : "text";
-        if (input_type !== undefined && input_type !== inferredInput) {
-          return reject(`input_type "${input_type}" does not match the inputs given — expected "${inferredInput}". Leave it unset and it is derived for you.`);
-        }
 
         // Resolution ceilings, per model. Seedance and Grok both honour the
         // parameter and are checked against their own supported sets; only Sora
@@ -698,17 +693,19 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
-        if (reference_image_urls !== undefined) body.reference_image_urls = reference_image_urls;
-        if (reference_videos !== undefined) body.reference_videos = reference_videos;
-        if (reference_audios !== undefined) body.reference_audios = reference_audios;
-        if (bitrate_mode !== undefined) body.bitrate_mode = bitrate_mode;
-        if (output_format !== undefined) body.output_format = output_format;
-        if (camera_fixed !== undefined) body.camera_fixed = camera_fixed;
-        if (safety_identifier !== undefined) body.safety_identifier = safety_identifier;
-        if (seed !== undefined) body.seed = seed;
-        if (watermark !== undefined) body.watermark = watermark;
-        if (return_last_frame !== undefined) body.return_last_frame = return_last_frame;
-        if (input_type !== undefined) body.input_type = input_type;
+        // Pass-throughs, forwarded under their own names when the caller set
+        // them. `!== undefined` and not truthiness: seed 0, camera_fixed false
+        // and watermark false are all meaningful values a truthy test drops.
+        // `input_type` is deliberately NOT sent — the gateway infers it from
+        // the same fields, and asserting our own guess could only ever turn a
+        // correct request into a mismatch error.
+        for (const [key, value] of Object.entries({
+          reference_image_urls, reference_videos, reference_audios,
+          bitrate_mode, output_format, camera_fixed,
+          safety_identifier, seed, watermark, return_last_frame,
+        })) {
+          if (value !== undefined) body[key] = value;
+        }
 
         // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
         if (isApiKeyMode()) {

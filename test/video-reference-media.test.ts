@@ -85,6 +85,16 @@ mock.module("../src/utils/wallet.js", {
 
 const { registerVideoTool, estimateVideoCost } = await import("../src/tools/video.js");
 
+function makeHarnessWithConfig() {
+  let config: any;
+  const server = {
+    registerTool: (_n: string, c: unknown) => { config = c; },
+    server: { getClientCapabilities: () => ({}) },
+  } as any;
+  registerVideoTool(server, { limit: null, spent: 0, calls: 0, agents: new Map() });
+  return { config };
+}
+
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
   const server = {
@@ -253,12 +263,18 @@ test("the account rail forwards every reference field and output control verbati
     bitrate_mode: "high",
     return_last_frame: true,
     safety_identifier: "end-user-42",
-    input_type: "reference",
   };
   const body = await bodySentFor(args);
-  for (const field of ["reference_image_urls", "reference_videos", "reference_audios", "bitrate_mode", "return_last_frame", "safety_identifier", "input_type"] as const) {
+  for (const field of ["reference_image_urls", "reference_videos", "reference_audios", "bitrate_mode", "return_last_frame", "safety_identifier"] as const) {
     assert.deepEqual(body[field], args[field], field);
   }
+  // input_type is never sent: the gateway infers it from these same fields and
+  // treats a supplied value as an assertion to reject on mismatch, so our own
+  // guess could only ever turn a correct request into an error.
+  assert.equal(body.input_type, undefined);
+  // Nor is a clip `role` — "reference" is its only legal value upstream and the
+  // gateway's own message says to omit it.
+  assert.deepEqual(body.reference_videos, [{ url: VID }]);
 });
 
 test("the account rail reserves the ceiling-priced surcharge before submitting", async () => {
@@ -328,11 +344,6 @@ test("every capability guard fires for its off-model input, and none reaches the
     [{ model: "xai/grok-imagine-video", watermark: false }, /watermark requires a Seedance model/],
     [{ model: "azure/sora-2", return_last_frame: true }, /return_last_frame requires a Seedance model/],
     [{ model: "xai/grok-imagine-video", safety_identifier: "x" }, /safety_identifier requires a Seedance model/],
-    // input_type is a cross-check, and says what it expected
-    [{ model: "bytedance/seedance-2.0", input_type: "reference" }, /expected "text"/],
-    [{ model: "bytedance/seedance-2.0", image_url: IMG, input_type: "text" }, /expected "image"/],
-    [{ model: "bytedance/seedance-2.0", image_url: IMG, last_frame_url: IMG, input_type: "image" }, /expected "first_last_frame"/],
-    [{ model: "bytedance/seedance-2.0", reference_image_urls: [IMG], input_type: "image" }, /expected "reference"/],
   ];
   for (const [args, re] of cases) {
     const text = await errorText({ prompt: "t", ...args });
@@ -352,16 +363,28 @@ test("the accepted twins at each boundary still go through", async () => {
     const body = await bodySentFor({ prompt: "t", model, reference_videos: [{ url: VID }], reference_audios: [{ url: AUD }] });
     assert.deepEqual(body.reference_videos, [{ url: VID }], model);
   }
-  // Each input_type value is accepted when it agrees with the inputs.
-  for (const [args, value] of [
-    [{}, "text"],
-    [{ image_url: IMG }, "image"],
-    [{ image_url: IMG, last_frame_url: IMG }, "first_last_frame"],
-    [{ reference_image_urls: [IMG] }, "reference"],
-  ] as const) {
-    const body = await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.0", ...args, input_type: value });
-    assert.equal(body.input_type, value);
+  // Every shape that used to need an input_type declaration still goes
+  // through; the gateway does the inference now.
+  for (const args of [
+    {},
+    { image_url: IMG },
+    { image_url: IMG, last_frame_url: IMG },
+    { reference_image_urls: [IMG] },
+  ]) {
+    const body = await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.0", ...args });
+    assert.equal(body.input_type, undefined, JSON.stringify(args));
   }
+});
+
+test("input_type and a clip role are no longer part of the tool's surface", async () => {
+  // Both were redundant with something the gateway already does: it infers
+  // input_type from the same fields, and "reference" is the only clip role it
+  // honours. A caller that still sends either gets it dropped by schema
+  // validation rather than forwarded.
+  const { config } = makeHarnessWithConfig();
+  assert.equal(config.inputSchema.input_type, undefined, "input_type must be off the schema");
+  const clip = config.inputSchema.reference_videos.parse([{ url: VID, role: "reference" }]);
+  assert.deepEqual(clip, [{ url: VID }], "a stray role must be stripped, not forwarded");
 });
 
 // ---------------------------------------------------------------------------
