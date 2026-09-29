@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.53.0
+
+### Added — Seedance reference media, 2.5 first/last frame, output controls
+
+`blockrun_video` gains the Seedance capabilities the gateway already serves.
+Full matrix, per rail and per model, in
+[docs/seedance-capabilities.md](docs/seedance-capabilities.md).
+
+- **Reference media — account rail only (`BLOCKRUN_API_KEY`).**
+  `reference_image_urls` (up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, up
+  to 30 on 2.5), `reference_videos` and `reference_audios` (1-3 each, 2.0
+  family only; audio needs an image or video beside it). The Base and Solana
+  gateways refuse reference media with a 400 before quoting, so the tool
+  refuses it on those rails first, naming the rail that serves it. No
+  payment is taken. References and frame seeds (`image_url`,
+  `last_frame_url`, `real_face_asset_id`) are mutually exclusive.
+- **Reference clips are expensive, and the reserve says so.** The gateway
+  bills per reference second, and the caller sends a URL, never a duration,
+  so every clip is reserved at the model's 15.2s ceiling. One clip makes a 5s
+  720p render cost about 4x (seedance-2.0-mini ~$0.40 to ~$1.61). A 4K job
+  on seedance-2.0 with three videos and three audios reserves ~$130.88. The
+  spend confirmation now lists the reference clips, so the price makes sense.
+  Reference images carry no surcharge.
+- **First-and-last-frame on seedance-2.5** (`last_frame_url` with
+  `image_url`), joining 1.5-pro and the 2.0 family.
+- **Output controls:** `bitrate_mode` (2.x), `output_format` mp4/mov (2.5),
+  `return_last_frame`, `watermark` and `safety_identifier` (Seedance), and
+  `seed` / `camera_fixed` (1.5-pro). A control declared for the wrong model is
+  refused by name before payment.
+- Every in-memory guard now runs before the SSRF DNS resolution, so a
+  request the tool will refuse anyway costs no lookups.
+
+### Fixed
+
+- **Guard order.** With references present, the conflict with frame seeds is
+  answered before the `last_frame_url` / RealFace guards. Before, a reference
+  request carrying `last_frame_url` was told to add `image_url`, and only on
+  the resubmit that seeds and references never mix.
+- **A Solana image give-up named the wrong place to check.** Since 0.52.2 the
+  Solana image path can end in a settled-at-submit give-up, and the message
+  was written for the account rail: "the account is charged", "check
+  user.blockrun.ai/dashboard/activity". That dashboard has no record of an
+  on-chain transfer. The message now names the Solana wallet and
+  `blockrun_wallet action:"report"`.
+
 ## 0.52.3
 
 ### Fixed — 0.52.2's Solana image fix cut the paid submit off at 30s

@@ -17,6 +17,9 @@ import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
 import { pollTimeoutFor } from "../src/utils/poll.js";
 
+// Model/parameter tests are offline; DNS policy is exercised in video-money-path.
+mock.module("../src/utils/ssrf.js", { namedExports: { isBlockedFetchHostResolved: async () => false } });
+
 const TEST_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
 // fetch is mocked to a SENTINEL throw rather than left unmocked. Every case here
@@ -185,17 +188,10 @@ test("seedance-2.5 rejects RealFace assets before paying", async () => {
   assert.match(text, /seedance-2\.0/);
 });
 
-test("seedance-2.5 rejects first-and-last-frame interpolation", async () => {
-  const text = await errorText({
-    prompt: "a cube",
-    model: "bytedance/seedance-2.5",
-    image_url: "https://example.com/a.png",
-    last_frame_url: "https://example.com/b.png",
-  });
-  // Match the capability guard's own wording — /last_frame_url/ alone also
-  // matches the two sibling guards, so it stayed green if the wrong one fired.
-  assert.match(text, /does not support first-and-last-frame interpolation/);
-  assert.match(text, /seedance-1\.5-pro/);
+test("seedance-2.5 accepts first-and-last-frame interpolation", async () => {
+  const body = await bodySentFor({ prompt: "a cube", model: "bytedance/seedance-2.5", image_url: "https://example.com/a.png", last_frame_url: "https://example.com/b.png", output_format: "mov" });
+  assert.equal(body.last_frame_url, "https://example.com/b.png");
+  assert.equal(body.output_format, "mov");
 });
 
 test("first-and-last-frame rejects its two invalid combinations", async () => {
@@ -468,4 +464,57 @@ test("grok's resolution reaches the request body — the whole point of acceptin
   // default), so it must still be dropped rather than forwarded.
   const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "720p" });
   assert.equal(sora.resolution, undefined);
+});
+
+
+// This suite runs on the WALLET rail, which is where reference media is refused
+// — both gateways answer any reference_* field with a 400 before quoting, so
+// the tool refuses it first and names the rail that serves it. The forwarding,
+// pricing and per-guard behaviour all live on the account rail and are pinned
+// in video-reference-media.test.ts.
+test("reference media is refused on the wallet rail and points at the account rail", async () => {
+  for (const args of [
+    { reference_image_urls: ["https://example.com/person.png"] },
+    { reference_videos: [{ url: "https://example.com/motion.mp4" }] },
+    { reference_audios: [{ url: "https://example.com/music.mp3" }] },
+  ]) {
+    const text = await errorText({ prompt: "test", model: "bytedance/seedance-2.0", ...args });
+    assert.match(text, /account rail/);
+    assert.match(text, /api\.blockrun\.ai/);
+  }
+});
+
+test("a reference clip is reserved at the 15.2s ceiling, not at the output duration", async () => {
+  // The count-based term this replaced priced the clip as if it were as long as
+  // the render, which under-reserved 2-3.2x. Assert the property, not a literal:
+  // the surcharge does not move with the output length.
+  const m = "bytedance/seedance-2.0";
+  const plain = estimateVideoCost(m, 5, "720p");
+  const withClip = estimateVideoCost(m, 5, "720p", { videos: 1 });
+  assert.ok(withClip - plain > 3.4, `one 15.2s clip on 2.0 costs ~$3.44, got ${withClip - plain}`);
+  assert.ok(
+    Math.abs((estimateVideoCost(m, 15, "720p", { videos: 1 }) - estimateVideoCost(m, 15, "720p")) - (withClip - plain)) < 1e-6,
+    "the reference surcharge must not scale with the render duration",
+  );
+});
+
+
+test("1.5 camera and seed controls preserve false and zero", async () => {
+  const body = await bodySentFor({ prompt: "test", model: "bytedance/seedance-1.5-pro", seed: 0, camera_fixed: false, watermark: false, safety_identifier: "end-user-42" });
+  assert.equal(body.seed, 0);
+  assert.equal(body.camera_fixed, false);
+  assert.equal(body.watermark, false);
+  // Sent by the old test but never asserted, so a dropped passthrough was free.
+  assert.equal(body.safety_identifier, "end-user-42");
+});
+
+test("first-and-last-frame names every model that supports it, 2.5 included", async () => {
+  // The rejection text is what steers the retry, and it was hand-maintained
+  // separately from FIRST_LAST_FRAME_MODELS — so when 2.5 joined the set, the
+  // message kept sending callers to the four older models.
+  for (const model of ["xai/grok-imagine-video", "azure/sora-2"]) {
+    const text = await errorText({ prompt: "a cube", model, image_url: "https://example.com/a.png", last_frame_url: "https://example.com/b.png" });
+    assert.match(text, /does not support first-and-last-frame interpolation/);
+    assert.match(text, /seedance-2\.5/, `${model}: the message must list 2.5 now that it is in the set`);
+  }
 });

@@ -139,13 +139,63 @@ const REALFACE_MODELS = new Set([
 ]);
 
 // Models that accept first-and-last-frame interpolation (last_frame_url).
-// Same reasoning as RealFace for 2.5.
+// The upstream schema includes frame interpolation on Seedance 2.5.
 const FIRST_LAST_FRAME_MODELS = new Set([
   "bytedance/seedance-1.5-pro",
   "bytedance/seedance-2.0-fast",
   "bytedance/seedance-2.0",
   "bytedance/seedance-2.0-mini",
+  "bytedance/seedance-2.5",
 ]);
+
+// Models that accept reference IMAGES (reference_image_urls), and the per-model
+// count ceiling the gateway enforces. Mirrors supportsReferenceImages +
+// `seedanceId === "seedance-2.5" ? 30 : 9` in the gateway's video-input.ts.
+const REFERENCE_IMAGE_LIMIT: Record<string, number> = {
+  "bytedance/seedance-2.0": 9,
+  "bytedance/seedance-2.0-fast": 9,
+  "bytedance/seedance-2.0-mini": 9,
+  "bytedance/seedance-2.5": 30,
+};
+
+// Models that accept reference VIDEO/AUDIO clips (r2v). 2.5 is absent on
+// purpose: the gateway registry carries supportsReferenceMedia:false for it
+// while supportsReferenceImages is true, so images are allowed there and clips
+// are not.
+const REFERENCE_MEDIA_MODELS = new Set([
+  "bytedance/seedance-2.0",
+  "bytedance/seedance-2.0-fast",
+  "bytedance/seedance-2.0-mini",
+]);
+
+// Models that accept the 2.x output-bitrate control, and the 1.5-pro-only
+// render controls. Named rather than pattern-matched so the guard and the
+// message below can never drift from each other.
+const BITRATE_MODE_MODELS = new Set([...REFERENCE_MEDIA_MODELS, "bytedance/seedance-2.5"]);
+const SEEDANCE_15_PRO = "bytedance/seedance-1.5-pro";
+const SEEDANCE_25 = "bytedance/seedance-2.5";
+
+/**
+ * Reference media is billed per reference SECOND, not per clip.
+ *
+ * Measured against token360 on 2026-09-23 (blockrun#730): identical 5s renders
+ * differing only in the reference clip cost +108,000 tokens for a 5s reference
+ * and +324,000 for a 15s one — exactly 3x for exactly 3x the length, so a
+ * reference second costs ~21,600 tokens against 21,780 for an output second,
+ * with no per-clip component at all. The count-based `1 + videos + 0.3*audios`
+ * term this replaces was right only when the clip happened to be as long as the
+ * render, and under-reserved 2-3.2x otherwise.
+ *
+ * The caller sends URLs, never durations, so the gateway quotes every clip at
+ * its model's probed ceiling and the estimate has to assume the same. 15.2s is
+ * the ceiling all three 2.0 SKUs enforce ("must be less than or equal to 15.2
+ * … in r2v"). Over-reserving a short clip is the only direction the account
+ * rail can recover from: it bills at submit with no 402 to correct against.
+ */
+const REFERENCE_TOKENS_PER_SECOND = 21_600;
+const REFERENCE_AUDIO_SECOND_FACTOR = 0.3;
+const MAX_REFERENCE_SECONDS = 15.2;
+const MAX_REFERENCE_CLIPS = 3;
 
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "xai/grok-imagine-video": 8,
@@ -239,9 +289,26 @@ const GROK_RESOLUTIONS: Record<string, { resolutions: Set<string>; note: string 
  * is the priciest call this server can issue and was the last paid estimator the
  * script did not cover, which is how a 30-40% stale Seedance table and a missing
  * margin both survived. The handler still re-reserves from the 402 before
- * paying — reference media (r2v) adds upstream input tokens nothing here can see.
+ * paying on the wallet rails — but reference media is served ONLY by the
+ * account rail, which bills at submit with no quote, so for those calls the
+ * number this function returns is the only budget control there is. It prices
+ * reference clips the way the gateway does: per reference second, at the
+ * model's ceiling. See REFERENCE_TOKENS_PER_SECOND.
  */
-export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string): number {
+export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string, references: { videos?: number; audios?: number } = {}): number {
+  // Validated BEFORE the model dispatch below, not inside the Seedance branch.
+  // Sitting inside it made the check fail OPEN for every other model: grok and
+  // sora fall through to their own tables, so a caller passing references there
+  // got them silently dropped — the same "priced as something it is not" shape
+  // the throw-never-default rule above exists to prevent.
+  const videos = references.videos ?? 0;
+  const audios = references.audios ?? 0;
+  if (![videos, audios].every(n => Number.isInteger(n) && n >= 0 && n <= MAX_REFERENCE_CLIPS)) {
+    throw new Error(`Invalid reference counts (videos=${videos}, audios=${audios}) — each must be a whole number from 0 to ${MAX_REFERENCE_CLIPS}.`);
+  }
+  if ((videos > 0 || audios > 0) && !Object.hasOwn(SEEDANCE_PRICE_PER_MTOKENS, model)) {
+    throw new Error(`Model "${model}" is not token-priced, so reference media cannot be reserved for it — refusing to price ${videos} video / ${audios} audio references at zero.`);
+  }
   // THROW, never default. A model or resolution missing from the tables below
   // can only mean someone added it to the zod enum and forgot the rate — and a
   // `?? 0.05` there would price a $0.32/sec render as grok, a 6x under-reserve
@@ -260,7 +327,15 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
     if (!Object.hasOwn(RESOLUTION_TOKEN_FACTOR, res)) {
       throw new Error(`No token factor for resolution "${res}" — refusing to reserve at the 720p rate.`);
     }
-    const tokens = seconds * SEEDANCE_TOKENS_PER_SECOND * RESOLUTION_TOKEN_FACTOR[res];
+    // Reference seconds, not clips: every clip is quoted at the ceiling because
+    // the caller sends a URL and nothing here can read its duration.
+    const referenceSeconds = MAX_REFERENCE_SECONDS * (videos + REFERENCE_AUDIO_SECOND_FACTOR * audios);
+    // The reference term floors its resolution factor at 1, as the gateway's
+    // does: 21,600 was measured at 720p and whether upstream scales reference
+    // tokens by the OUTPUT resolution is unprobed, so 480p must not bill under
+    // the one rate actually measured.
+    const tokens = seconds * SEEDANCE_TOKENS_PER_SECOND * RESOLUTION_TOKEN_FACTOR[res]
+      + referenceSeconds * REFERENCE_TOKENS_PER_SECOND * Math.max(RESOLUTION_TOKEN_FACTOR[res], 1);
     return withTxFee((tokens * SEEDANCE_PRICE_PER_MTOKENS[model] / 1_000_000) * VIDEO_MARGIN);
   }
 
@@ -326,22 +401,24 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
     {
       description: `Generate short AI videos via BlockRun x402 on the active Base or Solana chain (async, client-polled).
 
-Turns a text prompt (and optional seed image) into a short MP4 clip. The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). On the wallet rails payment settles only when upstream returns a finished video — if the job fails you are not charged; if this client gives up while a paid poll is still in flight the gateway may still settle, and the error text says so. On the account rail the job is billed when the gateway accepts it, so a job that fails or outlives the poll budget is still charged — the error names it.
+Turns a text prompt (and optional seed image) into a short video clip (MP4, or MOV on Seedance 2.5). The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). On the wallet rails payment settles only when upstream returns a finished video — if the job fails you are not charged; if this client gives up while a paid poll is still in flight the gateway may still settle, and the error text says so. On the account rail the job is billed when the gateway accepts it, so a job that fails or outlives the poll budget is still charged — the error names it.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
 - azure/sora-2 (~$0.105/sec, 720p + synced audio, text- or image-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). image_url takes a NON-HUMAN reference image (faces are rejected upstream by moderation — use Seedance + RealFace for real people); same price as text-to-video. No RealFace, no last_frame_url. Base only for now: the Solana gateway quotes it as Seedance 2.0 at $1.135 and the tool refuses that quote unsigned.
 - xai/grok-imagine-video ($0.05/sec at 480p default, $0.07/sec at 720p; 8s default -> $0.401/clip, 1-15s) — stylized, fast. 480p/720p only.
 - bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
-- bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace and first/last-frame
-- bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports BytePlus RealFace assets
-- bytedance/seedance-2.0 (~$0.227/sec, 4-15s, up to 4K) — highest quality, and the ONLY model that renders true 4K; supports RealFace, first/last-frame and reference media
-- bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and does NOT support RealFace or first/last-frame. Use 2.0 for 1080p/4K or real-person video.
+- bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace, first/last-frame and the full reference set. The CHEAPEST model that takes reference video/audio — prefer it over 2.0 for reference work unless you need 4K.
+- bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports RealFace, first/last-frame and the full reference set
+- bytedance/seedance-2.0 (~$0.227/sec, 4-15s, up to 4K) — highest quality, and the ONLY model that renders true 4K; supports RealFace, first/last-frame and the full reference set. Also the priciest: 2.0-mini takes the same reference inputs at ~1/3 the rate.
+- bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and takes no RealFace and no reference VIDEO/AUDIO, though it does take first/last-frame and up to 30 reference IMAGES. Use 2.0 for 1080p/4K or real-person video.
 
 Image-to-video is NOT cheaper than text-to-video on Seedance — same per-second rate. Higher resolutions ARE more expensive (token-priced: 1080p ~2.25x, 4K ~9x the 720p rate); the 402 quote is authoritative and is what gets charged.
 
+Reference media (reference_image_urls / reference_videos / reference_audios) is served ONLY on the BlockRun account rail (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse it with a 400 before quoting, and this tool refuses it there first. Reference CLIPS are expensive: each one is billed at the 15.2s ceiling whatever its real length, and that price does NOT shrink with a shorter render or a lower resolution. On seedance-2.0-mini a 5s 720p render goes ~$0.40 -> ~$1.61 with one reference video (~4x), ~$5.10 with three videos plus three audios (~13x), and ~24x at 480p, where the discount reaches the render but not the clip. Reference IMAGES cost nothing extra. The account rail bills at submit with no quote to correct against, so check blockrun_wallet action:"report" before a large reference job.
+
 RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with seedance-2.0, seedance-2.0-fast, or seedance-2.0-mini. Mutually exclusive with image_url.
 
-Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
+Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to GCS so URLs don't expire).`,
       annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         prompt: z.string().describe("Text description of the video to generate. E.g. 'a red apple slowly spinning on a wooden table', 'a hummingbird hovering near a red flower, ultra slow motion'"),
@@ -351,12 +428,22 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
         resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Output resolution. Seedance defaults to 720p and is token-priced (~2.25x at 1080p, ~9x at 4K); per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. grok-imagine-video honours 480p (default, $0.05/sec) and 720p ($0.07/sec) and rejects anything higher. Ignored by Sora only (dropped from the request)."),
         aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora uses it only to pick portrait vs landscape (9:16 / 3:4 -> portrait); Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
-        last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini only (NOT 2.5): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
+        last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5: first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
+        reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
+        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), and more at 480p."),
+        reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Requires a reference image or video alongside. Billed at 0.3x the 15.2s video-clip rate."),
+        bitrate_mode: z.enum(["standard", "high"]).optional().describe("Seedance 2.x only (2.0, 2.0-fast, 2.0-mini, 2.5): output bitrate. Defaults to standard."),
+        output_format: z.enum(["mp4", "mov"]).optional().describe("Seedance 2.5 only: output container. Every other model returns MP4."),
+        camera_fixed: z.boolean().optional().describe("Seedance 1.5-pro only: lock the camera so the shot does not drift."),
+        safety_identifier: z.string().max(128).optional().describe("Seedance only: an opaque, stable end-user id forwarded upstream for abuse attribution. Not a content filter — do NOT put personal data in it."),
+        seed: z.number().int().min(0).max(2_147_483_647).optional().describe("Seedance 1.5-pro only: reproducibility seed. Same seed + same prompt re-renders the same clip."),
+        watermark: z.boolean().optional().describe("Seedance only: burn the provider watermark into the output. Defaults off."),
+        return_last_frame: z.boolean().optional().describe("Seedance only: also return the final frame as an image URL, to seed the next clip in a chain."),
         agent_id: z.string().optional().describe("Agent identifier for budget tracking and enforcement."),
       },
     },
-    async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, resolution, aspect_ratio, last_frame_url, model, agent_id }) => {
+    async ({ prompt, image_url, real_face_asset_id, duration_seconds, generate_audio, resolution, aspect_ratio, last_frame_url, reference_image_urls, reference_videos, reference_audios, bitrate_mode, output_format, camera_fixed, safety_identifier, seed, watermark, return_last_frame, model, agent_id }) => {
       // Reserve the estimate up front so concurrent calls can't each pass a
       // stale budget; release in finally once the call settles or fails.
       let gate: ReturnType<typeof reserveBudget> | undefined;
@@ -391,11 +478,36 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
       try {
         const selectedModel = model || "xai/grok-imagine-video";
 
+        const reject = (text: string) => ({ content: [{ type: "text" as const, text: formatError(text) }], isError: true });
+        const refs = Boolean(reference_image_urls?.length || reference_videos?.length || reference_audios?.length);
+
+        // Answered BEFORE every other guard, because the rail fact dominates
+        // them. Reference media is an api.blockrun.ai capability: BOTH wallet
+        // gateways answer any reference_* field with a 400 before quoting
+        // (blockrun#728, blockrun-sol#374; live-probed 2026-09-26 on
+        // blockrun.ai and sol.blockrun.ai). Ranked below the frame-seed guards
+        // it cost three round trips to learn the one thing that mattered — a
+        // 2.5 reference request with last_frame_url was told to add image_url,
+        // then that frame seeds and references do not mix, and only then that
+        // the rail cannot serve it at all.
+        if (refs && !isApiKeyMode()) {
+          return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on every rail. No payment was taken.`);
+        }
+
+        // Second for the same reason: with references present, every
+        // frame-seed guard below answers the wrong question. A reference
+        // request carrying last_frame_url and no image_url was told to add
+        // image_url, and only on the resubmit that frame seeds and references
+        // do not mix at all.
+        if (refs && (image_url || last_frame_url || real_face_asset_id)) {
+          return reject(`Reference inputs cannot be combined with frame seeds — reference mode and first-frame seeding are mutually exclusive. Drop ${[image_url && "image_url", last_frame_url && "last_frame_url", real_face_asset_id && "real_face_asset_id"].filter(Boolean).join(" / ")}, and pass character or style images as reference_image_urls instead.`);
+        }
+
         // RealFace guardrails — fail fast client-side instead of round-tripping a 400.
         if (real_face_asset_id) {
           if (!REALFACE_MODELS.has(selectedModel)) {
             return {
-              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support RealFace assets. Use bytedance/seedance-2.0, bytedance/seedance-2.0-fast or bytedance/seedance-2.0-mini.`) }],
+              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support RealFace assets. Use ${[...REALFACE_MODELS].join(", ")}.`) }],
               isError: true,
             };
           }
@@ -412,7 +524,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (last_frame_url) {
           if (!FIRST_LAST_FRAME_MODELS.has(selectedModel)) {
             return {
-              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support first-and-last-frame interpolation (last_frame_url). Use bytedance/seedance-2.0, bytedance/seedance-2.0-fast, bytedance/seedance-2.0-mini or bytedance/seedance-1.5-pro.`) }],
+              // Model list read off the SET, not retyped: 2.5 joined it in
+              // 0.53.0 and the hand-maintained sentence did not follow.
+              content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support first-and-last-frame interpolation (last_frame_url). Use ${[...FIRST_LAST_FRAME_MODELS].join(", ")}.`) }],
               isError: true,
             };
           }
@@ -430,29 +544,53 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
-        // SSRF guard on caller-supplied URLs, mirroring blockrun_image
-        // (src/tools/image.ts). This process never fetches these URLs — the
-        // GATEWAY's fetcher does — so this is defense-in-depth plus a saved
-        // round trip: a URL pointing at localhost / the metadata endpoint /
-        // the private network was previously forwarded, quoted, and PAID for
-        // before failing (or worse, succeeding) server-side. Resolved, not
-        // literal: wildcard-DNS names like 127.0.0.1.nip.io are public strings
-        // that map to private addresses. zod's .url() accepts any scheme, so
-        // file:// etc. are rejected here too.
-        for (const [name, value] of [["image_url", image_url], ["last_frame_url", last_frame_url]] as const) {
-          if (!value) continue;
-          const parsed = new URL(value);
-          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            return {
-              content: [{ type: "text", text: formatError(`${name} must be an http(s) URL — got scheme "${parsed.protocol}"`) }],
-              isError: true,
-            };
+        // Reference media and the new output controls, checked BEFORE the SSRF
+        // loop below: those are up to 36 sequential DNS resolutions, and a
+        // combination this tool will refuse anyway must not pay for them. Same
+        // shape as the RealFace / last_frame_url guards above — a returned
+        // formatError, never a throw: a throw lands in the catch's money
+        // classifier and comes back as "Video generation failed", which reads
+        // like a render died when in fact nothing left the machine.
+        const media = Boolean(reference_videos?.length || reference_audios?.length);
+        const isSeedance = selectedModel.startsWith("bytedance/seedance-");
+        // hasOwn, not `!== undefined`: a prototype key ("constructor") would
+        // otherwise read as a function here, clear the support check below and
+        // make `length > <function>` a NaN-false that bypasses the count cap.
+        // Unreachable behind the zod enum today; the estimator's tables are
+        // guarded the same way for the same reason.
+        const referenceImageLimit = Object.hasOwn(REFERENCE_IMAGE_LIMIT, selectedModel) ? REFERENCE_IMAGE_LIMIT[selectedModel] : undefined;
+
+        if (reference_image_urls?.length) {
+          // Two remedies, two messages: "wrong model" and "too many for this
+          // model" are not the same fix, and one shared string left the caller
+          // unable to tell whether to drop an image or switch model.
+          if (referenceImageLimit === undefined) {
+            return reject(`Model ${selectedModel} does not accept reference images (reference_image_urls). Supported: ${Object.keys(REFERENCE_IMAGE_LIMIT).join(", ")}.`);
           }
-          if (await isBlockedFetchHostResolved(parsed.hostname)) {
-            return {
-              content: [{ type: "text", text: formatError(`${name} resolves to a private/loopback/link-local address (${parsed.hostname}) — refusing to forward it to the gateway.`) }],
-              isError: true,
-            };
+          if (reference_image_urls.length > referenceImageLimit) {
+            return reject(`${selectedModel} accepts at most ${referenceImageLimit} reference images — got ${reference_image_urls.length}.`);
+          }
+        }
+        if (media && !REFERENCE_MEDIA_MODELS.has(selectedModel)) {
+          return reject(`Model ${selectedModel} does not accept reference video or audio clips. Supported: ${[...REFERENCE_MEDIA_MODELS].join(", ")}.${selectedModel === SEEDANCE_25 ? " 2.5 takes reference IMAGES (up to 30) but no reference clips." : ""}`);
+        }
+        if (reference_audios?.length && !reference_image_urls?.length && !reference_videos?.length) {
+          return reject("Reference audio requires a reference image or video — combine reference_audios with reference_image_urls or reference_videos.");
+        }
+        if (bitrate_mode !== undefined && !BITRATE_MODE_MODELS.has(selectedModel)) {
+          return reject(`bitrate_mode requires a Seedance 2.x model — got ${selectedModel}. Supported: ${[...BITRATE_MODE_MODELS].join(", ")}.`);
+        }
+        if (output_format !== undefined && selectedModel !== SEEDANCE_25) {
+          return reject(`output_format requires ${SEEDANCE_25} — got ${selectedModel}. Every other model returns MP4.`);
+        }
+        for (const [field, value] of [["seed", seed], ["camera_fixed", camera_fixed]] as const) {
+          if (value !== undefined && selectedModel !== SEEDANCE_15_PRO) {
+            return reject(`${field} requires ${SEEDANCE_15_PRO} on this tool — got ${selectedModel}.`);
+          }
+        }
+        for (const [field, value] of [["safety_identifier", safety_identifier], ["watermark", watermark], ["return_last_frame", return_last_frame]] as const) {
+          if (value !== undefined && !isSeedance) {
+            return reject(`${field} requires a Seedance model — got ${selectedModel}.`);
           }
         }
 
@@ -490,9 +628,52 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           }
         }
 
+        // SSRF guard on caller-supplied URLs, mirroring blockrun_image
+        // (src/tools/image.ts). This process never fetches these URLs — the
+        // GATEWAY's fetcher does — so this is defense-in-depth plus a saved
+        // round trip: a URL pointing at localhost / the metadata endpoint /
+        // the private network was previously forwarded, quoted, and PAID for
+        // before failing (or worse, succeeding) server-side. Resolved, not
+        // literal: wildcard-DNS names like 127.0.0.1.nip.io are public strings
+        // that map to private addresses. zod's .url() accepts any scheme, so
+        // file:// etc. are rejected here too.
+        // Typed explicitly, not inferred: without the annotation a future
+        // `.map` callback returning a 1-element array still compiles, yields
+        // `value === undefined`, and is skipped by the falsy-continue below —
+        // silently dropping the SSRF check for that entire field.
+        const urlInputs: Array<readonly [string, string | undefined]> = [
+          ["image_url", image_url],
+          ["last_frame_url", last_frame_url],
+          ...(reference_image_urls ?? []).map(url => ["reference_image_urls", url] as const),
+          ...(reference_videos ?? []).map(clip => ["reference_videos", clip.url] as const),
+          ...(reference_audios ?? []).map(clip => ["reference_audios", clip.url] as const),
+        ];
+        // One resolution per HOST, not per URL: 30 reference images on one CDN
+        // used to be 30 identical getaddrinfo calls on libuv's 4-thread pool,
+        // awaited one at a time, before this call had earned anything.
+        const resolvedHosts = new Set<string>();
+        for (const [name, value] of urlInputs) {
+          if (!value) continue;
+          const parsed = new URL(value);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return {
+              content: [{ type: "text", text: formatError(`${name} must be an http(s) URL — got scheme "${parsed.protocol}"`) }],
+              isError: true,
+            };
+          }
+          if (resolvedHosts.has(parsed.hostname)) continue;
+          resolvedHosts.add(parsed.hostname);
+          if (await isBlockedFetchHostResolved(parsed.hostname)) {
+            return {
+              content: [{ type: "text", text: formatError(`${name} resolves to a private/loopback/link-local address (${parsed.hostname}) — refusing to forward it to the gateway.`) }],
+              isError: true,
+            };
+          }
+        }
+
         // Image input is NOT discounted upstream on Seedance (only video-to-video
         // is), so text-to-video and image-to-video share one per-second rate.
-        estimatedCost = estimateVideoCost(selectedModel, billedSeconds, resolution);
+        estimatedCost = estimateVideoCost(selectedModel, billedSeconds, resolution, { videos: reference_videos?.length, audios: reference_audios?.length });
         gate = reserveBudget(budget, agent_id, estimatedCost);
         if (!gate.allowed) {
           return {
@@ -503,7 +684,15 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
         // decline returns here — nothing is sent, and the finally releases the
         // reservation. No-ops when off, sub-threshold, or unsupported by the client.
-        const confirm = await confirmSpend(server, { usd: estimatedCost, label: `video · ${selectedModel} · ${billedSeconds}s` });
+        // Reference clips are billed at the 15.2s ceiling each and can put a
+        // 5s render at 4-24x its usual price; a human approving the charge
+        // has to see why, not just a model and a duration.
+        const referenceLabel = [
+          reference_image_urls?.length && `${reference_image_urls.length} ref image${reference_image_urls.length > 1 ? "s" : ""}`,
+          reference_videos?.length && `${reference_videos.length} ref video${reference_videos.length > 1 ? "s" : ""}`,
+          reference_audios?.length && `${reference_audios.length} ref audio${reference_audios.length > 1 ? "s" : ""}`,
+        ].filter(Boolean).map((x) => ` · ${x}`).join("");
+        const confirm = await confirmSpend(server, { usd: estimatedCost, label: `video · ${selectedModel} · ${billedSeconds}s${referenceLabel}` });
         if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
         const body: Record<string, unknown> = { model: selectedModel, prompt };
@@ -518,6 +707,19 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
         if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
+        // Pass-throughs, forwarded under their own names when the caller set
+        // them. `!== undefined` and not truthiness: seed 0, camera_fixed false
+        // and watermark false are all meaningful values a truthy test drops.
+        // `input_type` is deliberately NOT sent — the gateway infers it from
+        // the same fields, and asserting our own guess could only ever turn a
+        // correct request into a mismatch error.
+        for (const [key, value] of Object.entries({
+          reference_image_urls, reference_videos, reference_audios,
+          bitrate_mode, output_format, camera_fixed,
+          safety_identifier, seed, watermark, return_last_frame,
+        })) {
+          if (value !== undefined) body[key] = value;
+        }
 
         // ---- Rail 1: account API key. No quote, no signature, no expiry. ----
         if (isApiKeyMode()) {
@@ -533,7 +735,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             pollTimeoutMs: VIDEO_POLL_TIMEOUT_MS,
           });
           book(paidUsd);
-          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean }> }).data?.[0];
+          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean; last_frame_url?: string; last_frame_backed_up?: boolean }> }).data?.[0];
           if (!clip?.url) throw new Error("Completed video response missing video URL");
           const modelOut = (data as { model?: string }).model || selectedModel;
           const lines = [
@@ -546,6 +748,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               ? `Cost: ~$${estimatedCost.toFixed(4)} (estimated — billed at exact usage; see https://user.blockrun.ai/dashboard/activity)`
               : `Cost: $${paidUsd.toFixed(6)}`,
             ...(clip.backed_up ? ["Backed up to BlockRun storage (URL is permanent)"] : clip.source_url ? [`Source URL: ${clip.source_url}`] : []),
+            ...(clip.last_frame_url ? [`Last frame: ${clip.last_frame_url}${clip.last_frame_backed_up === false ? " (not mirrored — this URL expires)" : ""}`] : []),
             ...(clip.request_id ? [`Request ID: ${clip.request_id}`] : []),
             ...(txHash ? [`Receipt: ${txHash}`] : []),
           ];
@@ -561,6 +764,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               billing: "account",
               ...(clip.request_id ? { request_id: clip.request_id } : {}),
               ...(clip.backed_up !== undefined ? { backed_up: clip.backed_up } : {}),
+              ...(clip.last_frame_url ? { last_frame_url: clip.last_frame_url } : {}),
+              ...(clip.last_frame_backed_up !== undefined ? { last_frame_backed_up: clip.last_frame_backed_up } : {}),
               ...(txHash ? { txHash } : {}),
             },
           };
@@ -622,7 +827,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           // before validating the payload so a malformed completed body cannot
           // make a real Solana charge disappear from the local ledger.
           book(paidUsd);
-          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean }>; model?: string }).data?.[0];
+          const clip = (data as { data?: Array<{ url?: string; source_url?: string; duration_seconds?: number; request_id?: string; backed_up?: boolean; last_frame_url?: string; last_frame_backed_up?: boolean }>; model?: string }).data?.[0];
           if (!clip?.url) throw new Error("Completed Solana video response missing video URL");
           const billedUsd = paidUsd ?? estimatedCost;
           const lines = [
@@ -633,6 +838,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             "Chain: Solana",
             `Cost: $${billedUsd.toFixed(4)}`,
             ...(clip.backed_up ? ["Backed up to BlockRun storage (URL is permanent)"] : clip.source_url ? [`Source URL: ${clip.source_url}`] : []),
+            ...(clip.last_frame_url ? [`Last frame: ${clip.last_frame_url}${clip.last_frame_backed_up === false ? " (not mirrored — this URL expires)" : ""}`] : []),
             ...(clip.request_id ? [`Request ID: ${clip.request_id}`] : []),
             ...(txHash ? [`Tx: ${txHash}`] : []),
           ];
@@ -647,6 +853,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               chain: "solana",
               ...(clip.request_id ? { request_id: clip.request_id } : {}),
               ...(clip.backed_up !== undefined ? { backed_up: clip.backed_up } : {}),
+              ...(clip.last_frame_url ? { last_frame_url: clip.last_frame_url } : {}),
+              ...(clip.last_frame_backed_up !== undefined ? { last_frame_backed_up: clip.last_frame_backed_up } : {}),
               ...(txHash ? { txHash } : {}),
             },
           };
@@ -787,6 +995,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           duration_seconds?: number;
           request_id?: string;
           backed_up?: boolean;
+          last_frame_url?: string;
+          last_frame_backed_up?: boolean;
           modelReturned?: string;
           txHash?: string;
         } | null = null;
@@ -828,6 +1038,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               duration_seconds?: number;
               request_id?: string;
               backed_up?: boolean;
+              last_frame_url?: string;
+              last_frame_backed_up?: boolean;
             }>;
             error?: string;
             model?: string;
@@ -868,6 +1080,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
               duration_seconds: clip.duration_seconds,
               request_id: clip.request_id,
               backed_up: clip.backed_up,
+              last_frame_url: clip.last_frame_url,
+              last_frame_backed_up: clip.last_frame_backed_up,
               modelReturned: pollData.model,
               txHash: pollResp.headers.get("X-Payment-Receipt") ||
                 pollResp.headers.get("x-payment-receipt") || undefined,
@@ -898,6 +1112,7 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
           `Model: ${completed.modelReturned || selectedModel}`,
           `Cost: $${billedUsd.toFixed(4)}`,
           ...(completed.backed_up ? [`Backed up to BlockRun storage (URL is permanent)`] : completed.source_url ? [`Source URL: ${completed.source_url}`] : []),
+          ...(completed.last_frame_url ? [`Last frame: ${completed.last_frame_url}${completed.last_frame_backed_up === false ? " (not mirrored — this URL expires)" : ""}`] : []),
           ...(completed.request_id ? [`Request ID: ${completed.request_id}`] : []),
           ...(completed.txHash ? [`Tx: ${completed.txHash}`] : []),
         ];
@@ -915,6 +1130,8 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             cost_usd: billedUsd,
             ...(completed.request_id ? { request_id: completed.request_id } : {}),
             ...(completed.backed_up !== undefined ? { backed_up: completed.backed_up } : {}),
+            ...(completed.last_frame_url ? { last_frame_url: completed.last_frame_url } : {}),
+            ...(completed.last_frame_backed_up !== undefined ? { last_frame_backed_up: completed.last_frame_backed_up } : {}),
             ...(completed.txHash ? { txHash: completed.txHash } : {}),
           },
         };

@@ -703,11 +703,19 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
         // "signature" for a rail that has none.
         if (err instanceof BilledJobError) {
           recordActualSpend(budget, err.paidUsd, estimatedCostForCatch, agent_id);
+          // Both rails throw this since the Solana image path moved onto the
+          // async helper (0.52.2): the account rail, and a Solana route that
+          // settled at submit. A USDC transfer already on-chain is not "billed
+          // to the account", and the account dashboard has no record of it.
+          const account = isApiKeyMode();
           const what = err.billing === "billed"
-            ? `Image generation did not return an image, but the gateway accepted the render${err.jobId ? ` (job ${err.jobId})` : ""} and the account is charged when it completes.`
-            : `Image generation got no answer to its submit, so the render MAY have been accepted and billed to the BlockRun account.`;
+            ? account
+              ? `Image generation did not return an image, but the gateway accepted the render${err.jobId ? ` (job ${err.jobId})` : ""} and the account is charged when it completes.`
+              : `Image generation did not return an image, but the Solana wallet was charged when the gateway accepted the render${err.jobId ? ` (job ${err.jobId})` : ""}.`
+            : `Image generation got no answer to its submit, so the render MAY have been accepted and billed to ${account ? "the BlockRun account" : "the Solana wallet"}.`;
+          const where = account ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report" or the wallet's recent transactions`;
           return {
-            content: [{ type: "text", text: `${what} $${(err.paidUsd ?? estimatedCostForCatch).toFixed(4)} has been booked against your budget; check https://user.blockrun.ai/dashboard/activity before doing anything else — a new blockrun_image call starts and bills a second render.\nError: ${errMsg}` }],
+            content: [{ type: "text", text: `${what} $${(err.paidUsd ?? estimatedCostForCatch).toFixed(4)} has been booked against your budget; check ${where} before doing anything else — a new blockrun_image call starts and bills a second render.\nError: ${errMsg}` }],
             isError: true,
           };
         }

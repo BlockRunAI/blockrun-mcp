@@ -29,6 +29,8 @@ let paidPostsIssued = 0;
 let happyBody: unknown = {};
 // The options the async helper was last called with, for the per-route knobs.
 let asyncOpts: Record<string, unknown> | null = null;
+// When set, the async double throws this after the paid submit (a settled-at-submit give-up).
+let asyncThrow: Error | null = null;
 const abortError = () => { const e = new Error("This operation was aborted"); e.name = "AbortError"; return e; };
 
 mock.module("../src/utils/wallet.js", {
@@ -79,6 +81,7 @@ mock.module("../src/utils/solana-402.js", {
       opts.onQuote?.(quoteUsd, { resource: { description: "Seedance 2.0 Pro video generation (5s)" } });
       opts.onPaidRequest?.();
       paidPostsIssued++;
+      if (asyncThrow) throw asyncThrow;
       if (giveUp) {
         throw new Error(
           "Generation did not complete within 900s (last status: processing). No settlement receipt was " +
@@ -159,7 +162,7 @@ const TOOLS: Array<{ name: string; register: Register; args: Record<string, unkn
   { name: "realface", register: registerRealfaceTool, args: { action: "portrait", name: "Ada", image_url: "https://ok.example.com/ada.png" }, estimate: withTxFee(0.01), happy: { asset_id: "ta_abc", name: "Ada" } },
 ];
 
-beforeEach(() => { quoteUsd = 0.5; giveUp = false; onQuoteWasFunction = null; paidPostsIssued = 0; happyBody = {}; asyncOpts = null; });
+beforeEach(() => { quoteUsd = 0.5; giveUp = false; onQuoteWasFunction = null; paidPostsIssued = 0; happyBody = {}; asyncOpts = null; asyncThrow = null; });
 
 for (const t of TOOLS) {
   test(`${t.name} on Solana hands the helper an onQuote — the guard cannot fire against nobody`, async () => {
@@ -245,3 +248,23 @@ for (const t of TOOLS.filter((x) => x.name in ROUTE_KNOBS)) {
     assert.equal(asyncOpts.submitMaySettle, ROUTE_KNOBS[t.name].submitMaySettle, `${t.name}: submitMaySettle`);
   });
 }
+
+test("image: a Solana settled-at-submit give-up names the wallet, not the account dashboard", async () => {
+  // Since 0.52.2 the Solana image path can throw BilledJobError (the async
+  // helper's give-up on a route that settled at submit). The catch was written
+  // for the account rail and told a wallet user to check an account dashboard
+  // that has no record of an on-chain transfer.
+  const { BilledJobError } = await import("../src/utils/api-key-call.js");
+  const image = TOOLS.find((t) => t.name === "image")!;
+  quoteUsd = image.estimate;
+  asyncThrow = new BilledJobError("Image generation did not complete within 300s.", { paidUsd: quoteUsd, jobId: "img_1", billing: "billed" });
+  const { call, budget } = makeHarness(image.register);
+  const res = await call(image.args);
+  assert.equal(res.isError, true);
+  const t = text(res);
+  assert.match(t, /Solana wallet was charged/);
+  assert.match(t, /job img_1/);
+  assert.match(t, /blockrun_wallet action:"report"/);
+  assert.doesNotMatch(t, /dashboard\/activity|BlockRun account|account is charged/);
+  assert.ok(near(budget.spent, quoteUsd), `spent=${budget.spent}`);
+});
