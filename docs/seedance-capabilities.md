@@ -23,7 +23,8 @@ Both wallet gateways refuse them with a `400` **before** issuing a quote
 `blockrun_video` refuses them client-side on the wallet rails rather than
 forwarding a request that cannot succeed, so no payment is taken and no DNS
 lookup is spent on the reference URLs. Frame seeding (`image_url`,
-`last_frame_url`) is unaffected and works on every rail.
+`last_frame_url`) is unaffected and works on every rail, with one exception
+below.
 
 ## Supported combinations
 
@@ -31,7 +32,13 @@ lookup is spent on the reference URLs. Frame seeding (`image_url`,
 | --- | --- | --- | --- |
 | Seedance 1.5-pro | Yes | No | No |
 | Seedance 2.0 / 2.0-fast / 2.0-mini | Yes | 1–9 | Image + video, image + audio, video + audio, or all three; 1–3 clips of each type |
-| Seedance 2.5 | Yes | 1–30 | No |
+| Seedance 2.5 | Yes, except on the Solana wallet rail | 1–30 | No |
+
+`sol.blockrun.ai` has not yet added 2.5 to its first-and-last-frame list. It
+refuses `last_frame_url` on 2.5 with a `400` before quoting, while
+`blockrun.ai` quotes the same body; 2.0, 2.0-fast, 2.0-mini and 1.5-pro quote
+on both (unsigned probes, 2026-09-29). The tool refuses that one combination on
+Solana by name, so no payment is taken; use Base or the account rail for it.
 
 Seedance 2.5 takes reference **images** but no reference clips — the gateway
 registry carries `supportsReferenceImages: true` with

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.53.1
+
+### Fixed — seedance-2.5 first-and-last-frame is refused by name on Solana
+
+0.53.0 advertised `last_frame_url` on seedance-2.5 on every rail.
+`sol.blockrun.ai` is a separate deploy that has not added 2.5 to its
+first-and-last-frame list: it answers `400 "does not support first-and-last-frame
+video"` before quoting, while `blockrun.ai` quotes the same body (unsigned
+probes, 2026-09-29; 2.0, 2.0-fast, 2.0-mini and 1.5-pro quote on both). No
+payment was ever at risk, but the caller got "the endpoint did not return a
+quote". The tool now refuses that one combination on the Solana wallet rail,
+names Base and the account rail as the places that serve it, and lists the
+models that work on Solana. The parameter description and
+`docs/seedance-capabilities.md` say the same.
+
+The output controls (`output_format`, `bitrate_mode`, `watermark`,
+`return_last_frame`) were probed on both gateways as well. Both validate them
+in their request schemas, so they are not silently dropped on Solana.
+
 ## 0.53.0
 
 ### Added — Seedance reference media, 2.5 first/last frame, output controls
