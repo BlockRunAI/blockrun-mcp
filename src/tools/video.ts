@@ -428,7 +428,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
         resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Output resolution. Seedance defaults to 720p and is token-priced (~2.25x at 1080p, ~9x at 4K); per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. grok-imagine-video honours 480p (default, $0.05/sec) and 720p ($0.07/sec) and rejects anything higher. Ignored by Sora only (dropped from the request)."),
         aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora uses it only to pick portrait vs landscape (9:16 / 3:4 -> portrait); Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
-        last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5: first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
+        last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5 (2.5 not on the Solana wallet rail): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
         reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), and more at 480p."),
@@ -491,7 +491,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // then that frame seeds and references do not mix, and only then that
         // the rail cannot serve it at all.
         if (refs && !isApiKeyMode()) {
-          return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on every rail. No payment was taken.`);
+          return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on the wallet rails. No payment was taken.`);
         }
 
         // Second for the same reason: with references present, every
@@ -529,6 +529,15 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
               content: [{ type: "text", text: formatError(`Model ${selectedModel} does not support first-and-last-frame interpolation (last_frame_url). Use ${[...FIRST_LAST_FRAME_MODELS].join(", ")}.`) }],
               isError: true,
             };
+          }
+          // sol.blockrun.ai is a separate deploy and has not taken 2.5 into
+          // its first-and-last-frame list: it answers 400 "does not support
+          // first-and-last-frame video" before quoting, where Base quotes the
+          // same body (both probed unsigned 2026-09-29; 2.0 / 2.0-fast /
+          // 2.0-mini / 1.5-pro quote on both). Refused here by name instead
+          // of surfacing as "the endpoint did not return a quote".
+          if (selectedModel === SEEDANCE_25 && !isApiKeyMode() && getChain() === "solana") {
+            return reject(`${SEEDANCE_25} first-and-last-frame (last_frame_url) is not served by the Solana gateway yet — it refuses the request before quoting. Use it on Base (blockrun_wallet action:"chain" chain:"base") or the account rail (BLOCKRUN_API_KEY), or pick ${[...FIRST_LAST_FRAME_MODELS].filter((m) => m !== SEEDANCE_25).join(", ")}, which support it on Solana. No payment was taken.`);
           }
           if (!image_url) {
             return {

@@ -516,3 +516,36 @@ test("the reference_videos description gives the real multiple, not the old form
   assert.doesNotMatch(d, /triples/);
   assert.match(d, /about 4x/);
 });
+
+test("2.5 first-and-last-frame is refused by name on the Solana wallet rail, and only there", async () => {
+  // sol.blockrun.ai answers 400 "does not support first-and-last-frame video"
+  // for 2.5 before quoting; Base quotes it (unsigned probes, 2026-09-29).
+  const args = { prompt: "t", model: "bytedance/seedance-2.5", image_url: IMG, last_frame_url: IMG };
+  apiKeyMode = false;
+  activeChain = "solana";
+  try {
+    const text = await errorText(args);
+    assert.match(text, /not served by the Solana gateway/);
+    assert.match(text, /No payment was taken/);
+    // The other first-and-last-frame models are served on Solana: the guard
+    // must not catch them.
+    for (const model of ["bytedance/seedance-2.0", "bytedance/seedance-2.0-mini", "bytedance/seedance-1.5-pro"]) {
+      const res = await makeHarness().call({ ...args, model });
+      const t = res.content.map((c: any) => c.text).join("\n");
+      assert.doesNotMatch(t, /not served by the Solana gateway/, model);
+    }
+  } finally {
+    apiKeyMode = true;
+    activeChain = "base";
+  }
+  // Base and the account rail still forward it.
+  apiKeyMode = false;
+  try {
+    const body = await bodySentFor(args);
+    assert.equal(body.last_frame_url, IMG);
+  } finally {
+    apiKeyMode = true;
+  }
+  const body = await bodySentFor(args);
+  assert.equal(body.last_frame_url, IMG);
+});
