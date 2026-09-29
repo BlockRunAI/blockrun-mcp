@@ -27,6 +27,8 @@ let giveUp = false;
 let onQuoteWasFunction: boolean | null = null;
 let paidPostsIssued = 0;
 let happyBody: unknown = {};
+// The options the async helper was last called with, for the per-route knobs.
+let asyncOpts: Record<string, unknown> | null = null;
 const abortError = () => { const e = new Error("This operation was aborted"); e.name = "AbortError"; return e; };
 
 mock.module("../src/utils/wallet.js", {
@@ -72,6 +74,7 @@ mock.module("../src/utils/solana-402.js", {
     // the transfer was signed. That is the exact bug this test exists to catch,
     // so the double has to arm.
     solanaPaidAsyncPost: async (_e: string, _b: unknown, opts: { onQuote?: (usd: number | null, d?: unknown) => void; onPaidRequest?: () => void; onPaidResponse?: () => void }) => {
+      asyncOpts = opts as Record<string, unknown>;
       onQuoteWasFunction = typeof opts.onQuote === "function";
       opts.onQuote?.(quoteUsd, { resource: { description: "Seedance 2.0 Pro video generation (5s)" } });
       opts.onPaidRequest?.();
@@ -156,7 +159,7 @@ const TOOLS: Array<{ name: string; register: Register; args: Record<string, unkn
   { name: "realface", register: registerRealfaceTool, args: { action: "portrait", name: "Ada", image_url: "https://ok.example.com/ada.png" }, estimate: withTxFee(0.01), happy: { asset_id: "ta_abc", name: "Ada" } },
 ];
 
-beforeEach(() => { quoteUsd = 0.5; giveUp = false; onQuoteWasFunction = null; paidPostsIssued = 0; happyBody = {}; });
+beforeEach(() => { quoteUsd = 0.5; giveUp = false; onQuoteWasFunction = null; paidPostsIssued = 0; happyBody = {}; asyncOpts = null; });
 
 for (const t of TOOLS) {
   test(`${t.name} on Solana hands the helper an onQuote — the guard cannot fire against nobody`, async () => {
@@ -217,5 +220,28 @@ for (const t of TOOLS) {
     const res = await call(t.args);
     assert.notEqual(res.isError, true, text(res));
     assert.ok(near(budget.spent, quoteUsd), `${t.name}: spent=${budget.spent}, quote=${quoteUsd}`);
+  });
+}
+
+// Two per-route facts the async helper cannot know on its own. The submit
+// timeout: a route that holds the paid POST inline (image ~30s, audio 60s)
+// settles at POST, so the helper's 30s video default aborted image renders at
+// the moment their 202 was due — paid, and no job id to reclaim (0.52.2).
+// And whether the submit can settle at all: video settles on the completed
+// poll, so an edge 5xx at its submit must not be booked as a possible charge.
+const ROUTE_KNOBS: Record<string, { submitTimeoutMs: number | undefined; submitMaySettle: boolean | undefined }> = {
+  image: { submitTimeoutMs: 95_000, submitMaySettle: undefined },
+  music: { submitTimeoutMs: 95_000, submitMaySettle: undefined },
+  video: { submitTimeoutMs: undefined, submitMaySettle: false },
+};
+for (const t of TOOLS.filter((x) => x.name in ROUTE_KNOBS)) {
+  test(`${t.name}: the Solana async submit carries this route's timeout and settlement model`, async () => {
+    quoteUsd = t.estimate;
+    happyBody = t.happy;
+    const { call } = makeHarness(t.register);
+    await call(t.args);
+    assert.ok(asyncOpts, `${t.name}: the async helper was not called`);
+    assert.equal(asyncOpts.submitTimeoutMs, ROUTE_KNOBS[t.name].submitTimeoutMs, `${t.name}: submitTimeoutMs`);
+    assert.equal(asyncOpts.submitMaySettle, ROUTE_KNOBS[t.name].submitMaySettle, `${t.name}: submitMaySettle`);
   });
 }

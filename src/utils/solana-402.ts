@@ -61,9 +61,10 @@ const QUOTE_TIMEOUT_MS = 15_000;
 // can't answer past 60s anyway. Submit gets Base's 30s — the VIDEO gateway
 // verifies and enqueues in 3-20s, and a 300s hold here was silently adding
 // five minutes to the "15 min hard cap" the tool description promises. It is
-// a default, not a rule: the audio route holds the paid POST inline for up to
-// 60s and settles at POST regardless, so a 30s abort there was a charged track
-// with no job id (C15) — music.ts passes its own submitTimeoutMs.
+// a default, not a rule: a route that holds the paid POST inline settles at
+// POST regardless, so a 30s abort there is a charge with no job id — the audio
+// route (60s window, C15) and the image route (~30s window, so its 202 is due
+// right at 30s) each pass their own submitTimeoutMs.
 export const SOLANA_ASYNC_DEFAULT_BUDGET_MS = 900_000;
 export const SOLANA_ASYNC_POLL_INTERVAL_MS = 5_000;
 export const SOLANA_ASYNC_SUBMIT_TIMEOUT_MS = 30_000;
@@ -218,6 +219,16 @@ export interface SolanaPaidAsyncPostOptions extends PaidRequestHooks {
    * POST regardless — needs its own, larger value (music.ts).
    */
   submitTimeoutMs?: number;
+  /**
+   * Whether this route can settle the transfer carried by the SUBMIT. True
+   * (the default) for image and music, which settle at POST; false only for
+   * a payment-on-completion route (video), whose submit merely verifies and
+   * enqueues. Read when the submit gets an edge 502/503/504: with no origin
+   * answer there is no settlement header to classify by, so the caller's
+   * knowledge of the route is the only evidence. Defaulting to true keeps an
+   * unknown route on the conservative side (booked, never reported free).
+   */
+  submitMaySettle?: boolean;
   /**
    * Sentence subject for every error this helper throws, e.g. "Music
    * generation". Defaults to "Video generation", the helper's first caller —
@@ -415,6 +426,7 @@ export async function solanaPaidAsyncPost(
   const pollBudgetMs = opts.pollBudgetMs ?? SOLANA_ASYNC_DEFAULT_BUDGET_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? SOLANA_ASYNC_POLL_INTERVAL_MS;
   const submitTimeoutMs = opts.submitTimeoutMs ?? SOLANA_ASYNC_SUBMIT_TIMEOUT_MS;
+  const submitMaySettle = opts.submitMaySettle ?? true;
   const pollTimeoutMs = opts.pollTimeoutMs ?? SOLANA_ASYNC_POLL_TIMEOUT_MS;
   const resignIntervalMs = opts.resignIntervalMs ?? SOLANA_ASYNC_RESIGN_INTERVAL_MS;
   const maxReactiveResigns = opts.maxReactiveResigns ?? SOLANA_ASYNC_MAX_REACTIVE_RESIGNS;
@@ -465,13 +477,16 @@ export async function solanaPaidAsyncPost(
     body: JSON.stringify(body),
   }, submitTimeout);
   // An EDGE status is not the origin's verdict: 502/503/504 mean a proxy
-  // answered for an origin that may still be running — and on this rail the
-  // submit IS the paid request, so the origin may already have settled it.
-  // Leaving the tracker armed is what makes the tool book it as a precaution;
-  // calling settle() here would report "temporary API issue, try again" on a
-  // charge that already stands. Every other status is a real answer.
+  // answered for an origin that may still be running — and on a route that
+  // settles at submit, the origin may already have settled it. Leaving the
+  // tracker armed is what makes the tool book it as a precaution; calling
+  // settle() here would report "temporary API issue, try again" on a charge
+  // that already stands. A payment-on-completion route (video) is the
+  // exception: its submit cannot move money, so an edge status there is a
+  // plain failure and booking it would be a phantom spend. Every other
+  // status is a real answer.
   const edgeAnswered = submitResp.status === 502 || submitResp.status === 503 || submitResp.status === 504;
-  if (!edgeAnswered) opts.onPaidResponse?.();
+  if (!edgeAnswered || !submitMaySettle) opts.onPaidResponse?.();
   if (submitResp.status === 402) {
     await submitResp.json().catch(() => ({}));
     throw paidRequestRefused(settleFailureReason(submitResp), "at submit");
