@@ -16,9 +16,9 @@ Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0. Numbers
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 13,971 |
+| `full` *(default)* | 19 | 14,000 |
 | `trading` | 8 | 5,411 |
-| `media` | 7 | 6,755 |
+| `media` | 7 | 6,784 |
 | `research` | 5 | 2,752 |
 | `chat` | 3 | 2,079 |
 
