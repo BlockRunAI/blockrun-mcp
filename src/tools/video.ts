@@ -577,6 +577,9 @@ Returns a permanent blockrun-hosted MP4 URL (the gateway mirrors the asset to GC
             body,
             {
               pollBudgetMs: SOLANA_VIDEO_TOTAL_BUDGET_MS,
+              // Payment-on-completion: the submit verifies and enqueues, so
+              // an edge 5xx on it cannot have moved money.
+              submitMaySettle: false,
               what: "Video generation",
               tool: "blockrun_video",
               onQuote: (solQuotedUsd, quoteDetails) => {

@@ -255,6 +255,15 @@ export function estimateCost(model: string, size: string): number {
 // paid request's timeout must cover the whole render — not just a round-trip.
 const SOLANA_IMAGE_TIMEOUT_MS = 300_000;
 
+// The paid submit, which is not the render: the Solana image route answers
+// 200 inline when the render fits its ~30s window and 202 + poll_url at the
+// window's end, and it has settled the transfer at POST either way. The
+// async helper's 30s default is sized for video's 3-20s enqueue — here it
+// fires at the very moment the 202 is due, so the job id never arrives and
+// a paid render is lost. 95s is the account rail's submit timeout
+// (apiKeyAsyncPost), which faces the same 30s window.
+export const SOLANA_IMAGE_SUBMIT_TIMEOUT_MS = 95_000;
+
 // The account rail answers inline when the render fits its 30s window and
 // otherwise 202 + poll_url (the vendored gateway route; "the account is
 // charged on completion"). gpt-image-2 — this tool's default — routinely takes
@@ -580,6 +589,7 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             let solQuotedUsd: number | null = null;
             const { data, paidUsd } = await solanaPaidAsyncPost(endpoint, body, {
               pollBudgetMs: SOLANA_IMAGE_TIMEOUT_MS,
+              submitTimeoutMs: SOLANA_IMAGE_SUBMIT_TIMEOUT_MS,
               what: action === "edit" ? "Image edit" : "Image generation",
               tool: "blockrun_image",
               onPaidRequest: () => paid.arm(solQuotedUsd),
