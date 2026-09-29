@@ -87,6 +87,9 @@ test("image.ts actually calls the guard on the rail that has a quote", async () 
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/tools/image.ts", import.meta.url), "utf8");
   // The Solana helper is the only image rail that surfaces a 402 amount.
-  assert.match(src, /solanaPaidPost\([\s\S]{0,900}onQuote:/, "image must guard the Solana quote");
+  // Matches solanaPaidPost or solanaPaidAsyncPost: image moved to the async
+  // helper on 2026-09-29 (the sync one dropped a 202 and lost a paid render),
+  // and the guard has to hold on whichever one the tool calls.
+  assert.match(src, /solanaPaid(?:Async)?Post\([\s\S]{0,900}onQuote:/, "image must guard the Solana quote");
   assert.match(src, /assertQuoteNearEstimate\(/, "image must call the shared guard");
 });

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.52.2
+
+### Fixed — a paid image could be lost on the Solana wallet rail
+
+`blockrun_image` on Solana sent one POST and never polled. Past the gateway's
+~30s inline window the route answers `202 { id, poll_url }` instead of the
+image, so the tool returned "No image URL in response" — **and the charge
+stood**, because Solana settles at submit and cannot settle after a long render
+(a signed transaction expires with its blockhash). The user paid and got
+nothing.
+
+Observed live on 2026-09-29: `google/nano-banana-pro` at 4096x4096 booked
+$0.1575 and returned no image. The same defect was fixed on the account rail in
+#140; the Solana wallet rail was never moved across. It now uses
+`solanaPaidAsyncPost` — the helper video and music already use, which handles
+the inline 200 and the 202 alike and re-signs each poll with a fresh blockhash.
+
+### Fixed — an edge 5xx on a Solana submit is no longer reported as free
+
+`solanaPaidAsyncPost` marked the payment tracker answered as soon as the submit
+response arrived, including a 502/503/504 from the edge. On this rail the submit
+*is* the paid request, so an origin that never answered may still have settled
+it — and the tool told the user "temporary API issue, try again" on a charge
+that already stood. An edge status is no longer treated as the origin's verdict;
+the tracker stays armed and the tool books it as a precaution. Applies to video
+and music as well.
+
 All notable changes to BlockRun MCP will be documented in this file.
 
 ## 0.52.1
