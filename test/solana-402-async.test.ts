@@ -696,3 +696,33 @@ test("submitTimeoutMs is honoured on the paid submit", async () => {
   await solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, { ...music, submitTimeoutMs: 95_000, pollBudgetMs: 240_000 });
   assert.equal(timeouts[1], 95_000, `paid submit timeout was ${timeouts[1]}`);
 });
+
+// An edge 502/503/504 on the paid submit carries no settlement header, so the
+// caller's knowledge of the route decides. A route that settles at POST
+// (image, music — the default) leaves the tracker armed: the origin may have
+// settled. A payment-on-completion route (video) settles it: its submit
+// cannot move money, and booking it would be a phantom spend.
+for (const status of [502, 503, 504]) {
+  test(`an edge ${status} on the submit leaves the tracker armed by default`, async () => {
+    const events: string[] = [];
+    script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
+    await assert.rejects(solanaPaidAsyncPost("/v1/images/generations", { prompt: "t" }, {
+      ...fast,
+      onPaidRequest: () => events.push("armed"),
+      onPaidResponse: () => events.push("settled"),
+    }), new RegExp(String(status)));
+    assert.deepEqual(events, ["armed"]);
+  });
+
+  test(`an edge ${status} on a payment-on-completion submit settles the tracker`, async () => {
+    const events: string[] = [];
+    script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
+    await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, {
+      ...fast,
+      submitMaySettle: false,
+      onPaidRequest: () => events.push("armed"),
+      onPaidResponse: () => events.push("settled"),
+    }), new RegExp(String(status)));
+    assert.deepEqual(events, ["armed", "settled"]);
+  });
+}
