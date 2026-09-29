@@ -13,7 +13,7 @@ import { getChain, getImageClient } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { ledgerFallback } from "../utils/raw-call.js";
-import { solanaPaidPost } from "../utils/solana-402.js";
+import { solanaPaidAsyncPost } from "../utils/solana-402.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
@@ -564,13 +564,24 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
               image: normalizedImage,
               mask: normalizedMask,
             });
-            // The quote, captured for the tracker: armed at the helper's
-            // onPaidRequest (the line before the signed POST leaves) and
-            // settled at onPaidResponse (any status), so the unpaid probe
-            // and the signing step are outside the window and an answered
-            // 5xx is never a maybe.
+            // solanaPaidAsyncPost, not solanaPaidPost: past its 30s inline
+            // window the Solana gateway answers 202 + poll_url, and the
+            // single-POST helper handed that envelope back as if it were the
+            // image — "No image URL in response" while the charge stood,
+            // because Solana settles at SUBMIT and cannot settle later (a
+            // signed transaction expires with its blockhash). So the user paid
+            // and lost the render. Observed live on 2026-09-29:
+            // nano-banana-pro at 4096x4096 booked $0.1575 and returned nothing.
+            //
+            // This is the same defect #140 fixed on the account rail; the
+            // Solana wallet rail was never moved across. The async helper
+            // handles the inline 200 and the 202 alike and re-signs each poll
+            // with a fresh blockhash, which is what the poll GET needs.
             let solQuotedUsd: number | null = null;
-            const { data, paidUsd } = await solanaPaidPost(endpoint, body, SOLANA_IMAGE_TIMEOUT_MS, {
+            const { data, paidUsd } = await solanaPaidAsyncPost(endpoint, body, {
+              pollBudgetMs: SOLANA_IMAGE_TIMEOUT_MS,
+              what: action === "edit" ? "Image edit" : "Image generation",
+              tool: "blockrun_image",
               onPaidRequest: () => paid.arm(solQuotedUsd),
               onPaidResponse: () => paid.settle(),
               // The Solana gateway prices carry a markup over the Base estimate

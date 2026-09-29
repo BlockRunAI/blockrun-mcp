@@ -464,7 +464,14 @@ export async function solanaPaidAsyncPost(
     headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": paymentPayload },
     body: JSON.stringify(body),
   }, submitTimeout);
-  opts.onPaidResponse?.();
+  // An EDGE status is not the origin's verdict: 502/503/504 mean a proxy
+  // answered for an origin that may still be running — and on this rail the
+  // submit IS the paid request, so the origin may already have settled it.
+  // Leaving the tracker armed is what makes the tool book it as a precaution;
+  // calling settle() here would report "temporary API issue, try again" on a
+  // charge that already stands. Every other status is a real answer.
+  const edgeAnswered = submitResp.status === 502 || submitResp.status === 503 || submitResp.status === 504;
+  if (!edgeAnswered) opts.onPaidResponse?.();
   if (submitResp.status === 402) {
     await submitResp.json().catch(() => ({}));
     throw paidRequestRefused(settleFailureReason(submitResp), "at submit");
