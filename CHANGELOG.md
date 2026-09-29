@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.52.3
+
+### Fixed — 0.52.2's Solana image fix cut the paid submit off at 30s
+
+0.52.2 moved `blockrun_image` on the Solana wallet rail onto the async helper
+so a long render is polled instead of lost. It kept the helper's 30s submit
+timeout, which is sized for video's 3-20s enqueue. The image route holds the
+paid POST for up to ~30s and only then answers `202 { id, poll_url }` — so the
+client aborted at the moment the job id was due, after the transfer had
+settled. The fix did not reach the case it was written for, and a render that
+finished inline just past 30s (which 0.52.1 delivered) was now lost as well.
+The image submit now waits 95s, the account rail's timeout for the same 30s
+window.
+
+### Fixed — an edge 5xx on a Solana video submit no longer books a phantom charge
+
+0.52.2 kept the payment tracker armed on any 502/503/504 at a Solana async
+submit, because on image and music the submit settles the transfer. Video
+settles on the poll that observes `completed`, so its submit cannot have moved
+money — yet the full estimate was booked against the budget and the tool said
+the charge might stand. Each caller now declares whether its submit can settle
+(`submitMaySettle`, default true); video declares false.
+
 ## 0.52.2
 
 ### Fixed — a paid image could be lost on the Solana wallet rail
