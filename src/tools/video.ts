@@ -431,7 +431,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5: first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
-        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip roughly triples a 5s render's price."),
+        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), and more at 480p."),
         reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Requires a reference image or video alongside. Billed at 0.3x the 15.2s video-clip rate."),
         bitrate_mode: z.enum(["standard", "high"]).optional().describe("Seedance 2.x only (2.0, 2.0-fast, 2.0-mini, 2.5): output bitrate. Defaults to standard."),
         output_format: z.enum(["mp4", "mov"]).optional().describe("Seedance 2.5 only: output container. Every other model returns MP4."),
@@ -494,6 +494,15 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           return reject(`Reference media (reference_image_urls / reference_videos / reference_audios) is served only by the BlockRun account rail (api.blockrun.ai). The Base and Solana gateways refuse it with a 400 before quoting. Set BLOCKRUN_API_KEY to use the account rail, or drop the reference fields — image_url / last_frame_url frame seeding works on every rail. No payment was taken.`);
         }
 
+        // Second for the same reason: with references present, every
+        // frame-seed guard below answers the wrong question. A reference
+        // request carrying last_frame_url and no image_url was told to add
+        // image_url, and only on the resubmit that frame seeds and references
+        // do not mix at all.
+        if (refs && (image_url || last_frame_url || real_face_asset_id)) {
+          return reject(`Reference inputs cannot be combined with frame seeds — reference mode and first-frame seeding are mutually exclusive. Drop ${[image_url && "image_url", last_frame_url && "last_frame_url", real_face_asset_id && "real_face_asset_id"].filter(Boolean).join(" / ")}, and pass character or style images as reference_image_urls instead.`);
+        }
+
         // RealFace guardrails — fail fast client-side instead of round-tripping a 400.
         if (real_face_asset_id) {
           if (!REALFACE_MODELS.has(selectedModel)) {
@@ -551,9 +560,6 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // guarded the same way for the same reason.
         const referenceImageLimit = Object.hasOwn(REFERENCE_IMAGE_LIMIT, selectedModel) ? REFERENCE_IMAGE_LIMIT[selectedModel] : undefined;
 
-        if (refs && (image_url || last_frame_url || real_face_asset_id)) {
-          return reject(`Reference inputs cannot be combined with frame seeds — reference mode and first-frame seeding are mutually exclusive. Drop ${[image_url && "image_url", last_frame_url && "last_frame_url", real_face_asset_id && "real_face_asset_id"].filter(Boolean).join(" / ")}, and pass character or style images as reference_image_urls instead.`);
-        }
         if (reference_image_urls?.length) {
           // Two remedies, two messages: "wrong model" and "too many for this
           // model" are not the same fix, and one shared string left the caller
@@ -678,7 +684,15 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
         // decline returns here — nothing is sent, and the finally releases the
         // reservation. No-ops when off, sub-threshold, or unsupported by the client.
-        const confirm = await confirmSpend(server, { usd: estimatedCost, label: `video · ${selectedModel} · ${billedSeconds}s` });
+        // Reference clips are billed at the 15.2s ceiling each and can put a
+        // 5s render at 4-24x its usual price; a human approving the charge
+        // has to see why, not just a model and a duration.
+        const referenceLabel = [
+          reference_image_urls?.length && `${reference_image_urls.length} ref image${reference_image_urls.length > 1 ? "s" : ""}`,
+          reference_videos?.length && `${reference_videos.length} ref video${reference_videos.length > 1 ? "s" : ""}`,
+          reference_audios?.length && `${reference_audios.length} ref audio${reference_audios.length > 1 ? "s" : ""}`,
+        ].filter(Boolean).map((x) => ` · ${x}`).join("");
+        const confirm = await confirmSpend(server, { usd: estimatedCost, label: `video · ${selectedModel} · ${billedSeconds}s${referenceLabel}` });
         if (!confirm.ok) return { content: [{ type: "text", text: confirm.reason ?? "Charge cancelled." }] };
 
         const body: Record<string, unknown> = { model: selectedModel, prompt };

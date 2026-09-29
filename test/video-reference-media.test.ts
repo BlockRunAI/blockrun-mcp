@@ -83,6 +83,15 @@ mock.module("../src/utils/wallet.js", {
   },
 });
 
+// The label a human approving the charge would read, captured per call.
+const confirmLabels: string[] = [];
+mock.module("../src/utils/confirm-spend.js", {
+  namedExports: {
+    confirmSpend: async (_s: unknown, o: { label: string }) => { confirmLabels.push(o.label); return { ok: true }; },
+    resetSpendApproval: () => {},
+  },
+});
+
 const { registerVideoTool, estimateVideoCost } = await import("../src/tools/video.js");
 
 function makeHarnessWithConfig() {
@@ -471,4 +480,39 @@ test("the rail refusal is answered before every other guard", async () => {
   } finally {
     apiKeyMode = true;
   }
+});
+
+test("on the account rail, the frame-seed conflict is answered before the frame-seed guards", async () => {
+  // With references present every last_frame / RealFace guard answers the
+  // wrong question: "last_frame_url requires image_url" sent the caller to
+  // add image_url, only to hear on the resubmit that seeds and references
+  // never mix.
+  for (const args of [
+    { model: "bytedance/seedance-2.5", reference_image_urls: [IMG], last_frame_url: IMG },
+    { model: "bytedance/seedance-2.0", reference_videos: [{ url: VID }], last_frame_url: IMG },
+    { model: "bytedance/seedance-2.0", reference_image_urls: [IMG], real_face_asset_id: "ta_abc123" },
+  ]) {
+    const text = await errorText({ prompt: "t", ...args });
+    assert.match(text, /cannot be combined with frame seeds/, JSON.stringify(args));
+    assert.doesNotMatch(text, /requires image_url|does not support RealFace/, JSON.stringify(args));
+  }
+});
+
+test("the spend confirmation names the reference clips that multiply the price", async () => {
+  confirmLabels.length = 0;
+  await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.0", reference_image_urls: [IMG], reference_videos: [{ url: VID }, { url: VID }], reference_audios: [{ url: AUD }] });
+  assert.equal(confirmLabels.length, 1);
+  assert.match(confirmLabels[0], /1 ref image\b/);
+  assert.match(confirmLabels[0], /2 ref videos/);
+  assert.match(confirmLabels[0], /1 ref audio\b/);
+  confirmLabels.length = 0;
+  await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.0", duration_seconds: 5 });
+  assert.doesNotMatch(confirmLabels[0], /ref/);
+});
+
+test("the reference_videos description gives the real multiple, not the old formula's", () => {
+  const { config } = makeHarnessWithConfig();
+  const d = config.inputSchema.reference_videos.description as string;
+  assert.doesNotMatch(d, /triples/);
+  assert.match(d, /about 4x/);
 });
