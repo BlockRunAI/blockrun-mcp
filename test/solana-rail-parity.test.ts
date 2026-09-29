@@ -59,12 +59,22 @@ mock.module("../src/utils/auth.js", {
 });
 mock.module("../src/utils/solana-402.js", {
   namedExports: {
-    // The async helper (video, music): hands the caller the authoritative
-    // quote BEFORE signing, then either finishes or gives up on its deadline
-    // with the helper's own "a poll still in flight can settle" wording.
-    solanaPaidAsyncPost: async (_e: string, _b: unknown, opts: { onQuote?: (usd: number | null, d?: unknown) => void }) => {
+    // The async helper (video, music, and image since 2026-09-29): hands the
+    // caller the authoritative quote BEFORE signing, then either finishes or
+    // gives up on its deadline with the helper's own "a poll still in flight
+    // can settle" wording.
+    //
+    // It fires onPaidRequest the line before the signed submit leaves and
+    // onPaidResponse when a non-edge answer arrives (src/utils/solana-402.ts
+    // lines 461/474) — the same tracker seam the sync helper honours below.
+    // A stand-in that skipped onPaidRequest left the tracker unarmed, so a
+    // tool that books through it reported a free failure for a give-up after
+    // the transfer was signed. That is the exact bug this test exists to catch,
+    // so the double has to arm.
+    solanaPaidAsyncPost: async (_e: string, _b: unknown, opts: { onQuote?: (usd: number | null, d?: unknown) => void; onPaidRequest?: () => void; onPaidResponse?: () => void }) => {
       onQuoteWasFunction = typeof opts.onQuote === "function";
       opts.onQuote?.(quoteUsd, { resource: { description: "Seedance 2.0 Pro video generation (5s)" } });
+      opts.onPaidRequest?.();
       paidPostsIssued++;
       if (giveUp) {
         throw new Error(
@@ -73,9 +83,10 @@ mock.module("../src/utils/solana-402.js", {
           "wallet's recent transactions before retrying.",
         );
       }
+      opts.onPaidResponse?.();
       return { data: happyBody, paidUsd: quoteUsd, txHash: "sol-tx" };
     },
-    // The synchronous helper (speech, image, realface): same hook, and on a
+    // The synchronous helper (speech, realface): same hook, and on a
     // give-up the paid POST itself aborts after the transfer was signed. The
     // real helper fires onPaidRequest the line before the signed POST leaves
     // and onPaidResponse when any answer arrives — the seam the tools arm
