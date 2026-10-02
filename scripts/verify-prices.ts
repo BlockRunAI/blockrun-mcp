@@ -52,7 +52,7 @@ import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
 import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
-import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS } from "../src/utils/constants.js";
+import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS, chatRateAt } from "../src/utils/constants.js";
 import { verdict } from "./verify-prices-verdict.js";
 
 // TWO gateways, and they do not agree. Base and Solana are separate deployments
@@ -516,7 +516,12 @@ if (solMissing) {
 // Listed-but-unknown $0 models and unlisted free[] entries are reported, not
 // failed: the first only over-reserves, and absence from the catalogue is a
 // listing decision, not a death certificate (see the doctrine in constants.ts).
-type CatalogueModel = { id: string; available?: boolean; pricing?: { input?: unknown; output?: unknown } };
+type LiveLongContextStep = { threshold?: unknown; inclusive?: unknown; input?: unknown; output?: unknown };
+type CatalogueModel = {
+  id: string;
+  available?: boolean;
+  pricing?: { input?: unknown; output?: unknown; long_context?: LiveLongContextStep[] };
+};
 
 async function catalogue(host: string): Promise<CatalogueModel[] | string> {
   try {
@@ -534,8 +539,8 @@ async function catalogue(host: string): Promise<CatalogueModel[] | string> {
 // applied — chatMarginPercent is 0 today, but the field is the one that would
 // move if that changed); `inputPrice` is the pre-margin figure and is NOT what
 // settles. Long-context ladders (a model repricing above N input tokens) are
-// on the sheet too and are deliberately not compared: no estimator in this
-// repo models them, so they are a separate finding, not a row here.
+// on the sheet too but are not compared here; the Base and Solana catalogues'
+// `pricing.long_context` steps are, against LONG_CONTEXT_PRICE_PER_MTOKEN.
 type SheetModel = { id: string; available?: boolean; billingMode?: string; inputPricePerMillion?: unknown; outputPricePerMillion?: unknown };
 
 async function accountSheet(): Promise<CatalogueModel[] | string> {
@@ -603,6 +608,25 @@ for (const [name, read] of CATALOGUES) {
               : `has NO row and reserves the $${DEFAULT_CHAT_PRICE.input}/$${DEFAULT_CHAT_PRICE.output} default`),
       );
       continue;
+    }
+    // Long-context steps: at the first token count each live step covers, the
+    // reserve (base raised to OUR step, if any) must cover the live step rate.
+    // A step we lack, price low, or start later than the gateway is the same
+    // under-reserve as a missing row, reached only by a huge prompt.
+    if (!isFree) {
+      for (const step of m.pricing?.long_context ?? []) {
+        const { threshold, inclusive, input: stepIn, output: stepOut } = step;
+        if (typeof threshold !== "number" || typeof stepIn !== "number" || typeof stepOut !== "number") continue;
+        const tokens = inclusive === true ? threshold : threshold + 1;
+        const at = chatRateAt(m.id, reserve, tokens);
+        if (stepIn > at.input || stepOut > at.output) {
+          gaps++;
+          catalogueGaps.push(
+            `${name}: ${m.id} is $${stepIn}/$${stepOut} live from ${inclusive === true ? ">=" : ">"}${threshold} prompt tokens, ` +
+              `but reserves $${at.input}/$${at.output} there — add or fix its LONG_CONTEXT_PRICE_PER_MTOKEN steps`,
+          );
+        }
+      }
     }
     if (row && (input < row.input || output < row.output)) {
       if (name === "Base" && m.id.startsWith("anthropic/")) {

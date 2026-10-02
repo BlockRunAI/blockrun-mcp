@@ -387,6 +387,77 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
 export const DEFAULT_CHAT_PRICE = { input: 5, output: 30 } as const;
 
 /**
+ * One long-context price step, per 1M tokens: once the prompt crosses
+ * `threshold` input tokens, the WHOLE request (input and output) bills at
+ * these rates. `inclusive` says whether a prompt of exactly `threshold` tokens
+ * is already in the step — OpenAI and Google publish "> threshold", xAI and
+ * Qwen publish ">= threshold".
+ */
+export interface LongContextStep {
+  readonly threshold: number;
+  readonly inclusive: boolean;
+  readonly input: number;
+  readonly output: number;
+}
+
+/**
+ * Long-context steps, copied from `pricing.long_context` in GET /v1/models
+ * (blockrun.ai and sol.blockrun.ai agree; the Qwen steps are on Base only and
+ * are kept because a reserve has to cover the dearer rail). Read 2026-10-02.
+ *
+ * Without this the gate reserved base rates for every prompt, and the gateway
+ * quotes the step: a 300K-token prompt to gpt-6-astra reserved $10/M input
+ * against a $20/M quote, so a huge prompt could pass a cap it would then blow.
+ *
+ * Rates are ABSOLUTE, as the catalogue publishes them, and chatRateAt() never
+ * lets a step LOWER the base rate it would otherwise reserve — a model with no
+ * CHAT_PRICE_PER_MTOKEN row reserves the $5/$30 default, which is above
+ * gpt-5.4's $22.50/M long-context output, and that must stay the floor.
+ *
+ * Steps are ascending; the highest one the prompt reaches prices the request
+ * (qwen3.7-flash steps twice). Same rule as the gateway's quote
+ * (blockrun src/lib/chat-quote.ts, longContextLadder).
+ */
+const OPENAI_272K = (input: number, output: number): readonly LongContextStep[] =>
+  [{ threshold: 272_000, inclusive: false, input, output }];
+const GOOGLE_200K = (input: number, output: number): readonly LongContextStep[] =>
+  [{ threshold: 200_000, inclusive: false, input, output }];
+const XAI_200K = (input: number, output: number): readonly LongContextStep[] =>
+  [{ threshold: 200_000, inclusive: true, input, output }];
+
+export const LONG_CONTEXT_PRICE_PER_MTOKEN: Record<string, readonly LongContextStep[]> = {
+  // OpenAI GPT-6 and GPT-5.4+: 2x input / 1.5x output above 272K.
+  "openai/gpt-6-astra": OPENAI_272K(20, 75),
+  "openai/gpt-6-sol": OPENAI_272K(4, 15),
+  "openai/gpt-6-luna": OPENAI_272K(0.2, 0.75),
+  "openai/gpt-5.6-sol": OPENAI_272K(8, 30),
+  "openai/gpt-5.6-terra": OPENAI_272K(4, 18),
+  "openai/gpt-5.6-luna": OPENAI_272K(0.4, 1.8),
+  "openai/gpt-5.6-sol-pro": OPENAI_272K(8, 30),
+  "openai/gpt-5.6-terra-pro": OPENAI_272K(4, 18),
+  "openai/gpt-5.6-luna-pro": OPENAI_272K(0.4, 1.8),
+  "openai/gpt-5.5": OPENAI_272K(10, 45),
+  "openai/gpt-5.5-pro": OPENAI_272K(60, 270),
+  "openai/gpt-5.4": OPENAI_272K(5, 22.5),
+  "openai/gpt-5.4-pro": OPENAI_272K(60, 270),
+  // Google Gemini Pro: 2x input / 1.5x output above 200K.
+  "google/gemini-3.1-pro": GOOGLE_200K(4, 18),
+  "google/gemini-2.5-pro": GOOGLE_200K(2.5, 15),
+  // xAI Grok: 2x both, from 200K inclusive.
+  "xai/grok-4.7": XAI_200K(4, 12),
+  "xai/grok-4.6": XAI_200K(4, 12),
+  "xai/grok-4.5": XAI_200K(4, 12),
+  "xai/grok-4.3": XAI_200K(2.5, 5),
+  "xai/grok-build-0.1": XAI_200K(2, 4),
+  // Qwen (Base): inclusive steps, flash steps twice.
+  "qwen/qwen3.7-plus": [{ threshold: 256_000, inclusive: true, input: 0.96, output: 3.84 }],
+  "qwen/qwen3.7-flash": [
+    { threshold: 32_000, inclusive: true, input: 0.1, output: 0.4 },
+    { threshold: 256_000, inclusive: true, input: 0.2, output: 0.8 },
+  ],
+};
+
+/**
  * Characters per input token, as the GATEWAY counts them for a quote.
  *
  * Measured 2026-08-13: a 100,000-character prompt quotes ~48,000 input tokens
@@ -441,7 +512,12 @@ export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
  * mapping is unambiguous.
  */
 const BARE_TO_PREFIXED: Record<string, string> = Object.fromEntries(
-  [...Object.keys(CHAT_PRICE_PER_MTOKEN), ...Object.values(MODEL_TIERS).flat(), ...FREE_CHAT_MODELS]
+  [
+    ...Object.keys(CHAT_PRICE_PER_MTOKEN),
+    ...Object.keys(LONG_CONTEXT_PRICE_PER_MTOKEN),
+    ...Object.values(MODEL_TIERS).flat(),
+    ...FREE_CHAT_MODELS,
+  ]
     .filter((id: string) => id.includes("/"))
     .map((id: string) => [id.slice(id.indexOf("/") + 1), id]),
 );
@@ -468,6 +544,53 @@ export const TIER_WORST_PRICE: Record<RoutingMode, { input: number; output: numb
       }];
     }),
   ) as Record<RoutingMode, { input: number; output: number }>;
+
+/**
+ * The long-context step a prompt of `inputTokens` reaches on `model`, or null
+ * when it reaches none (or the model has no steps). `model` must already be
+ * canonical. hasOwn-guarded: `model` is caller-controlled, and an inherited
+ * Object.prototype key must not resolve to a function here.
+ */
+export function longContextStep(model: string, inputTokens: number): LongContextStep | null {
+  if (!Object.hasOwn(LONG_CONTEXT_PRICE_PER_MTOKEN, model)) return null;
+  let reached: LongContextStep | null = null;
+  for (const step of LONG_CONTEXT_PRICE_PER_MTOKEN[model]) {
+    if (step.inclusive ? inputTokens >= step.threshold : inputTokens > step.threshold) reached = step;
+  }
+  return reached;
+}
+
+/**
+ * `base` raised to the long-context step `inputTokens` reaches on `model`.
+ * Component-wise max: a step can only raise what would be reserved or booked,
+ * never lower it (see LONG_CONTEXT_PRICE_PER_MTOKEN). Pure in prompt size.
+ */
+export function chatRateAt(
+  model: string,
+  base: { input: number; output: number },
+  inputTokens: number,
+): { input: number; output: number } {
+  const step = longContextStep(model, inputTokens);
+  if (!step) return base;
+  return { input: Math.max(base.input, step.input), output: Math.max(base.output, step.output) };
+}
+
+/**
+ * TIER_WORST_PRICE at a given prompt size: the most expensive rate any member
+ * of the tier can settle at once long-context steps apply. Equal to
+ * TIER_WORST_PRICE[mode] below every member's threshold.
+ */
+export function tierWorstPriceAt(mode: RoutingMode, inputTokens: number): { input: number; output: number } {
+  const rates = MODEL_TIERS[mode].map((id: string) => {
+    if (FREE_CHAT_MODELS.has(id) && !Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)) return { input: 0, output: 0 };
+    const base = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id) ? CHAT_PRICE_PER_MTOKEN[id] : DEFAULT_CHAT_PRICE;
+    return chatRateAt(id, base, inputTokens);
+  });
+  return {
+    input: Math.max(...rates.map((r) => r.input)),
+    output: Math.max(...rates.map((r) => r.output)),
+  };
+}
 
 /**
  * Per-model and whole-loop deadlines for the mode:"free" routing fallback.
