@@ -87,7 +87,8 @@ export const BASE_RPC_URLS = [
 // Qwen (3): qwen3.7-max ($1.475/$4.425, 1M), qwen3.7-plus ($0.32/$1.28, 1M),
 //   qwen3.7-flash ($0.03/$0.13, 1M — the cheapest PAID model in the catalogue;
 //   live-probed 2026-08-12)
-// Tencent (1): hy3 ($0.132/$0.528, 262K, reasoning; live-probed 2026-08-12)
+// Tencent: hy3 RETIRED 2026-09-24 (hidden; the gateway redirects pins to
+//   qwen3.7-flash, already second in cheap[]). Price row kept for pinned callers.
 // Xiaomi (1): mimo-v2.5-pro ($0.435/$0.87, 1M reasoning)
 // NVIDIA — genuinely $0. Serving healthy on the 2026-08-12 probe (both chains,
 //   realistic ~1.4K-token prompt): nemotron-3-nano-omni-30b-a3b-reasoning
@@ -124,7 +125,7 @@ export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
-  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "tencent/hy3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],
+  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],
   reasoning: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-reasoner"],
   // 2026-08-12 sweep (both chains, realistic prompt). Order matters: free[0]
   // is what every mode:"free" call tries first, and a slow primary stalls the
