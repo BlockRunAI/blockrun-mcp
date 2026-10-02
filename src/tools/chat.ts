@@ -432,13 +432,13 @@ Notable modes:
 - mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
 - mode:"free" → free models (no cost)
 
-Pick directly: model:"anthropic/claude-opus-5", model:"moonshot/kimi-k3", model:"openai/gpt-5.6-sol", model:"xai/grok-4.5", model:"nvidia/gpt-oss-120b" (free).
+Pick directly: model:"anthropic/claude-opus-5.5", model:"openai/gpt-6-sol", model:"xai/grok-4.7", model:"moonshot/kimi-k3", model:"nvidia/gpt-oss-120b" (free).
 
 Run blockrun_models to see all available models with pricing.`,
       annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
-        model: z.string().optional().describe("Specific model ID (e.g., 'moonshot/kimi-k3', 'openai/gpt-5.6-sol', 'zai/glm-5')"),
+        model: z.string().optional().describe("Specific model ID (e.g., 'openai/gpt-6-sol', 'anthropic/claude-sonnet-5.5', 'zai/glm-5')"),
         mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = $0 models (ignored if model specified)"),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
