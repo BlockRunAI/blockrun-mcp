@@ -158,20 +158,22 @@ const REFERENCE_IMAGE_LIMIT: Record<string, number> = {
   "bytedance/seedance-2.5": 30,
 };
 
-// Models that accept reference VIDEO/AUDIO clips (r2v). 2.5 is absent on
-// purpose: the gateway registry carries supportsReferenceMedia:false for it
-// while supportsReferenceImages is true, so images are allowed there and clips
-// are not.
-const REFERENCE_MEDIA_MODELS = new Set([
-  "bytedance/seedance-2.0",
-  "bytedance/seedance-2.0-fast",
-  "bytedance/seedance-2.0-mini",
-]);
+// Models that accept reference VIDEO/AUDIO clips (r2v): the gateway registry's
+// supportsReferenceMedia. 2.5 joined the 2.0 family on 2026-09-26
+// (enterprise#297) once its clip ceiling was probed and its per-second rate
+// measured. Derived from the ceiling table below, so a model can never accept
+// clips here without a ceiling to reserve them at — the gateway refuses a clip
+// on a model with no probed ceiling for the same reason.
 
 // Models that accept the 2.x output-bitrate control, and the 1.5-pro-only
 // render controls. Named rather than pattern-matched so the guard and the
 // message below can never drift from each other.
-const BITRATE_MODE_MODELS = new Set([...REFERENCE_MEDIA_MODELS, "bytedance/seedance-2.5"]);
+const BITRATE_MODE_MODELS = new Set([
+  "bytedance/seedance-2.0",
+  "bytedance/seedance-2.0-fast",
+  "bytedance/seedance-2.0-mini",
+  "bytedance/seedance-2.5",
+]);
 const SEEDANCE_15_PRO = "bytedance/seedance-1.5-pro";
 const SEEDANCE_25 = "bytedance/seedance-2.5";
 
@@ -186,16 +188,33 @@ const SEEDANCE_25 = "bytedance/seedance-2.5";
  * term this replaces was right only when the clip happened to be as long as the
  * render, and under-reserved 2-3.2x otherwise.
  *
+ * Re-measured on seedance-2.5 on 2026-09-25 (enterprise#297): the same 21,600
+ * tokens per reference second, so the rate follows the reference, not the tier.
+ *
  * The caller sends URLs, never durations, so the gateway quotes every clip at
- * its model's probed ceiling and the estimate has to assume the same. 15.2s is
- * the ceiling all three 2.0 SKUs enforce ("must be less than or equal to 15.2
- * … in r2v"). Over-reserving a short clip is the only direction the account
- * rail can recover from: it bills at submit with no 402 to correct against.
+ * ITS MODEL's probed ceiling and the estimate has to assume the same. The
+ * ceiling is per model, not global: the provider's own validation error says
+ * "must be less than or equal to 15.2" on all three 2.0 SKUs and "… 30.2" on
+ * 2.5 — twice as long, so a flat 15.2 would under-reserve a 2.5 clip by half.
+ * Mirrors REFERENCE_CEILING_SECONDS in the gateway's lib/models.ts.
+ * Over-reserving a short clip is the only direction the account rail can
+ * recover from: it bills at submit with no 402 to correct against.
  */
 const REFERENCE_TOKENS_PER_SECOND = 21_600;
 const REFERENCE_AUDIO_SECOND_FACTOR = 0.3;
-const MAX_REFERENCE_SECONDS = 15.2;
+const REFERENCE_CEILING_SECONDS: Record<string, number> = {
+  "bytedance/seedance-2.0": 15.2,
+  "bytedance/seedance-2.0-fast": 15.2,
+  "bytedance/seedance-2.0-mini": 15.2,
+  "bytedance/seedance-2.5": 30.2,
+};
+const REFERENCE_MEDIA_MODELS = new Set(Object.keys(REFERENCE_CEILING_SECONDS));
 const MAX_REFERENCE_CLIPS = 3;
+
+/** One reference clip's billed ceiling on `model`, in seconds, or undefined if it takes no clips. */
+export function referenceCeilingSeconds(model: string): number | undefined {
+  return Object.hasOwn(REFERENCE_CEILING_SECONDS, model) ? REFERENCE_CEILING_SECONDS[model] : undefined;
+}
 
 const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   "xai/grok-imagine-video": 8,
@@ -293,7 +312,8 @@ const GROK_RESOLUTIONS: Record<string, { resolutions: Set<string>; note: string 
  * account rail, which bills at submit with no quote, so for those calls the
  * number this function returns is the only budget control there is. It prices
  * reference clips the way the gateway does: per reference second, at the
- * model's ceiling. See REFERENCE_TOKENS_PER_SECOND.
+ * model's own ceiling (15.2s on the 2.0 family, 30.2s on 2.5). See
+ * REFERENCE_TOKENS_PER_SECOND.
  */
 export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string, references: { videos?: number; audios?: number } = {}): number {
   // Validated BEFORE the model dispatch below, not inside the Seedance branch.
@@ -308,6 +328,12 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
   }
   if ((videos > 0 || audios > 0) && !Object.hasOwn(SEEDANCE_PRICE_PER_MTOKENS, model)) {
     throw new Error(`Model "${model}" is not token-priced, so reference media cannot be reserved for it — refusing to price ${videos} video / ${audios} audio references at zero.`);
+  }
+  // A token-priced model with no probed ceiling (1.5-pro) takes no clips at
+  // all; borrowing another model's number would price a clip it cannot have.
+  const referenceCeiling = referenceCeilingSeconds(model);
+  if ((videos > 0 || audios > 0) && referenceCeiling === undefined) {
+    throw new Error(`Model "${model}" has no reference-clip ceiling, so reference media cannot be reserved for it — refusing to price ${videos} video / ${audios} audio references at another model's ceiling.`);
   }
   // THROW, never default. A model or resolution missing from the tables below
   // can only mean someone added it to the zod enum and forgot the rate — and a
@@ -327,9 +353,9 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
     if (!Object.hasOwn(RESOLUTION_TOKEN_FACTOR, res)) {
       throw new Error(`No token factor for resolution "${res}" — refusing to reserve at the 720p rate.`);
     }
-    // Reference seconds, not clips: every clip is quoted at the ceiling because
-    // the caller sends a URL and nothing here can read its duration.
-    const referenceSeconds = MAX_REFERENCE_SECONDS * (videos + REFERENCE_AUDIO_SECOND_FACTOR * audios);
+    // Reference seconds, not clips: every clip is quoted at its model's ceiling
+    // because the caller sends a URL and nothing here can read its duration.
+    const referenceSeconds = (referenceCeiling ?? 0) * (videos + REFERENCE_AUDIO_SECOND_FACTOR * audios);
     // The reference term floors its resolution factor at 1, as the gateway's
     // does: 21,600 was measured at 720p and whether upstream scales reference
     // tokens by the OUTPUT resolution is unprobed, so 480p must not bill under
@@ -410,11 +436,11 @@ Models. Every rate below is what you are CHARGED (margin and transaction fee inc
 - bytedance/seedance-2.0-mini (~$0.080/sec, 4-15s, 5s default) — 2.0-generation quality at roughly half the 2.0-fast rate; 720p ceiling; supports RealFace, first/last-frame and the full reference set. The CHEAPEST model that takes reference video/audio — prefer it over 2.0 for reference work unless you need 4K.
 - bytedance/seedance-2.0-fast (~$0.165/sec, 4-15s, ~60-80s gen) — sweet-spot price/quality; supports RealFace, first/last-frame and the full reference set
 - bytedance/seedance-2.0 (~$0.227/sec, 4-15s, up to 4K) — highest quality, and the ONLY model that renders true 4K; supports RealFace, first/last-frame and the full reference set. Also the priciest: 2.0-mini takes the same reference inputs at ~1/3 the rate.
-- bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and takes no RealFace and no reference VIDEO/AUDIO, though it does take first/last-frame and up to 30 reference IMAGES. Use 2.0 for 1080p/4K or real-person video.
+- bytedance/seedance-2.5 (~$0.315/sec, 4-30s, 5s default) — long-form: double 2.0's length ceiling, multilingual. NOT a strict upgrade — it caps at 720p and takes no RealFace, though it does take first/last-frame, up to 30 reference IMAGES and reference clips. Use 2.0 for 1080p/4K or real-person video.
 
 Image-to-video is NOT cheaper than text-to-video on Seedance — same per-second rate. Higher resolutions ARE more expensive (token-priced: 1080p ~2.25x, 4K ~9x the 720p rate); the 402 quote is authoritative and is what gets charged.
 
-Reference media (reference_image_urls / reference_videos / reference_audios) is served ONLY on the BlockRun account rail (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse it with a 400 before quoting, and this tool refuses it there first. Reference CLIPS are expensive: each one is billed at the 15.2s ceiling whatever its real length, and that price does NOT shrink with a shorter render or a lower resolution. On seedance-2.0-mini a 5s 720p render goes ~$0.40 -> ~$1.61 with one reference video (~4x), ~$5.10 with three videos plus three audios (~13x), and ~24x at 480p, where the discount reaches the render but not the clip. Reference IMAGES cost nothing extra. The account rail bills at submit with no quote to correct against, so check blockrun_wallet action:"report" before a large reference job.
+Reference media (reference_image_urls / reference_videos / reference_audios) is served ONLY on the BlockRun account rail (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse it with a 400 before quoting, and this tool refuses it there first. Reference CLIPS are expensive: each one is billed at its model's ceiling (15.2s on the 2.0 family, 30.2s on 2.5) whatever its real length, and that price does NOT shrink with a shorter render or a lower resolution. On seedance-2.0-mini a 5s 720p render goes ~$0.40 -> ~$1.61 with one reference video (~4x), ~$5.10 with three videos plus three audios (~13x), and ~24x at 480p, where the discount reaches the render but not the clip. Reference IMAGES cost nothing extra. The account rail bills at submit with no quote to correct against, so check blockrun_wallet action:"report" before a large reference job.
 
 RealFace: to generate video of a SPECIFIC real person, first enroll them with blockrun_realface (returns a ta_xxxx asset id), then pass real_face_asset_id here with seedance-2.0, seedance-2.0-fast, or seedance-2.0-mini. Mutually exclusive with image_url.
 
@@ -431,8 +457,8 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5 (2.5 not on the Solana wallet rail): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
         model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
-        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Each clip is BILLED AT THE 15.2s CEILING whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), and more at 480p."),
-        reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3) on seedance-2.0 / 2.0-fast / 2.0-mini — NOT 2.5. Requires a reference image or video alongside. Billed at 0.3x the 15.2s video-clip rate."),
+        reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on the seedance-2.0 family and 2.5. Each clip is BILLED AT ITS MODEL'S CEILING (15.2s on the 2.0 family, 30.2s on 2.5) whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), ~7x on 2.5, more at 480p."),
+        reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3), same models. Requires a reference image or video alongside. Billed at 0.3x the video-clip ceiling (15.2s on the 2.0 family, 30.2s on 2.5)."),
         bitrate_mode: z.enum(["standard", "high"]).optional().describe("Seedance 2.x only (2.0, 2.0-fast, 2.0-mini, 2.5): output bitrate. Defaults to standard."),
         output_format: z.enum(["mp4", "mov"]).optional().describe("Seedance 2.5 only: output container. Every other model returns MP4."),
         camera_fixed: z.boolean().optional().describe("Seedance 1.5-pro only: lock the camera so the shot does not drift."),
@@ -581,7 +607,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           }
         }
         if (media && !REFERENCE_MEDIA_MODELS.has(selectedModel)) {
-          return reject(`Model ${selectedModel} does not accept reference video or audio clips. Supported: ${[...REFERENCE_MEDIA_MODELS].join(", ")}.${selectedModel === SEEDANCE_25 ? " 2.5 takes reference IMAGES (up to 30) but no reference clips." : ""}`);
+          return reject(`Model ${selectedModel} does not accept reference video or audio clips. Supported: ${[...REFERENCE_MEDIA_MODELS].join(", ")}.`);
         }
         if (reference_audios?.length && !reference_image_urls?.length && !reference_videos?.length) {
           return reject("Reference audio requires a reference image or video — combine reference_audios with reference_image_urls or reference_videos.");
@@ -693,8 +719,9 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // Human-in-the-loop (BLOCKRUN_CONFIRM_SPEND=on): ask before signing. A
         // decline returns here — nothing is sent, and the finally releases the
         // reservation. No-ops when off, sub-threshold, or unsupported by the client.
-        // Reference clips are billed at the 15.2s ceiling each and can put a
-        // 5s render at 4-24x its usual price; a human approving the charge
+        // Reference clips are billed at their model's ceiling each (15.2s on
+        // the 2.0 family, 30.2s on 2.5) and can put a 5s render at 4-24x its
+        // usual price; a human approving the charge
         // has to see why, not just a model and a duration.
         const referenceLabel = [
           reference_image_urls?.length && `${reference_image_urls.length} ref image${reference_image_urls.length > 1 ? "s" : ""}`,

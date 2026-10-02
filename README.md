@@ -252,9 +252,9 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,014 |
+| `full` *(default)* | 19 | 14,046 |
 | `trading` | 8 | 5,411 |
-| `media` | 7 | 6,795 |
+| `media` | 7 | 6,827 |
 | `research` | 5 | 2,755 |
 | `chat` | 3 | 2,082 |
 
@@ -371,7 +371,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 |------|-------------|------|
 | `blockrun_chat` | <!-- br:models.chatVisible -->82<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
 | `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.15 |
-| `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0-mini/2.0-fast/2.0/2.5 (720p + audio; 4K on 2.0, up to 30s on 2.5); RealFace asset → real-person video; [reference images, video and audio](docs/seedance-capabilities.md) on the account rail | $0.053–0.32/sec charged; reference clips billed at a 15.2s ceiling |
+| `blockrun_video` | Sora 2 + xAI Grok Imagine Video + ByteDance Seedance 1.5/2.0-mini/2.0-fast/2.0/2.5 (720p + audio; 4K on 2.0, up to 30s on 2.5); RealFace asset → real-person video; [reference images, video and audio](docs/seedance-capabilities.md) on the account rail | $0.053–0.32/sec charged; reference clips billed at the model's ceiling (15.2s on 2.0, 30.2s on 2.5) |
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 / 2.0-fast / 2.0-mini video (not 2.5) | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |
 | `blockrun_speech` | ElevenLabs TTS (Flash/Turbo/Multilingual/v3, 8 voices) + ByteDance Seed Audio (prompt-directed) + cinematic sound effects; free voice listing | $0.05–0.10/1k chars |

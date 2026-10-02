@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — seedance-2.5 takes reference clips; the clip ceiling is per model
+
+The gateway turned on reference video/audio for seedance-2.5 on 2026-09-26
+(enterprise#297): its registry entry now carries `supportsReferenceMedia: true`
+and "reference video/audio clips up to 30s each (billed per reference
+second)". `blockrun_video` still refused `reference_videos` /
+`reference_audios` on 2.5 by name. It now forwards them, with the same limits
+as the 2.0 family: 1-3 clips of each type, audio only beside a reference image
+or video, never with frame seeds, up to 30 reference images.
+
+The reserve priced every clip at a flat 15.2s. The provider's ceiling is per
+model, and the gateway quotes each clip at its model's ceiling
+(`REFERENCE_CEILING_SECONDS`): 15.2s on seedance-2.0 / 2.0-fast / 2.0-mini,
+30.2s on 2.5. A 2.5 clip would have reserved half its price on the one rail
+where the reserve is the only budget control. One reference video now puts a
+5s 720p 2.5 render at ~$11.07 (~7x its ~$1.58 plain price). 1.5-pro still
+takes no clips, and the estimator now throws instead of borrowing another
+model's ceiling for it.
+
+Rail rules are unchanged: both wallet gateways (`blockrun.ai`,
+`sol.blockrun.ai`) still refuse every reference field with a 400 before
+quoting, so reference media stays account-rail only, 2.5 included.
+
 ## 0.53.1
 
 ### Fixed — seedance-2.5 first-and-last-frame is refused by name on Solana
