@@ -484,7 +484,7 @@ test("reference media is refused on the wallet rail and points at the account ra
   }
 });
 
-test("a reference clip is reserved at the 15.2s ceiling, not at the output duration", async () => {
+test("a reference clip on 2.0 is reserved at its 15.2s ceiling, not at the output duration", async () => {
   // The count-based term this replaced priced the clip as if it were as long as
   // the render, which under-reserved 2-3.2x. Assert the property, not a literal:
   // the surcharge does not move with the output length.

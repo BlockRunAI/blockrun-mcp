@@ -32,7 +32,7 @@ below.
 | --- | --- | --- | --- |
 | Seedance 1.5-pro | Yes | No | No |
 | Seedance 2.0 / 2.0-fast / 2.0-mini | Yes | 1–9 | Image + video, image + audio, video + audio, or all three; 1–3 clips of each type |
-| Seedance 2.5 | Yes, except on the Solana wallet rail | 1–30 | No |
+| Seedance 2.5 | Yes, except on the Solana wallet rail | 1–30 | Same combinations as 2.0; 1–3 clips of each type, up to 30s each |
 
 `sol.blockrun.ai` has not yet added 2.5 to its first-and-last-frame list. It
 refuses `last_frame_url` on 2.5 with a `400` before quoting, while
@@ -40,14 +40,16 @@ refuses `last_frame_url` on 2.5 with a `400` before quoting, while
 on both (unsigned probes, 2026-09-29). The tool refuses that one combination on
 Solana by name, so no payment is taken; use Base or the account rail for it.
 
-Seedance 2.5 takes reference **images** but no reference clips — the gateway
-registry carries `supportsReferenceImages: true` with
-`supportsReferenceMedia: false` for it, and the tool's guard matches.
+Seedance 2.5 takes reference **clips** as well as images since 2026-09-26
+(enterprise#297): the gateway registry carries `supportsReferenceMedia: true`
+for it, after its clip ceiling was probed at 30.2s and its per-second rate
+measured. Its clips may run up to 30s each, twice the 2.0 family's, and are
+billed accordingly (below).
 
 `image_url` means a first-frame seed. For a character or style image alongside
 a reference video, use `reference_image_urls`, not `image_url`. Frame seeding
-and reference mode are mutually exclusive. Reference audio on the 2.0 family
-requires at least one reference image or video. Upstream duration, size and
+and reference mode are mutually exclusive. Reference audio requires at least one
+reference image or video. Upstream duration, size and
 content constraints still apply; accepting a URL does not verify the remote
 file.
 
@@ -71,11 +73,20 @@ since `"reference"` is the only value upstream honours.
 Reference **clips** are billed **per reference second**, not per clip — measured
 against token360 on 2026-09-23 (blockrun#730): a reference second costs what an
 output second costs (~21,600 tokens against 21,780), with no per-clip
-component. Audio counts at 0.3x video.
+component. Re-measured on seedance-2.5 on 2026-09-25 (enterprise#297): the same
+rate. Audio counts at 0.3x video.
 
 The caller sends a URL and never declares the clip's length, so the gateway
-quotes **every clip at the model's 15.2s ceiling** and this tool reserves the
-same. Consequences worth knowing before you call:
+quotes **every clip at its model's ceiling** and this tool reserves the same.
+The ceiling is per model, probed from the provider's own validation error:
+
+| Model | Reference-clip ceiling |
+| --- | --- |
+| Seedance 2.0 / 2.0-fast / 2.0-mini | 15.2s |
+| Seedance 2.5 | 30.2s |
+
+A 2.5 clip therefore reserves twice the seconds of a 2.0 clip. Consequences
+worth knowing before you call:
 
 | Request | Reserved |
 | --- | --- |
@@ -85,6 +96,9 @@ same. Consequences worth knowing before you call:
 | seedance-2.0, 5s output, 3 videos + 3 audios | ~$14.54 |
 | seedance-2.0, 5s output at **4K**, 3 videos + 3 audios | ~$130.88 |
 | seedance-2.0-mini, 5s output at **480p**, 3 videos + 3 audios | ~$4.91 |
+| seedance-2.5, 5s output, no references | ~$1.58 |
+| seedance-2.5, 5s output, 1 reference video | ~$11.07 |
+| seedance-2.5, 5s output, 3 videos + 3 audios | ~$38.59 |
 
 A single reference clip therefore costs more than the render it conditions —
 roughly 4x a plain 5s 720p render, and about 24x for three videos plus three

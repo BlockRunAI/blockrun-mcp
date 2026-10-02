@@ -92,7 +92,7 @@ mock.module("../src/utils/confirm-spend.js", {
   },
 });
 
-const { registerVideoTool, estimateVideoCost } = await import("../src/tools/video.js");
+const { registerVideoTool, estimateVideoCost, referenceCeilingSeconds } = await import("../src/tools/video.js");
 
 function makeHarnessWithConfig() {
   let config: any;
@@ -139,8 +139,8 @@ const AUD = "https://example.com/score.mp3";
 // ---------------------------------------------------------------------------
 
 // The gateway's arithmetic, transcribed: tokens = output seconds x the model's
-// per-second rate x the resolution factor, PLUS every reference clip at the
-// 15.2s ceiling x 21,600 tokens/s (audio at 0.3x), with the reference term's
+// per-second rate x the resolution factor, PLUS every reference clip at its
+// model's ceiling (15.2s on the 2.0 family) x 21,600 tokens/s (audio at 0.3x), with the reference term's
 // resolution factor floored at 1. Reserve must never fall below it.
 const REFERENCE_CHARGE: Array<[string, number, number, number, string | undefined, number]> = [
   // model, outputSeconds, videos, audios, resolution, gateway charge (no tx fee)
@@ -168,6 +168,47 @@ test("the reserve covers the gateway's per-reference-second charge on every prob
     // cannot hide a stale rate behind a generous cushion.
     assert.ok(reserved - charged <= 0.0021, `${model} ${seconds}s v${videos}/a${audios}: over-reserves by ${reserved - charged}`);
   }
+});
+
+// The reference-clip ceiling is PER MODEL (the gateway's REFERENCE_CEILING_SECONDS,
+// enterprise#297): "must be less than or equal to 15.2" on the 2.0 family and
+// "… 30.2" on 2.5. A flat 15.2 would reserve a 2.5 clip at half its price, on
+// the one rail where the reserve is the only budget control.
+test("the reference-clip ceiling is per model: 15.2s on the 2.0 family, 30.2s on 2.5, none on 1.5-pro", () => {
+  for (const m of ["bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"]) {
+    assert.equal(referenceCeilingSeconds(m), 15.2, m);
+  }
+  assert.equal(referenceCeilingSeconds("bytedance/seedance-2.5"), 30.2);
+  for (const m of ["bytedance/seedance-1.5-pro", "xai/grok-imagine-video", "azure/sora-2", "constructor"]) {
+    assert.equal(referenceCeilingSeconds(m), undefined, m);
+  }
+});
+
+test("a seedance-2.5 reference clip is reserved at the 30.2s ceiling, not 2.0's 15.2s", () => {
+  const m = "bytedance/seedance-2.5";
+  const plain = estimateVideoCost(m, 5, "720p");
+  const oneVideo = estimateVideoCost(m, 5, "720p", { videos: 1 });
+  // 30.2s x 21,600 tok/s x $13.8565/M x 1.05 margin = $9.4908 for the clip
+  // alone; (5s x 21,690 + 30.2s x 21,600) x the same = $11.0687 in all.
+  assert.ok(Math.abs(oneVideo - 11.068690) < 0.0021, `2.5 + one clip reserves ${oneVideo}, expected ~$11.07`);
+  assert.ok(oneVideo - plain > 9.49, `a 30.2s clip on 2.5 costs ~$9.49, got ${oneVideo - plain}`);
+  // The gateway quotes a 2.5 clip at its ceiling floored to whole seconds (30s,
+  // measured 2026-09-25): $11.0058. The reserve must never fall below it.
+  assert.ok(oneVideo >= 11.005837, `reserve ${oneVideo} below the gateway's 30s charge`);
+  // Audio is 0.3x video at the SAME per-model ceiling.
+  const oneAudio = estimateVideoCost(m, 5, "720p", { audios: 1 }) - plain;
+  assert.ok(Math.abs(oneAudio / (oneVideo - plain) - 0.3) < 1e-6, `audio factor on 2.5 is ${oneAudio / (oneVideo - plain)}`);
+  // Per reference second the two tiers differ only by their token price, so
+  // after dividing that out the 2.5 clip is exactly 30.2/15.2 of a 2.0 clip.
+  const clip20 = estimateVideoCost("bytedance/seedance-2.0", 5, "720p", { videos: 1 }) - estimateVideoCost("bytedance/seedance-2.0", 5, "720p");
+  const secondsRatio = ((oneVideo - plain) / 13.8565) / (clip20 / 9.9715);
+  assert.ok(Math.abs(secondsRatio - 30.2 / 15.2) < 1e-4, `2.5 clip is ${secondsRatio}x a 2.0 clip's seconds, expected ${30.2 / 15.2}`);
+});
+
+test("references on a token-priced model with no clip ceiling (1.5-pro) throw, never borrow another model's", () => {
+  assert.throws(() => estimateVideoCost("bytedance/seedance-1.5-pro", 5, "720p", { videos: 1 }), /no reference-clip ceiling/);
+  assert.throws(() => estimateVideoCost("bytedance/seedance-1.5-pro", 5, "720p", { audios: 1 }), /no reference-clip ceiling/);
+  assert.ok(estimateVideoCost("bytedance/seedance-1.5-pro", 5, "720p") > 0, "1.5-pro without references still prices");
 });
 
 test("a reference clip costs the same whatever the OUTPUT length — the bug the count-based term had", () => {
@@ -234,11 +275,15 @@ test("reference media is refused BEFORE any network call on both wallet rails", 
         { reference_videos: [{ url: VID }] },
         { reference_audios: [{ url: AUD }], reference_image_urls: [IMG] },
       ]) {
-        const text = await errorText({ prompt: "a cube", model: "bytedance/seedance-2.0", ...args });
-        assert.match(text, /served only by the BlockRun account rail/, `${chain}: ${text}`);
-        assert.match(text, /api\.blockrun\.ai/, text);
-        // The refusal must never read as a money event: nothing was sent.
-        assert.match(text, /No payment was taken/, text);
+        // 2.5 takes clips on the account rail now; neither wallet gateway
+        // serves reference media for ANY model, so the rail rule holds for it too.
+        for (const model of ["bytedance/seedance-2.0", "bytedance/seedance-2.5"]) {
+          const text = await errorText({ prompt: "a cube", model, ...args });
+          assert.match(text, /served only by the BlockRun account rail/, `${chain} ${model}: ${text}`);
+          assert.match(text, /api\.blockrun\.ai/, text);
+          // The refusal must never read as a money event: nothing was sent.
+          assert.match(text, /No payment was taken/, text);
+        }
       }
     }
   } finally {
@@ -333,10 +378,13 @@ test("every capability guard fires for its off-model input, and none reaches the
     [{ model: "azure/sora-2", reference_image_urls: [IMG] }, /does not accept reference images/],
     [{ model: "bytedance/seedance-2.0", reference_image_urls: Array(10).fill(IMG) }, /at most 9 reference images — got 10/],
     [{ model: "bytedance/seedance-2.0-fast", reference_image_urls: Array(10).fill(IMG) }, /at most 9 reference images/],
-    // reference clips: 2.5 takes images but no clips
-    [{ model: "bytedance/seedance-2.5", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
-    [{ model: "bytedance/seedance-2.5", reference_audios: [{ url: AUD }], reference_image_urls: [IMG] }, /2\.5 takes reference IMAGES/],
+    // reference clips: 1.5-pro and the non-Seedance models take none
     [{ model: "bytedance/seedance-1.5-pro", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
+    [{ model: "bytedance/seedance-1.5-pro", reference_audios: [{ url: AUD }], reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
+    [{ model: "azure/sora-2", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
+    // 2.5 still caps clips at 3 of each, and audio still needs visual conditioning
+    [{ model: "bytedance/seedance-2.5", reference_audios: [{ url: AUD }] }, /requires a reference image or video/],
+    [{ model: "bytedance/seedance-2.5", reference_videos: [{ url: VID }], image_url: IMG }, /cannot be combined with frame seeds/],
     [{ model: "xai/grok-imagine-video", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
     // audio needs visual conditioning
     [{ model: "bytedance/seedance-2.0", reference_audios: [{ url: AUD }] }, /requires a reference image or video/],
@@ -368,10 +416,20 @@ test("every capability guard fires for its off-model input, and none reaches the
 test("the accepted twins at each boundary still go through", async () => {
   assert.equal(((await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.0", reference_image_urls: Array(9).fill(IMG) })).reference_image_urls as string[]).length, 9);
   assert.equal(((await bodySentFor({ prompt: "t", model: "bytedance/seedance-2.5", reference_image_urls: Array(30).fill(IMG) })).reference_image_urls as string[]).length, 30);
-  for (const model of ["bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"]) {
+  for (const model of ["bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.5"]) {
     const body = await bodySentFor({ prompt: "t", model, reference_videos: [{ url: VID }], reference_audios: [{ url: AUD }] });
     assert.deepEqual(body.reference_videos, [{ url: VID }], model);
+    assert.deepEqual(body.reference_audios, [{ url: AUD }], model);
   }
+  // 2.5 at its limits: 3 clips of each type beside 30 reference images.
+  const full = await bodySentFor({
+    prompt: "t", model: "bytedance/seedance-2.5", duration_seconds: 30,
+    reference_image_urls: Array(30).fill(IMG),
+    reference_videos: Array(3).fill({ url: VID }), reference_audios: Array(3).fill({ url: AUD }),
+  });
+  assert.equal((full.reference_videos as unknown[]).length, 3);
+  assert.equal((full.reference_audios as unknown[]).length, 3);
+  assert.equal((full.reference_image_urls as unknown[]).length, 30);
   // Every shape that used to need an input_type declaration still goes
   // through; the gateway does the inference now.
   for (const args of [
@@ -515,6 +573,34 @@ test("the reference_videos description gives the real multiple, not the old form
   const d = config.inputSchema.reference_videos.description as string;
   assert.doesNotMatch(d, /triples/);
   assert.match(d, /about 4x/);
+});
+
+test("the schema text names 2.5 for reference clips and gives each family its own ceiling", () => {
+  const { config } = makeHarnessWithConfig();
+  for (const field of ["reference_videos", "reference_audios"] as const) {
+    const d = config.inputSchema[field].description as string;
+    assert.match(d, /2\.5/, field);
+    assert.doesNotMatch(d, /NOT 2\.5/, field);
+    assert.match(d, /15\.2s on the 2\.0 family, 30\.2s on 2\.5/, field);
+  }
+  const desc = config.description as string;
+  assert.doesNotMatch(desc, /no reference VIDEO\/AUDIO/);
+  assert.doesNotMatch(desc, /billed at the 15\.2s ceiling/);
+  assert.match(desc, /30\.2s on 2\.5/);
+});
+
+test("the account rail reserves a 2.5 reference job at the 30.2s ceiling before submitting", async () => {
+  const args = { prompt: "t", model: "bytedance/seedance-2.5", duration_seconds: 5, reference_videos: [{ url: VID }], reference_image_urls: [IMG] };
+  const expected = estimateVideoCost("bytedance/seedance-2.5", 5, undefined, { videos: 1 });
+  const h = makeHarness();
+  h.budget.limit = expected - 0.01;
+  const res = await h.call(args);
+  const text = res.content.map((c: any) => c.text).join("\n");
+  assert.equal(res.isError, true, "a budget below the 30.2s-ceiling price must refuse a 2.5 reference job");
+  assert.doesNotMatch(text, /NETWORK_ESCAPE/);
+  const shown = /next call estimated \$([\d.]+)/.exec(text);
+  assert.ok(shown, `no estimate in budget message: ${text}`);
+  assert.ok(Math.abs(Number(shown[1]) - expected) < 0.01 && expected > 11, `reserved ${shown[1]}, expected ~${expected}`);
 });
 
 test("2.5 first-and-last-frame is refused by name on the Solana wallet rail, and only there", async () => {
