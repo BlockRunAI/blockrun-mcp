@@ -23,9 +23,10 @@ import {
   DEFAULT_CHAT_PRICE,
   FREE_CHAT_MODELS,
   canonicalChatModel,
-  TIER_WORST_PRICE,
   GATEWAY_CHARS_PER_TOKEN,
   GATEWAY_CHARS_PER_TOKEN_OBSERVED,
+  chatRateAt,
+  tierWorstPriceAt,
   type RoutingMode,
 } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
@@ -176,12 +177,23 @@ export function estimateChatCost(
   // table (src/tools/modal.ts) and it was reintroduced here the moment these
   // tables were added; measured before the guard: model:"constructor",
   // "toString", "__proto__", "hasOwnProperty" and "valueOf" all reserved $0.
+  //
+  // Long-context steps: past a model's threshold the gateway quotes the WHOLE
+  // request at the step's rates (2x input / 1.5x output on GPT-6 and GPT-5.4+
+  // above 272K, 2x on Grok from 200K, 2x/1.5x on Gemini Pro above 200K). The
+  // step is picked from the same 2-chars/token count the input term uses, so
+  // this stays a pure function of prompt size — and it rounds toward the step,
+  // the safe side. See LONG_CONTEXT_PRICE_PER_MTOKEN.
   const effectiveMode = (mode ?? "balanced") as RoutingMode;
-  const rate = canonical
-    ? (Object.hasOwn(CHAT_PRICE_PER_MTOKEN, canonical) ? CHAT_PRICE_PER_MTOKEN[canonical] : DEFAULT_CHAT_PRICE)
-    : (Object.hasOwn(TIER_WORST_PRICE, effectiveMode) ? TIER_WORST_PRICE[effectiveMode] : DEFAULT_CHAT_PRICE);
-
   const inTokens = Math.ceil((promptChars ?? 0) / GATEWAY_CHARS_PER_TOKEN);
+  const rate = canonical
+    ? chatRateAt(
+        canonical,
+        Object.hasOwn(CHAT_PRICE_PER_MTOKEN, canonical) ? CHAT_PRICE_PER_MTOKEN[canonical] : DEFAULT_CHAT_PRICE,
+        inTokens,
+      )
+    : (Object.hasOwn(MODEL_TIERS, effectiveMode) ? tierWorstPriceAt(effectiveMode, inTokens) : DEFAULT_CHAT_PRICE);
+
   // Rounded to micro-dollars because the raw float drifts — (1024/1e6)*20 is
   // 0.020479999999999998, which then surfaces verbatim in budget messages.
   const micro = (usd: number) => Math.round(usd * 1e6) / 1e6;
@@ -227,10 +239,13 @@ export function accountLedgerUsd(
   const requested = canonicalChatModel(requestedModel);
   if (FREE_CHAT_MODELS.has(requested)) return 0;
   const served = servedModel ? canonicalChatModel(servedModel) : null;
-  const rate = served && Object.hasOwn(CHAT_PRICE_PER_MTOKEN, served) ? CHAT_PRICE_PER_MTOKEN[served]
-    : Object.hasOwn(CHAT_PRICE_PER_MTOKEN, requested) ? CHAT_PRICE_PER_MTOKEN[requested]
-    : DEFAULT_CHAT_PRICE;
+  const priced = served && Object.hasOwn(CHAT_PRICE_PER_MTOKEN, served) ? served
+    : Object.hasOwn(CHAT_PRICE_PER_MTOKEN, requested) ? requested
+    : null;
   const inTokens = usage?.promptTokens ?? Math.ceil(promptChars / GATEWAY_CHARS_PER_TOKEN_OBSERVED);
+  // The long-context step of whichever model the rate came from (the requested
+  // one when neither has a row), at the prompt's own token count.
+  const rate = chatRateAt(priced ?? requested, priced ? CHAT_PRICE_PER_MTOKEN[priced] : DEFAULT_CHAT_PRICE, inTokens);
   const outTokens = usage?.completionTokens ?? maxTokens;
   const usd = (inTokens / 1_000_000) * rate.input + (outTokens / 1_000_000) * rate.output;
   // Whole micro-dollars, rounded up as the gateway bills; the epsilon keeps a
