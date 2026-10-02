@@ -293,7 +293,7 @@ const PROBES: Probe[] = [
   // drift apart are invisible until an invoice says otherwise.
   ...([
     ["powerful", "openai/gpt-5.4-pro"],
-    ["reasoning", "openai/gpt-5.6-sol"],
+    ["reasoning", "anthropic/claude-opus-5"], // gpt-5.6-sol cut to $4/$20 2026-08-21
     ["coding", "anthropic/claude-opus-5"],
     ["fast", "google/gemini-3.5-flash"],
     ["glm", "zai/glm-5.2"],

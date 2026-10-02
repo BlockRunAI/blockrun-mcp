@@ -49,17 +49,27 @@ const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> 
   [undefined, "openai/gpt-5.2-pro", 1.026640],
   [undefined, "openai/o1", 0.727420],
   [undefined, "anthropic/claude-fable-5", 0.486310],
-  [undefined, "openai/gpt-5.6-sol", 0.244171],
+  [undefined, "openai/gpt-5.6-sol", 0.195125], // cut to $4/$20 2026-08-21; re-probed 2026-10-02
   [undefined, "anthropic/claude-opus-5", 0.243655],
   [undefined, "openai/gpt-5.6-terra", 0.098269],
   [undefined, "google/gemini-3.5-flash", 0.073951],
   [undefined, "zai/glm-5", 0.049346],
   [undefined, "deepseek/deepseek-v4-pro", 0.064790],
+  // Added 2026-10-02 (live 402, same prompt).
+  [undefined, "openai/gpt-6-astra", 0.486310],
+  [undefined, "openai/gpt-6-sol", 0.098063],
+  [undefined, "openai/gpt-6-luna", 0.005854],
+  [undefined, "openai/gpt-5.1", 0.062051],
+  [undefined, "anthropic/claude-fable-5.1", 0.486310],
+  [undefined, "anthropic/claude-opus-5.5", 0.195125],
+  [undefined, "anthropic/claude-sonnet-5.5", 0.098063],
+  [undefined, "xai/grok-4.6", 0.097650],
+  [undefined, "xai/grok-4.7", 0.097650],
   // Tier routing: the charge is that of the member the loop settles on, so each
   // tier is pinned against its most expensive member's live quote.
   ["powerful", undefined, 1.460020],   // gpt-5.4-pro
   ["balanced", undefined, 0.244171],   // gpt-5.5
-  ["reasoning", undefined, 0.243655],  // gpt-5.6-sol / opus-5
+  ["reasoning", undefined, 0.243655],  // opus-5
   ["coding", undefined, 0.243655],     // claude-opus-5
   ["fast", undefined, 0.073951],       // gemini-3.5-flash
   ["glm", undefined, 0.049346],        // glm-5.x
@@ -98,7 +108,9 @@ test("estimateChatCost prices an unknown model at the catalog ceiling, not a gue
   // (seven as of 2026-09-08 — `npm run verify:prices` sweeps the live catalogue
   // and fails the moment an eighth appears without a row).
   const unknown = estimateChatCost(1024, undefined, "someone/brand-new-model", undefined, 100_000);
-  assert.equal(unknown, estimateChatCost(1024, undefined, "openai/gpt-5.6-sol", undefined, 100_000));
+  // gpt-5.5 sits exactly at the $5/$30 ceiling (gpt-5.6-sol did until its
+  // 2026-08-21 cut to $4/$20).
+  assert.equal(unknown, estimateChatCost(1024, undefined, "openai/gpt-5.5", undefined, 100_000));
   assert.ok(unknown >= 0.244171);
 });
 
@@ -434,6 +446,8 @@ test("anthropicCallCost normalises the gateway's echo to the catalogue key and n
     ["claude-sonnet-4.6-20260301", "anthropic/claude-sonnet-4.6"],
     ["claude-opus-5-20260101", "anthropic/claude-opus-5"],
     ["anthropic/claude-opus-5", "anthropic/claude-opus-5"],
+    ["claude-opus-5-5", "anthropic/claude-opus-5.5"],
+    ["claude-sonnet-5-5-20261001", "anthropic/claude-sonnet-5.5"],
   ];
   for (const [echo, key] of ECHOES) {
     const booked = anthropicCallCost(echo, 100_000, 1024);
@@ -445,7 +459,7 @@ test("anthropicCallCost normalises the gateway's echo to the catalogue key and n
   // A sibling with NO row returns null — the estimate fallback — rather than
   // borrowing its major version's rate. This is the mechanism that would have
   // let claude-fable-5.1 book fable-5's row before it had one of its own.
-  for (const unlisted of ["claude-sonnet-5-1", "claude-sonnet-5.1", "claude-fable-5-2", "claude-opus-5-5-20270101", "claude-opus-5x", "claude-does-not-exist"]) {
+  for (const unlisted of ["claude-sonnet-5-1", "claude-sonnet-5.1", "claude-fable-5-2", "claude-opus-5-6-20270101", "claude-opus-5x", "claude-does-not-exist"]) {
     assert.equal(anthropicCallCost(unlisted, 100_000, 1024), null, `${unlisted} has no row and must not borrow one`);
   }
 });

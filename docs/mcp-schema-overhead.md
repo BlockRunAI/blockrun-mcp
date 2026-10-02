@@ -16,11 +16,11 @@ Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0. Numbers
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,011 |
+| `full` *(default)* | 19 | 14,014 |
 | `trading` | 8 | 5,411 |
 | `media` | 7 | 6,795 |
-| `research` | 5 | 2,752 |
-| `chat` | 3 | 2,079 |
+| `research` | 5 | 2,755 |
+| `chat` | 3 | 2,082 |
 
 Descriptions are ~54% of it, input schemas ~42%. `--profile trading` costs 61% less than the
 default for the same workflow.

@@ -38,12 +38,15 @@ export const BASE_RPC_URLS = [
 //   presence in the catalogue is NECESSARY BUT NOT SUFFICIENT for health;
 //   absence from it is NOT SUFFICIENT for death — probe before deleting.
 //
-// OpenAI (28): gpt-6-astra ($10/$50, 1M — the GPT-6 flagship; listed by
+// OpenAI (31): gpt-6-astra ($10/$50, 1M — the GPT-6 flagship; listed by
 //   2026-09-08 ABOVE the $5/$30 default, so it carries a CHAT_PRICE_PER_MTOKEN
-//   row), gpt-5.6-sol ($5/$30, 1M, deepest reasoning), gpt-5.6-terra
+//   row), gpt-6-sol ($2/$10, 1M — the cost-efficient GPT-6 tier), gpt-6-luna
+//   ($0.1/$0.5, 1M — fast, low-cost GPT-6); all three GPT-6 bill input 2x and
+//   output 1.5x past 272K input; gpt-5.1 ($1.25/$10, 400K). gpt-5.6-sol ($4/$20, 1M, deepest
+//   reasoning; CUT from $5/$30 on 2026-08-21), gpt-5.6-terra
 //   ($2/$12, 1M — the balanced default; CUT from $2.5/$15), gpt-5.6-luna
 //   ($0.2/$1.2, 1M, no reasoning; CUT from $1/$6), plus the 2026-08 "pro
-//   reasoning mode" trio: gpt-5.6-sol-pro ($5/$30), gpt-5.6-terra-pro ($1/$6 —
+//   reasoning mode" trio: gpt-5.6-sol-pro ($4/$20), gpt-5.6-terra-pro ($1/$6 —
 //   deliberately HALF the standard Terra rate, per the gateway registry, not a
 //   pricing bug), gpt-5.6-luna-pro ($0.1/$0.6). gpt-5.5 ($5/$30), gpt-5.5-pro
 //   ($30/$180 — ties gpt-5.4-pro for priciest model served), chat-latest
@@ -52,9 +55,11 @@ export const BASE_RPC_URLS = [
 //   gpt-5.3-codex ($1.75/$14), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
 //   o1 ($15/$60), o3 ($2/$8), o3-mini, o4-mini
-// Anthropic (10): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
-//   the default, so it carries a price row), claude-opus-5 ($5/$25, 1M, 128k out — newest Opus,
-//   step-change over 4.8 at the same price; live-probed 2026-08-12),
+// Anthropic (12): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
+//   the default, so it carries a price row), claude-opus-5.5 ($4/$20, 1M, 128k
+//   out — newest Opus, cheaper than Opus 5, thinking always on),
+//   claude-sonnet-5.5 ($2/$10, 1M, 128k out — newest Sonnet), claude-opus-5
+//   ($5/$25, 1M, 128k out; live-probed 2026-08-12),
 //   claude-opus-4.8 ($5/$25, 1M), claude-fable-5 ($10/$50, 1M),
 //   claude-opus-4.7 ($5/$25, 1M), claude-sonnet-5 ($2/$10, 1M — CUT from
 //   $3/$15; both gateways 2026-09-08. On the native path the price row IS the
@@ -74,7 +79,9 @@ export const BASE_RPC_URLS = [
 // ZAI (4): glm-5.2 ($1.4/$4.4, 1M), glm-5.1 ($1.4/$4.4), glm-5 ($1/$3.2 —
 //   Z.AI RAISED the list rate; still the cheapest ZAI, but no longer a
 //   cheap-tier pick), glm-5-turbo ($1.2/$4)
-// xAI (3): grok-4.5 ($2/$6, 500K, native search), grok-4.3 ($1.25/$2.5, 1M),
+// xAI (5): grok-4.7 ($2/$6, 500K, vision, always-on reasoning), grok-4.6
+//   ($2/$6, 500K), grok-4.5 ($2/$6, 500K) — all three 2x at >=200K input and
+//   native Live Search; grok-4.3 ($1.25/$2.5, 1M),
 //   grok-build-0.1 ($1/$2, coding)
 // MiniMax (2): minimax-m3 ($0.3/$1.2, 1M), minimax-m2.7 ($0.3/$1.2, 200K)
 // Qwen (3): qwen3.7-max ($1.475/$4.425, 1M), qwen3.7-plus ($0.32/$1.28, 1M),
@@ -310,6 +317,7 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // rate instead of the $5/$30 worst case, which would price a qwen3.7-flash
   // call like a frontier one and lock small budgets out of the cheap path.
   "anthropic/claude-opus-5": { input: 5, output: 25 },
+  "anthropic/claude-opus-5.5": { input: 4, output: 20 },
   "anthropic/claude-opus-4.8": { input: 5, output: 25 },
   "anthropic/claude-opus-4.7": { input: 5, output: 25 },
   "anthropic/claude-opus-4.5": { input: 5, output: 25 },
@@ -319,6 +327,7 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // over-books budget.spent (1.5x here) and trips caps early. The catalogue
   // sweep fails on an anthropic/* row above the Base rate for this reason.
   "anthropic/claude-sonnet-5": { input: 2, output: 10 },
+  "anthropic/claude-sonnet-5.5": { input: 2, output: 10 },
   // The rest of the Anthropic family: in no tier, but every one of them is
   // reachable as an explicit `model` — and that path goes to the NATIVE
   // /v1/messages endpoint, where this table is also what reconstructs the ledger
@@ -326,12 +335,16 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "anthropic/claude-sonnet-4.6": { input: 3, output: 15 },
   "anthropic/claude-sonnet-4.5": { input: 3, output: 15 },
   "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
-  "openai/gpt-5.6-sol": { input: 5, output: 30 },
+  // CUT from $5/$30 on 2026-08-21 (both gateways and the account sheet).
+  "openai/gpt-5.6-sol": { input: 4, output: 20 },
   "openai/gpt-5.5": { input: 5, output: 30 },
   "openai/gpt-5.6-terra": { input: 2, output: 12 },
+  "openai/gpt-6-sol": { input: 2, output: 10 },
+  "openai/gpt-5.1": { input: 1.25, output: 10 },
   "openai/gpt-5.3-codex": { input: 1.75, output: 14 },
   "openai/gpt-5-mini": { input: 0.25, output: 2 },
   "openai/gpt-5.6-luna": { input: 0.2, output: 1.2 },
+  "openai/gpt-6-luna": { input: 0.1, output: 0.5 },
   "openai/gpt-5.4-nano": { input: 0.2, output: 1.25 },
   "google/gemini-3.1-pro": { input: 2, output: 12 },
   "google/gemini-3.5-flash": { input: 1.5, output: 9 },
@@ -339,6 +352,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "moonshot/kimi-k3": { input: 3, output: 15 },
+  "xai/grok-4.7": { input: 2, output: 6 },
+  "xai/grok-4.6": { input: 2, output: 6 },
   "xai/grok-4.5": { input: 2, output: 6 },
   "xai/grok-4.3": { input: 1.25, output: 2.5 },
   "xai/grok-build-0.1": { input: 1, output: 2 },
