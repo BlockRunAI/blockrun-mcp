@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.54.0
 
 ### Fixed — seedance-2.5 takes reference clips; the clip ceiling is per model
 
@@ -24,6 +24,28 @@ model's ceiling for it.
 Rail rules are unchanged: both wallet gateways (`blockrun.ai`,
 `sol.blockrun.ai`) still refuse every reference field with a 400 before
 quoting, so reference media stays account-rail only, 2.5 included.
+
+### Added — price rows for the new chat models
+
+`blockrun_chat` now prices gpt-6-sol, gpt-6-luna, gpt-5.1, claude-opus-5.5,
+claude-sonnet-5.5, grok-4.6 and grok-4.7 from the live `/v1/models` (#163). On
+the native Anthropic path the row is the ledger, so opus/sonnet-5.5 previously
+booked nothing. gpt-5.6-sol is repriced from $5/$30 to $4/$20 per million
+tokens (cut 2026-08-21).
+
+### Fixed — huge prompts reserve at the long-context price
+
+Past a model's `pricing.long_context` threshold the gateway reprices the whole
+request, but the chat estimate reserved at base rates, so a huge prompt
+under-reserved (gpt-6-astra over 272K tokens reserved $10/$50 against a $20/$75
+quote). The estimate and the account ledger now use the highest long-context
+step the prompt reaches, copied from the live `/v1/models` (#165).
+`verify:prices` fails when a live step would settle above the reserve.
+
+### Fixed — retired tencent/hy3 dropped from the cheap tier
+
+Hy3 retired on 2026-09-24 and the gateway redirects it to qwen3.7-flash, which
+is already in the cheap chain (#164).
 
 ## 0.53.1
 
