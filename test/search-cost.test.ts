@@ -4,71 +4,47 @@ import assert from "node:assert/strict";
 import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateExaCost } from "../src/tools/exa.js";
 
-// blockrun_search is the most expensive tool per call in the server — priced per
-// SOURCE, so a default call settles ~$0.26 while most tools cost $0.001. The gate
-// can only stop a looping agent if the reserve is >= what the gateway settles.
+// blockrun_search is one flat price per call. These are what x402 ACTUALLY
+// charges — the `amount` in a live 402's payment requirement (free to request:
+// send any call with no payment header). Captured 2026-10-06 on Base:
+// 81000 micro-USDC at max_results 1, 10 and 50 alike; Solana quoted 80000.
 //
-// These are what x402 ACTUALLY charges — `maxAmountRequired` decoded from the
-// base64 `payment-required` header on a live 402 (free to request: send any call
-// with no payment header). Captured 2026-07-15.
-//
-// They are NOT the 402's JSON `price` field. That field is the BASE, and the
-// charge is base + a $0.002 flat transaction fee:
-//
-//   max_results   body price   header (CHARGED)   <- pin the RIGHT column
-//   1             $0.0263      $0.0283
-//   5             $0.1313      $0.1333
-//   10            $0.2625      $0.2645
-//   20            $0.5250      $0.5270
-//   50            $1.3125      $1.3145
-//
-// 0.30.10 pinned the body column and shipped a gate that was $0.002 short on
-// every search. If the fee or the buffer moves, these fail — which is the point.
-const CHARGED: Array<[number, number]> = [
-  [1, 0.0283],
-  [5, 0.1333],
-  [10, 0.2645],
-  [20, 0.527],
-  [50, 1.3145],
-];
+// The gate can only stop a looping agent if the reserve is >= the charge, and
+// it must not over-reserve by much or it blocks calls a budget can afford —
+// the old $0.025 x max_results reserve did exactly that, 16x at 50 sources.
+const CHARGED_BASE_USD = 0.081;
+const SIZES = [1, 5, 10, 20, 50];
 
-test("estimateSearchCost reserves at least what x402 actually charges (header, not body)", () => {
-  for (const [max, quoted] of CHARGED) {
+test("estimateSearchCost reserves at least what x402 actually charges, at every size", () => {
+  for (const max of SIZES) {
     const reserved = estimateSearchCost({ query: "x", max_results: max });
     assert.ok(
-      reserved >= quoted - 1e-6,
-      `max_results=${max}: reserved $${reserved} < charged $${quoted} — the gate would under-reserve`,
+      reserved >= CHARGED_BASE_USD - 1e-6,
+      `max_results=${max}: reserved $${reserved} < charged $${CHARGED_BASE_USD} — the gate would under-reserve`,
     );
   }
 });
 
 test("estimateSearchCost does not over-reserve by more than a cent", () => {
-  // Reserving wildly high would block calls a budget could actually afford.
-  for (const [max, quoted] of CHARGED) {
+  for (const max of SIZES) {
     const reserved = estimateSearchCost({ query: "x", max_results: max });
-    assert.ok(reserved - quoted < 0.01, `max_results=${max}: reserved $${reserved} vs gateway $${quoted}`);
+    assert.ok(reserved - CHARGED_BASE_USD < 0.01, `max_results=${max}: reserved $${reserved} vs gateway $${CHARGED_BASE_USD}`);
   }
 });
 
-test("estimateSearchCost defaults to the 10-source price when max_results is absent", () => {
-  // Upstream defaults to 10. Reserving less than that on a bare { query } — the
-  // most common call shape — would let every default search skip the gate.
-  assert.ok(estimateSearchCost({ query: "x" }) >= 0.2645 - 1e-6);
-  assert.ok(estimateSearchCost(undefined) >= 0.2645 - 1e-6);
-  assert.ok(estimateSearchCost("not an object") >= 0.2645 - 1e-6);
+test("estimateSearchCost is flat: max_results never changes the reserve", () => {
+  const flat = estimateSearchCost({ query: "x" });
+  for (const body of [undefined, "not an object", { max_results: 1 }, { max_results: 50 }, { max_results: 999 }]) {
+    assert.equal(estimateSearchCost(body), flat);
+  }
 });
 
-test("estimateSearchCost caps at 50 sources, matching the upstream ceiling", () => {
-  assert.equal(estimateSearchCost({ max_results: 999 }), estimateSearchCost({ max_results: 50 }));
-});
-
-test("estimateSearchCost ignores garbage max_results instead of reserving $0", () => {
-  // A $0 reserve is a gate bypass: it would authorize a ~$0.26 call against an
-  // exhausted budget.
+test("estimateSearchCost never reserves $0 on garbage max_results", () => {
+  // A $0 reserve is a gate bypass.
   for (const bad of [0, -5, "10", null, NaN, {}]) {
     assert.ok(
-      estimateSearchCost({ max_results: bad }) >= 0.2645 - 1e-6,
-      `max_results=${JSON.stringify(bad)} fell back below the default reserve`,
+      estimateSearchCost({ max_results: bad }) >= CHARGED_BASE_USD - 1e-6,
+      `max_results=${JSON.stringify(bad)} fell below the charge`,
     );
   }
 });

@@ -70,7 +70,7 @@ not; route the question with the table below.
 | Polymarket / Kalshi markets, prices, positions | `prediction-market/*`, `search/polymarket`, `search/kalshi` | `blockrun_markets` — see [`skills/prediction-markets/SKILL.md`](../prediction-markets/SKILL.md) | $0.0075 + fee |
 | Who is this Polymarket wallet, and which wallets are theirs | `wallet/detail`, `wallet/labels/batch` (for Polymarket traders only) | `blockrun_markets` `polymarket/wallet/identity/{wallet}` + `polymarket/wallet/{address}/cluster` | $0.0075 + fee |
 | Gas price, a transaction, a balance, a contract read | `onchain/gas-price`, `onchain/tx` | `blockrun_rpc` (`eth_gasPrice`, `eth_getTransactionByHash`, `eth_getBalance`, `eth_call`) — see [`skills/rpc/SKILL.md`](../rpc/SKILL.md) | $0.002 + fee |
-| Web / news search | `search/web`, `search/news`, `news/feed` | `blockrun_exa` (neural) or `blockrun_search` (Grok Live Search, web + X + news) | $0.01 + fee / $0.025 × results |
+| Web / news search | `search/web`, `search/news`, `news/feed` | `blockrun_exa` (neural) or `blockrun_search` (Grok Live Search, web + X + news) | $0.01 + fee / $0.08 + fee |
 
 "fee" is the gateway's flat network fee — $0.001 per call on Base today; the
 Solana gateway quotes the base alone; the account rail charges no fee.

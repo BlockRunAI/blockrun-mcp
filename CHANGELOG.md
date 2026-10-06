@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.54.1
+
+### Fixed — `blockrun_search` is one flat price, and the tool said otherwise
+
+The gateway repriced `/v1/search` to a flat $0.08 per call on 2026-09-29
+(blockrun `SEARCH_PRICE_PER_CALL_USD`: xAI never sees `max_results`, so the
+count never drove cost). This server kept reserving and advertising
+`$0.025 × max_results`: the default call reserved $0.2645 against a $0.081
+charge (3×), a 50-source call $1.3145 (16×), and the description told every
+agent search was "expensive by default" and to ask for fewer sources.
+
+Live 402 quotes, 2026-10-06: Base `amount` 81000 and Solana 80000 at
+`max_results` 1, 10 and 50 alike. The reserve is now `withTxFee($0.08)` =
+$0.082 at any size, never below the charge; `test/search-cost.test.ts` pins
+it flat. Tool description, `skills/search`, `skills/blockrun`, `skills/surf`
+and the README price row now say $0.08 flat; the full/research schema-token
+rows moved with the shorter description (14,018 / 2,727).
+
 ## 0.54.0
 
 ### Fixed — seedance-2.5 takes reference clips; the clip ceiling is per model
