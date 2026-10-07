@@ -103,7 +103,7 @@ Deeper wallet, budget and x402 mechanics — including calling the HTTP API dire
 | Video of one *specific* real person | `blockrun_realface` | Enroll a face, then pass `real_face_asset_id` to `blockrun_video` |
 | Make music | `blockrun_music` | Full-length tracks |
 | Speak text aloud | `blockrun_speech` | Also sound effects |
-| "What just happened" — news, live web | `blockrun_search` | Freshest; priced per source |
+| "What just happened" — news, live web | `blockrun_search` | Freshest; flat $0.08 per call |
 | Research, papers, competitors, page contents | `blockrun_exa` | Semantic, not keyword |
 | Event odds, betting markets | `blockrun_markets` | Reading only |
 | Polymarket positions, open orders, order preview | `blockrun_polymarket_read` | Reads and previews only — structurally cannot sign |
