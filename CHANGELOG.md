@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.54.2
+
+### Changed — the `decide` skill now teaches Decisions; OpenJev is retired
+
+BlockRun replaced OpenJev (its self-hosted NLI judgment model) with an OpenAI
+Decisions-compatible endpoint served by `gpt-6-luna` on 2026-10-07. The skill
+taught `api.blockrun.ai/v1/decide` with the `state` / `noul` / `criteria`
+shape and explained OpenJev's normalised scores, none of which describe what
+answers now.
+
+`skills/decide` now covers `POST /v1/decisions`: `input` + `questions` as an
+array, `predicate` / `choice` (`choices`) / `score` (`levels`), image input,
+and both rails — free with a key at `api.blockrun.ai`, or x402 at
+`blockrun.ai/api/v1/decisions` (input tokens at $0.10 per 1M, at least $0.001
+a call plus the fee). The example response is a live call. The old `/v1/decide`
+shape is still accepted and is named as legacy. Still a skill, not a tool, for
+the reason 0.52.0 gave. `skills/blockrun` and the marketplace entry point at
+the new path.
+
 ## 0.54.1
 
 ### Fixed — `blockrun_search` is one flat price, and the tool said otherwise

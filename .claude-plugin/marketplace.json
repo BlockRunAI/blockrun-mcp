@@ -88,7 +88,7 @@
     {
       "name": "decide",
       "source": "./skills/decide",
-      "description": "Use when the user wants to try BlockRun's free typed-judgment endpoint (POST api.blockrun.ai/v1/decide, served by OpenJev) on their own data — yes/no, labelled choice, or scored-rung questions over a text or JSON state. Not an MCP tool; called with curl. Explains what the confidence number means and why OpenJev is not Jev."
+      "description": "Use when the user wants typed judgments over their own data — yes/no probabilities, a labelled choice, or a rubric score over text or images. BlockRun Decisions (OpenAI Decisions-compatible, gpt-6-luna): free with a key at api.blockrun.ai/v1/decisions or paid per call over x402. Not an MCP tool; called with curl."
     }
   ]
 }
