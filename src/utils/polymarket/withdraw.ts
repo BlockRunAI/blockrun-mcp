@@ -19,7 +19,7 @@
 // wrapped to pUSD through the collateral onramp first (sweep design from
 // @KillerQueen-Z's #59/#66, tracked in #71).
 import axios from "axios";
-import { encodeFunctionData, formatUnits, http, createWalletClient, isAddress, type Hex } from "viem";
+import { encodeFunctionData, formatUnits, http, createWalletClient, isAddress, keccak256, type Hex } from "viem";
 import { polygon } from "viem/chains";
 import {
   BASE_CHAIN_ID,
@@ -116,6 +116,141 @@ async function readPusdUntil(owner: Hex, minimum: bigint): Promise<bigint> {
   return observed;
 }
 
+// RPC rejections that prove a node refused (and so never relayed) a raw
+// transaction. "already known" is deliberately absent: it means the node HAS
+// the transaction. So is "nonce too low": nonce movement is not evidence about
+// which transaction used the nonce — ours may be the one that did.
+const DEFINITE_BROADCAST_REJECTION =
+  /insufficient funds|intrinsic gas too low|max fee per gas less than block base fee|transaction underpriced|invalid sender/i;
+
+/** True when the node refused the raw transaction outright. Exported for tests. */
+export function isDefiniteBroadcastRejection(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    const msg = e instanceof Error ? `${e.message} ${(e as { details?: string }).details ?? ""}` : String(e);
+    if (DEFINITE_BROADCAST_REJECTION.test(msg)) return true;
+  }
+  return false;
+}
+
+/** True unless the RPC positively reports the hash as unknown. Read errors count as known (fail closed). */
+async function transactionKnown(hash: Hex): Promise<boolean> {
+  try {
+    await getPublicClient().getTransaction({ hash });
+    return true;
+  } catch (err) {
+    return !(err instanceof Error && err.name === "TransactionNotFoundError");
+  }
+}
+
+/** The receipt's status, or null when there is none yet (or it could not be read). */
+async function receiptStatus(hash: Hex): Promise<"success" | "reverted" | null> {
+  const receipt = await getPublicClient().getTransactionReceipt({ hash }).catch(() => null);
+  if (!receipt) return null;
+  return receipt.status === "success" ? "success" : "reverted";
+}
+
+type PendingWithdraw = NonNullable<ReturnType<typeof loadState>["pendingWithdraw"]>;
+
+/** The relayer can mine right at the deadline; don't race it. */
+const PENDING_GRACE_SECS = 60;
+
+/**
+ * What became of an earlier withdrawal: either a `resolution` to report (the
+ * caller clears the guard and ends the call), or a `blocked` message while it
+ * may still land.
+ *
+ * Only a receipt resolves an EOA withdrawal. An advanced account nonce plus an
+ * RPC that does not know the hash proves nothing — the RPC may lag, or ours
+ * may be the transaction that used the nonce — so neither is read as
+ * "dropped", and no deadline applies. While unresolved, the same signed bytes
+ * are re-broadcast; a fresh signature is never made.
+ */
+async function resolvePendingWithdraw(pending: PendingWithdraw): Promise<{ resolution?: string; blocked?: string }> {
+  const now = Math.floor(Date.now() / 1000);
+  const windowOpen = now < pending.deadline + PENDING_GRACE_SECS;
+  const id = pending.transactionID;
+
+  if (id.startsWith("eoa:")) {
+    const hash = id.slice(4) as Hex;
+    const status = await receiptStatus(hash);
+    if (status === "success") return { resolution: `The previous withdrawal SETTLED on-chain (tx ${hash}).` };
+    if (status === "reverted") return { resolution: `The previous withdrawal REVERTED on-chain (tx ${hash}); no pUSD moved.` };
+    if (pending.serializedTransaction) {
+      const account = getPolymarketAccount();
+      const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
+      await wallet.sendRawTransaction({ serializedTransaction: pending.serializedTransaction as Hex }).catch(() => undefined);
+      return {
+        blocked: `A previous withdrawal (tx ${hash}${pending.nonce !== undefined ? `, nonce ${pending.nonce}` : ""}) has no ` +
+          `receipt yet and may still land — it was re-broadcast as the SAME signed transaction, so it can execute at ` +
+          `most once. Signing another one now could double-send. Do not retry; check again in a few minutes. ` +
+          `(If Polygonscan shows that nonce was used by a different transaction, this one can never execute and the ` +
+          `user can remove "pendingWithdraw" from ~/.blockrun/.polymarket.json.)`,
+      };
+    }
+    // Recorded by an earlier version, without the signed bytes: nothing to
+    // re-broadcast. Block while the node still knows the transaction or the
+    // old window is open; after that, report it as unknown rather than safe.
+    if (windowOpen || (await transactionKnown(hash))) {
+      return {
+        blocked: `A previous withdrawal (tx ${hash}) has no receipt yet and may still land. Signing another one now ` +
+          `could double-send. Do not retry; check again in a few minutes.`,
+      };
+    }
+    return {
+      resolution: `The previous withdrawal (tx ${hash}) never produced a receipt and the RPC no longer knows it. ` +
+        `It most likely did not execute, but that is not proven.`,
+    };
+  }
+
+  if (id === "eoa" || id === "unknown") {
+    // No hash and no relayer id: the send never answered (bare "eoa", from an
+    // earlier version) or the relayer's response was lost ("unknown", see
+    // relayer.ts sendWalletBatch). There is nothing to look up.
+    if (windowOpen) {
+      const waitSecs = pending.deadline + PENDING_GRACE_SECS - now;
+      return {
+        blocked: `A previous withdrawal (${id === "unknown" ? "relayer tx unknown — the submit response was lost" : "EOA transfer, send never answered"}) ` +
+          `may still execute for up to ~${waitSecs}s more. Signing another one now could double-send. Re-run after ` +
+          `that window, when the balance reads will show what happened.`,
+      };
+    }
+    return {
+      resolution: `The previous withdrawal's outcome was never confirmed and its window has passed. ` +
+        `It may or may not have executed.`,
+    };
+  }
+
+  const state = await getRelayerTransactionState(id);
+  if (state === "STATE_MINED" || state === "STATE_CONFIRMED") {
+    return { resolution: `The previous withdrawal SETTLED (relayer tx ${id}, ${state}).` };
+  }
+  if (state === "STATE_FAILED" || state === "STATE_INVALID") {
+    return { resolution: `The previous withdrawal FAILED (relayer tx ${id}, ${state}); no pUSD moved.` };
+  }
+  if (windowOpen) {
+    const waitSecs = pending.deadline + PENDING_GRACE_SECS - now;
+    return {
+      blocked: `A previous withdrawal (relayer tx ${id}, state: ${state ?? "unreachable"}) may still execute — its ` +
+        `signed transfer stays valid for up to ~${waitSecs}s more. Signing another one now could double-send. ` +
+        `Re-run after that window, when the balance reads will show what happened.`,
+    };
+  }
+  // Deadline long past: the batch can no longer execute, but it may already
+  // have, so this is not proof that nothing moved.
+  return {
+    resolution: `The previous withdrawal's signature expired (relayer tx ${id}, state: ${state ?? "unreachable"}). ` +
+      `It may or may not have executed before its deadline.`,
+  };
+}
+
+function eoaOutcomeUnknown(txHash: string, msg: string): Error {
+  return new Error(
+    `Withdraw: the pUSD transfer (tx ${txHash}) did not confirm (${msg}). It may still land — a broadcast ` +
+      `transaction is not un-sent by a client timeout. Do NOT start a new withdrawal: calling withdraw again ` +
+      `re-broadcasts this same signed transaction and reports its outcome; it never signs a second one.`,
+  );
+}
+
 const WITHDRAW_GUIDANCE =
   'check the pUSD balance with action:"setup" and the bridge status endpoint before ANY retry — ' +
   "a resubmitted withdrawal signs a SECOND transfer and can double-send";
@@ -155,47 +290,25 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
   const isCustom = recipient.toLowerCase() !== agent.toLowerCase();
 
   try {
-    // Refuse to sign while an earlier withdrawal batch may still land: its
-    // signature stays executable until its deadline, and a second signed
-    // transfer on top of it double-sends (issue #72 finding 1). Resolved
-    // states clear the guard; the balance reads below then reflect reality.
+    // Refuse to sign while an earlier withdrawal may still land: a second
+    // signed transfer on top of it double-sends (issue #72 finding 1).
+    //
+    // Resolving the earlier withdrawal ENDS this call. The retry that finds
+    // the first transfer settled is the same call that would otherwise sign a
+    // second one on top of it — the double-send this guard exists to stop. The
+    // outcome is reported and the guard cleared; another withdrawal needs a
+    // fresh, deliberate call made after the balances have been looked at.
     const pending = loadState().pendingWithdraw;
     if (pending && input.confirm === true) {
-      const graceSec = 60; // relayer can mine right at the deadline; don't race it
-      if (Math.floor(Date.now() / 1000) < pending.deadline + graceSec) {
-        // "unknown" = the relayer never returned an id (submit response lost,
-        // see relayer.ts sendWalletBatch). There is nothing to look up, and the
-        // signed batch may still land — block until the deadline passes.
-        const idUnknown = pending.transactionID === "unknown";
-        // An EOA (sigType 0) withdrawal is a plain Polygon transaction, not a
-        // relayer batch: "eoa:<hash>" is looked up by receipt, a bare "eoa"
-        // (the send itself never answered) blocks until the deadline. Round 4b:
-        // this rail had no guard at all, so a receipt timeout after the
-        // broadcast invited a second full transfer with a fresh nonce.
-        const eoaHash = pending.transactionID.startsWith("eoa:") ? pending.transactionID.slice(4) : undefined;
-        let settled = false;
-        if (eoaHash) {
-          try {
-            const receipt = await getPublicClient().getTransactionReceipt({ hash: eoaHash as Hex });
-            settled = Boolean(receipt);
-          } catch { settled = false; }
-        }
-        const state = idUnknown || pending.transactionID.startsWith("eoa") ? undefined : await getRelayerTransactionState(pending.transactionID);
-        if (settled || state === "STATE_MINED" || state === "STATE_CONFIRMED" || state === "STATE_FAILED" || state === "STATE_INVALID") {
-          saveState({ pendingWithdraw: undefined });
-        } else {
-          const waitSecs = pending.deadline + graceSec - Math.floor(Date.now() / 1000);
-          const stateLabel = idUnknown ? "unknown — the submit response was lost" : (state ?? "unreachable");
-          return {
-            text: `A previous withdrawal (relayer tx ${pending.transactionID}, state: ${stateLabel}) ` +
-              `may still execute — its signed transfer stays valid for up to ~${waitSecs}s more. Signing another ` +
-              `one now could double-send. Re-run after that window, when the balance reads will show what happened.`,
-            isError: true,
-          };
-        }
-      } else {
-        saveState({ pendingWithdraw: undefined }); // deadline long past — expired, safe
-      }
+      const resolved = await resolvePendingWithdraw(pending);
+      if (resolved.blocked) return { text: resolved.blocked, isError: true };
+      saveState({ pendingWithdraw: undefined });
+      return {
+        text: `${resolved.resolution} Nothing new was signed. Check the balances (action:"setup") and the bridge ` +
+          `status before deciding whether ANOTHER withdrawal is wanted; only then call withdraw again.`,
+        isError: true,
+        structured: { previousWithdrawal: resolved.resolution },
+      };
     }
 
     // Withdrawable = pUSD + legacy USDC.e (wrapped on demand below).
@@ -302,14 +415,39 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
     } else {
       const account = getPolymarketAccount();
       const wallet = createWalletClient({ account, chain: polygon, transport: http(POLYGON_WRITE_RPC_URL) });
-      // The same double-send guard the relayer path keeps: armed before the
-      // broadcast (a send that never answers may still have reached the
-      // node), the hash recorded once known, cleared only on a receipt.
-      const eoaDeadline = Math.floor(Date.now() / 1000) + 300;
-      saveState({ pendingWithdraw: { transactionID: "eoa", deadline: eoaDeadline } });
+      // The same double-send guard the relayer path keeps, armed before the
+      // broadcast: a send that never answers may still have reached the node.
+      // The transaction is signed locally first so the record carries its
+      // hash and exact bytes — a retry re-broadcasts THESE bytes (same nonce,
+      // so at most one transfer can execute) instead of signing a second one.
+      // `deadline` is recorded for the shape only; a plain transaction has none.
+      // The nonce comes from the WRITE endpoint (prepareTransactionRequest
+      // asks the wallet's own transport), not the public reader, which can be
+      // a separate provider with its own pending pool. A load-balanced write
+      // URL can still answer from a different backend than the broadcast;
+      // safety does not rest on this — the bytes are persisted first and a
+      // retry re-sends only those.
+      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
+      const nonce = request.nonce;
+      const serializedTransaction = await wallet.signTransaction(request);
+      txHash = keccak256(serializedTransaction);
+      saveState({
+        pendingWithdraw: { transactionID: `eoa:${txHash}`, deadline: Math.floor(Date.now() / 1000), nonce, serializedTransaction },
+      });
       try {
-        txHash = await wallet.sendTransaction({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
-        saveState({ pendingWithdraw: { transactionID: `eoa:${txHash}`, deadline: eoaDeadline } });
+        await wallet.sendRawTransaction({ serializedTransaction });
+      } catch (err) {
+        // Only a node that refused these bytes outright never relayed them,
+        // so only that case releases the guard — and only if the RPC does not
+        // know the hash anyway. A timeout or a 5xx keeps it.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isDefiniteBroadcastRejection(err) && !(await transactionKnown(txHash as Hex))) {
+          saveState({ pendingWithdraw: undefined });
+          throw new Error(`Withdraw: the node rejected the pUSD transfer (${msg}). Nothing was sent.`);
+        }
+        throw eoaOutcomeUnknown(txHash, msg);
+      }
+      try {
         // viem does NOT throw on a reverted tx — it resolves with status:"reverted".
         // Discarding the receipt meant a REVERTED pUSD transfer still printed
         // "✅ Withdrawal submitted … the bridge delivers USDC to Base" with a link
@@ -321,11 +459,7 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
         assertTransactionSucceeded(receipt, "pUSD transfer", txHash);
       } catch (err) {
         if (err instanceof Error && /reverted/i.test(err.message)) throw err; // a receipt was read: definite
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(
-          `Withdraw: the pUSD transfer ${txHash ? `(tx ${txHash}) ` : ""}did not confirm (${msg}). It may still land — ` +
-            `a broadcast transaction is not un-sent by a client timeout. Do NOT retry yet: wait for the guard window to pass, then ${WITHDRAW_GUIDANCE}.`,
-        );
+        throw eoaOutcomeUnknown(txHash, err instanceof Error ? err.message : String(err));
       }
     }
 

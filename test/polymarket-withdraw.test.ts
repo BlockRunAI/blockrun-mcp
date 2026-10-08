@@ -195,24 +195,40 @@ test("an unreachable relayer counts as unresolved — conservative side", async 
   assert.match(res.text, /double-send/);
 });
 
-test("a resolved (mined) in-flight withdrawal clears the guard and proceeds", async () => {
-  pusdRaw = 7_500_000n; usdceRaw = 0n;
-  stateFile = { pendingWithdraw: { transactionID: "relayer-tx-1", deadline: futureDeadline() } };
-  relayerState = "STATE_MINED";
-  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
-  // Proceeding means reaching the bridge POST, which the axios mock fails loudly.
-  assert.equal(res.isError, true);
-  assert.match(res.text, /bridge offline \(test\)/);
-  assert.equal(stateFile.pendingWithdraw, undefined, "guard must be cleared");
-});
+// Resolving the earlier withdrawal ENDS the call: the retry that finds the
+// first transfer settled must not go on to sign a second one on top of it.
+for (const [state, word] of [["STATE_MINED", /SETTLED/], ["STATE_CONFIRMED", /SETTLED/], ["STATE_FAILED", /FAILED/], ["STATE_INVALID", /FAILED/]] as const) {
+  test(`a ${state} earlier withdrawal is reported and the call ends — nothing new is signed`, async () => {
+    pusdRaw = 7_500_000n; usdceRaw = 0n;
+    stateFile = { pendingWithdraw: { transactionID: "relayer-tx-1", deadline: futureDeadline() } };
+    relayerState = state;
+    const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+    assert.equal(res.isError, true);
+    assert.match(res.text, word);
+    assert.match(res.text, /Nothing new was signed/);
+    assert.doesNotMatch(res.text, /bridge offline/, "must not reach the bridge, i.e. must not start a new withdrawal");
+    assert.equal(stateFile.pendingWithdraw, undefined, "guard is cleared so a later, deliberate call can proceed");
+  });
+}
 
-test("an expired deadline clears the guard and proceeds", async () => {
+test("an expired deadline is reported as unknown (not safe) and the call ends", async () => {
   pusdRaw = 7_500_000n; usdceRaw = 0n;
   stateFile = { pendingWithdraw: { transactionID: "relayer-tx-1", deadline: Math.floor(Date.now() / 1000) - 3600 } };
   relayerState = "STATE_NEW";
   const res = await withdrawFunds({ amount_usd: 2, confirm: true });
-  assert.match(res.text, /bridge offline \(test\)/);
+  assert.equal(res.isError, true);
+  assert.match(res.text, /may or may not have executed/);
+  assert.doesNotMatch(res.text, /bridge offline/);
   assert.equal(stateFile.pendingWithdraw, undefined);
+});
+
+test("after the guard is cleared, the next call proceeds normally", async () => {
+  pusdRaw = 7_500_000n; usdceRaw = 0n;
+  stateFile = { pendingWithdraw: { transactionID: "relayer-tx-1", deadline: futureDeadline() } };
+  relayerState = "STATE_MINED";
+  await withdrawFunds({ amount_usd: 2, confirm: true });
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.match(res.text, /bridge offline \(test\)/, "the second, deliberate call reaches the bridge");
 });
 
 test("the guard never blocks dry-runs", async () => {
