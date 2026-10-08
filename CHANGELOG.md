@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.54.2
+
+### Fixed — a withdrawal that may have moved money is never signed twice
+
+**A retry that resolved the earlier withdrawal went on to sign another.** The
+`pendingWithdraw` guard cleared itself when the earlier transfer turned out
+settled (relayer `STATE_MINED`/`STATE_CONFIRMED`, or an EOA receipt) and the
+same `confirm:true` call then signed a fresh transfer on top of it. Resolving
+the earlier withdrawal now ENDS the call: the outcome is reported, nothing new
+is signed, and another withdrawal takes a separate call made after the
+balances have been checked. The same holds for a failed batch and for an
+expired relayer deadline, which is now reported as "may or may not have
+executed" rather than treated as safe.
+
+**The EOA (sigType 0) rail expired a plain transaction after five minutes.**
+A Polygon transaction has no deadline; one that sits in the mempool can be
+mined at any later time. The guard used to block for 300s and then clear,
+after which a retry signed a second transfer with the next nonce, so both
+could land. The transfer is now signed locally first, and its hash, nonce and
+signed bytes are written to the state file before the broadcast. Only a
+receipt resolves it. Until a receipt exists, a retry re-broadcasts those same
+bytes, so the transfer can execute at most once, and no new transaction is
+signed. An advanced account nonce plus an RPC that does not know the hash is
+not read as "dropped". The guard is released before a receipt only when the
+node rejects the bytes outright (insufficient funds, underpriced, intrinsic
+gas, invalid sender) and the RPC does not know the hash. "nonce too low" and
+"already known" keep the guard.
+
+**The relayer withdrawal is recorded before the submit, not only in its
+error handler.** A process killed mid-POST runs no catch block, and the batch
+it posted stays executable until its deadline. A definite 4xx still releases
+the guard.
+
+**HTTP 408 no longer counts as a definite rejection.** `isDefiniteRejection`
+treated every 4xx as proof that nothing was accepted. A 408 means a proxy gave
+up waiting, and the order or batch behind it may have landed. It is now an
+unknown outcome on the CLOB submit, the relayer batch and fund alike, so the
+session reservation is kept.
+
+`test/polymarket-withdraw-eoa.test.ts` and
+`test/polymarket-definite-rejection.test.ts` are new. The withdraw and relayer
+tests pin the new lifecycle. Each fix was checked by reverting it and
+watching its tests fail.
+
 ## 0.54.1
 
 ### Fixed — `blockrun_search` is one flat price, and the tool said otherwise

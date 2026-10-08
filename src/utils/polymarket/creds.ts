@@ -53,8 +53,19 @@ export interface PolymarketState {
    * signature stays executable until `deadline` (unix seconds), so a fresh
    * withdrawal signed before then can DOUBLE-SEND — withdraw refuses to sign
    * while this is set and unresolved. Cleared on confirm/failure.
+   *
+   * An EOA (sigType 0) withdrawal is recorded as `eoa:<hash>` with the signed
+   * bytes, BEFORE the broadcast. A plain transaction has no deadline — it can
+   * be mined at any later time — so `deadline` does not apply to it: only a
+   * receipt resolves it, and until then a retry re-broadcasts the same bytes
+   * (same nonce, so at most one transfer can ever execute).
    */
-  pendingWithdraw?: { transactionID: string; deadline: number };
+  pendingWithdraw?: {
+    transactionID: string;
+    deadline: number;
+    nonce?: number;
+    serializedTransaction?: string;
+  };
   /**
    * A funding call whose gateway response was lost, 5xx, or success:false
    * after the signed EIP-3009 authorization had already been POSTed. The
