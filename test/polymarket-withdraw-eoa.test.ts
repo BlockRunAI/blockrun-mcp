@@ -9,7 +9,10 @@ import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 
 const realViem = await import("viem");
-const realConstants = await import("../src/utils/polymarket/constants.js");
+// The EOA rail. getSigType() reads this at call time; mocking constants.js
+// instead does not take on Node 20 once the module is already loaded.
+process.env.POLYMARKET_SIG_TYPE = "0";
+const { USDCE_COLLATERAL } = await import("../src/utils/polymarket/constants.js");
 
 const DEPOSIT = "0x5d3eaa66AE01F1a907c8e0970D1D021C6Ff8EB26";
 const AGENT = "0xCC8c44AD3dc2A58D841c3EB26131E49b22665EF8";
@@ -68,9 +71,6 @@ mock.module("viem", {
     }),
   },
 });
-mock.module("../src/utils/polymarket/constants.js", {
-  namedExports: { ...realConstants, getSigType: () => 0 },
-});
 mock.module("../src/utils/polymarket/positions.js", {
   namedExports: { getFundsAddress: () => AGENT },
 });
@@ -78,7 +78,7 @@ mock.module("../src/utils/polymarket/setup.js", {
   namedExports: {
     getPublicClient: () => ({
       readContract: async ({ address }: { address: string }) =>
-        address.toLowerCase() === realConstants.USDCE_COLLATERAL.toLowerCase() ? 0n : 7_500_000n,
+        address.toLowerCase() === USDCE_COLLATERAL.toLowerCase() ? 0n : 7_500_000n,
       getTransactionCount: async () => { readerNonceCalls++; return pendingNonce; },
       getTransactionReceipt: async () => {
         if (!receipt) throw new NotFound("TransactionReceiptNotFoundError");
