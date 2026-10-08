@@ -25,6 +25,8 @@ let receipt: { status: "success" | "reverted" } | null = null;
 let waitReceipt: () => Promise<{ status: "success" | "reverted" }> = async () => ({ status: "success" });
 let txKnown: boolean | "error" = false;
 let pendingNonce = 7;
+let writeNonce = 9;
+let readerNonceCalls = 0;
 let sendRawError: Error | undefined;
 let bridgeCalls = 0;
 const sendRawCalls: string[] = [];
@@ -38,6 +40,8 @@ function reset() {
   waitReceipt = async () => ({ status: "success" });
   txKnown = false;
   pendingNonce = 7;
+  writeNonce = 9;
+  readerNonceCalls = 0;
   sendRawError = undefined;
   bridgeCalls = 0;
   sendRawCalls.length = 0;
@@ -53,7 +57,7 @@ mock.module("viem", {
   namedExports: {
     ...realViem,
     createWalletClient: () => ({
-      prepareTransactionRequest: async (req: Record<string, unknown>) => req,
+      prepareTransactionRequest: async (req: Record<string, unknown>) => ({ ...req, nonce: req.nonce ?? writeNonce }),
       signTransaction: async () => { signCalls++; return SIGNED; },
       sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: string }) => {
         stateAtBroadcast = stateFile.pendingWithdraw;
@@ -75,7 +79,7 @@ mock.module("../src/utils/polymarket/setup.js", {
     getPublicClient: () => ({
       readContract: async ({ address }: { address: string }) =>
         address.toLowerCase() === realConstants.USDCE_COLLATERAL.toLowerCase() ? 0n : 7_500_000n,
-      getTransactionCount: async () => pendingNonce,
+      getTransactionCount: async () => { readerNonceCalls++; return pendingNonce; },
       getTransactionReceipt: async () => {
         if (!receipt) throw new NotFound("TransactionReceiptNotFoundError");
         return receipt;
@@ -146,14 +150,16 @@ const pendingEoa = (extra: Record<string, unknown> = {}) => ({
 
 test("the signed bytes, their hash and nonce are on disk BEFORE the broadcast", async () => {
   reset();
+  pendingNonce = 3; // the public reader disagrees with the write node
   const res = await withdrawFunds({ amount_usd: 2, confirm: true });
   assert.equal(res.isError, undefined, res.text);
   assert.deepEqual(stateAtBroadcast, {
     transactionID: `eoa:${SIGNED_HASH}`,
     deadline: (stateAtBroadcast as { deadline: number }).deadline,
-    nonce: 7,
+    nonce: 9,
     serializedTransaction: SIGNED,
   });
+  assert.equal(readerNonceCalls, 0, "the nonce comes from the write endpoint, never the public reader");
   assert.deepEqual(sendRawCalls, [SIGNED]);
   assert.equal(stateFile.pendingWithdraw, undefined, "a success receipt clears the guard");
   assert.match(res.text, /Withdrawal submitted/);

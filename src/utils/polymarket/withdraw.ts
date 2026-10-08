@@ -421,8 +421,12 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
       // hash and exact bytes — a retry re-broadcasts THESE bytes (same nonce,
       // so at most one transfer can execute) instead of signing a second one.
       // `deadline` is recorded for the shape only; a plain transaction has none.
-      const nonce = await getPublicClient().getTransactionCount({ address: account.address, blockTag: "pending" });
-      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account, nonce });
+      // The nonce comes from the WRITE endpoint (prepareTransactionRequest
+      // asks the wallet's own transport for the pending count), not the public
+      // reader: their pending pools can differ, and a reader nonce could
+      // collide with a transaction only the write node has seen.
+      const request = await wallet.prepareTransactionRequest({ to: PUSD_COLLATERAL as Hex, data, chain: polygon, account });
+      const nonce = request.nonce;
       const serializedTransaction = await wallet.signTransaction(request);
       txHash = keccak256(serializedTransaction);
       saveState({
