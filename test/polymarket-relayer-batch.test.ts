@@ -173,7 +173,26 @@ test("a definite 4xx rejection proves nothing was accepted — rethrown raw, gua
     },
   );
   assert.equal(stateFile.pendingWithdraw, undefined, "a rejected batch cannot land — must not block for 5 minutes");
-  assert.equal(saveStateCalls.length, 0);
+  // Armed before the submit, released by the definite rejection.
+  assert.deepEqual(saveStateCalls.map((c) => c.pendingWithdraw && (c.pendingWithdraw as { transactionID: string }).transactionID), ["unknown", undefined]);
+});
+
+test("the withdraw guard is on disk BEFORE the batch is submitted", async () => {
+  reset();
+  let seenAtSubmit: unknown;
+  submitThrowsError = undefined;
+  const original = FakeRelayClient.prototype.executeDepositWalletBatch;
+  FakeRelayClient.prototype.executeDepositWalletBatch = async function (this: FakeRelayClient) {
+    seenAtSubmit = stateFile.pendingWithdraw;
+    throw new Error("process killed mid-POST (test)");
+  };
+  try {
+    await assert.rejects(sendWalletBatch(CALLS, DEPOSIT, "Withdraw", { trackPendingWithdraw: true }));
+  } finally {
+    FakeRelayClient.prototype.executeDepositWalletBatch = original;
+  }
+  assert.equal((seenAtSubmit as { transactionID?: string } | undefined)?.transactionID, "unknown",
+    "a crash during the POST runs no catch — the record must already exist");
 });
 
 test("an untracked batch (approvals/wrap) that loses its submit response writes no state", async () => {

@@ -229,6 +229,12 @@ export async function sendWalletBatch(
   // failure that provably moved nothing, wedging the user behind a deadline
   // for a transfer that was never signed.
   const relay = await getRelayClient();
+  // Armed BEFORE the call, not only in the catch below: a process killed
+  // mid-POST runs no catch, and the batch it posted stays executable until
+  // deadlineSec. A failed write here aborts before anything is signed.
+  if (opts?.trackPendingWithdraw) {
+    saveState({ pendingWithdraw: { transactionID: "unknown", deadline: deadlineSec } });
+  }
   try {
     response = await quietStdout(() => relay.executeDepositWalletBatch(calls, depositWallet, String(deadlineSec)));
   } catch (err) {
@@ -258,6 +264,7 @@ export async function sendWalletBatch(
         `${opts?.guidance ?? 're-run action:"setup" to re-check state'}.`,
       );
     }
+    if (opts?.trackPendingWithdraw) saveState({ pendingWithdraw: undefined }); // definite 4xx: nothing accepted
     throw err;
   }
   if (opts?.trackPendingWithdraw) {

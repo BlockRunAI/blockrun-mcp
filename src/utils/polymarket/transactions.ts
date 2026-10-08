@@ -40,15 +40,18 @@ export function assertTransactionSucceeded(
  * text (the relayer SDK stringifies `{"error":"request error","status":4xx}`).
  * Anything else — no status at all (socket hang up, ECONNRESET, a client-side
  * timeout) or a 5xx (a relay 502/504 after the upstream POST landed) — is
- * outcome-unknown: the signed order/batch may already be live. One answer for
- * the CLOB submit (orders.ts) and the relayer batch (relayer.ts), so the two
- * money paths cannot drift apart on the question again.
+ * outcome-unknown: the signed order/batch may already be live. So is a 408.
+ * One answer for the CLOB submit (orders.ts) and the relayer batch
+ * (relayer.ts), so the two money paths cannot drift apart on the question
+ * again.
  */
 export function isDefiniteRejection(err: unknown): boolean {
   const status = (err as { status?: unknown } | undefined)?.status;
-  if (typeof status === "number") return status >= 400 && status < 500;
+  // 408 Request Timeout is the one 4xx that proves nothing: a proxy gave up
+  // waiting, and the request behind it may have landed.
+  if (typeof status === "number") return status >= 400 && status < 500 && status !== 408;
   const message = err instanceof Error ? err.message : String(err);
-  return /"status":4\d\d/.test(message) || /\b(?:HTTP|status(?:\s*code)?)\s*[:=]?\s*4\d\d\b/i.test(message);
+  return /"status":4(?!08)\d\d/.test(message) || /\b(?:HTTP|status(?:\s*code)?)\s*[:=]?\s*4(?!08)\d\d\b/i.test(message);
 }
 
 /** The shape every Polymarket action returns to the tool handler. */
