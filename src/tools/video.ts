@@ -1199,7 +1199,9 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         //    the Solana audio route (settled optimistically at POST) via the
         //    shared helper — and the failure came after: deadline, poll
         //    error, terminal failure, or a submit that never answered
-        //    ("unknown"). The ledger must carry it (finally releases the
+        //    ("unknown"). Also the Solana wallet rail's payment for a finished
+        //    clip whose settlement outcome the gateway reported as unknown
+        //    ("unknown"): booked as a maybe, never "no charge". The ledger must carry it (finally releases the
         //    reservation, so without this booking the cap silently rises by
         //    the clip price), and the one thing the caller must not do is
         //    "try again": that submits and bills a second job.
@@ -1209,7 +1211,10 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           const billedTo = account ? "the BlockRun account" : "the Solana wallet";
           const what = err.billing === "billed"
             ? `Video generation did not return a clip, but the job was billed to ${billedTo} when the gateway accepted it${err.jobId ? ` (job ${err.jobId})` : ""}.`
-            : `Video generation got no answer to its submit, so the job MAY have been accepted and billed to ${billedTo}.`;
+            // "unknown" is also the Solana rail's settling poll whose outcome
+            // the gateway itself reported as unknown (utils/solana-402.ts
+            // isSettleHeld), not only a submit that never answered.
+            : `Video generation did not return a clip, and the job MAY have been billed to ${billedTo}: a request carrying the payment got no definitive answer.`;
           const where = account ? "https://user.blockrun.ai/dashboard/activity" : `blockrun_wallet action:"report" or the wallet's recent transactions`;
           return {
             content: [{ type: "text", text: `${what} Check ${where} before doing anything else — a new blockrun_video call starts and bills a second job.\nError: ${errMsg}` }],

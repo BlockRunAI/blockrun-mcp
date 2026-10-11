@@ -56,7 +56,7 @@ import { fetchWithTimeout } from "./http.js";
 import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { resolveSolanaKey } from "./wallet.js";
 import { amountToUsd } from "./budget.js";
-import { BilledJobError } from "./api-key-call.js";
+import { BilledJobError, retryAfterMs } from "./api-key-call.js";
 import { createPollSigner, pollRouteFor, type PollSigner } from "./poll-ownership.js";
 
 const QUOTE_TIMEOUT_MS = 15_000;
@@ -190,6 +190,23 @@ function settleFailureReason(response: Response): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A paid poll's 402 that leaves a payment's outcome OPEN: the gateway's settle
+ * timed out ("Payment settlement outcome unknown", Retry-After: 90) and it is
+ * holding the job's claim with that authorization recorded until it can check
+ * on chain, or another poll of this job holds the claim. The held payment may
+ * still land; the gateway's next answer after the hold is either the delivered
+ * clip (it landed) or a fresh settle (it did not). Not a refusal, so it must
+ * neither spend the re-sign budget nor ever be reported as "no charge".
+ */
+const SETTLE_HELD_REASONS = new Set([
+  "settlement in progress on a concurrent poll",
+  "prior settlement outcome not yet resolvable",
+]);
+function isSettleHeld(reason: string | undefined, body: Record<string, unknown>): boolean {
+  return body.error === "Payment settlement outcome unknown" || (reason !== undefined && SETTLE_HELD_REASONS.has(reason));
 }
 
 export interface SolanaPaidPostResult {
@@ -562,10 +579,18 @@ export async function solanaPaidAsyncPost(
   // drift apart: on a settled-at-submit route the money is gone whatever the
   // failure was, and the tool has to book it and name the job — the same
   // BilledJobError the account rail throws, for the same reason.
+  // Set once a payment for the finished job got an answer that leaves its
+  // outcome open (isSettleHeld). Sticky: this client never observes the hold
+  // resolve as "did not land", only as a delivery, so after it no give-up may
+  // say "no charge" — it is booked as a maybe, the safe direction.
+  let settleOutcomeUnknown = false;
+  const maybeChargedNote = `A payment for the finished job was sent and the gateway reported its settlement outcome as unknown, so it MAY have been charged — check the wallet's recent transactions before retrying.`;
   const giveUp = (core: string, uncharged: string): Error =>
     settledAtSubmit
       ? new BilledJobError(`${core} ${settledNote} ${reclaimNote}`, { paidUsd: original.paidUsd, jobId, billing: "billed" })
-      : new Error(`${core} ${uncharged} ${reclaimNote}`);
+      : settleOutcomeUnknown
+        ? new BilledJobError(`${core} ${maybeChargedNote} ${reclaimNote}`, { paidUsd: original.paidUsd, jobId, billing: "unknown" })
+        : new Error(`${core} ${uncharged} ${reclaimNote}`);
 
   let resignsLeft = maxReactiveResigns;
   let lastStatus = typeof submitData.status === "string" ? submitData.status : "queued";
@@ -597,6 +622,9 @@ export async function solanaPaidAsyncPost(
   // the first payment-signed poll after a fallback answer a response that
   // just arrived, not a job that needs more time.
   let pollNow = false;
+  // The gateway's Retry-After for the next poll, when it gave one that matters
+  // (a held settle); otherwise the poll interval.
+  let nextWaitMs: number | undefined;
   const fallBackToPaidPolling = (why: string) => {
     ownershipPolling = false;
     pollNow = true;
@@ -616,18 +644,27 @@ export async function solanaPaidAsyncPost(
   // model no throw after the submit can un-settle the transfer, so any throw
   // that is not already a BilledJobError becomes one; payment-on-completion
   // routes keep their plain refusals untouched.
+  //
+  // The same conversion once a payment for the finished job has an OPEN
+  // outcome (settleOutcomeUnknown): a 500 poll answer, a challenge that
+  // cannot be read, a funding refusal of the fresh settle — none of them can
+  // prove the held transfer did not land, so every exit is booked as a maybe.
   try {
     return await pollUntilDone();
   } catch (err) {
-    if (!settledAtSubmit || err instanceof BilledJobError) throw err;
+    if (!(settledAtSubmit || settleOutcomeUnknown) || err instanceof BilledJobError) throw err;
     const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No charge was made\.?/i, "");
     throw giveUp(`${what} could not be collected: ${msg}`, "");
   }
 
   async function pollUntilDone(): Promise<SolanaPaidPostResult> {
   while (Date.now() < deadline) {
-    if (!pollNow) await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (!pollNow) {
+      const waitMs = Math.min(nextWaitMs ?? pollIntervalMs, Math.max(0, deadline - Date.now()));
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
     pollNow = false;
+    nextWaitMs = undefined;
 
     if (ownershipPolling && pollSigner && pollRoute) {
       const pollTimeout = pollTimeoutFor(deadline, Date.now(), pollTimeoutMs);
@@ -651,7 +688,15 @@ export async function solanaPaidAsyncPost(
           // ONE payment that settles it. Pinned to the submit's quote like
           // every re-sign — a finished job is no reason to pay more, or
           // someone else.
-          const fresh = parseSolanaChallenge(await readPaymentRequired(ownedResp, ownedData));
+          let fresh: SolanaPaymentContext;
+          try {
+            fresh = parseSolanaChallenge(await readPaymentRequired(ownedResp, ownedData));
+          } catch (err) {
+            // Nothing signed. The payment-signed path fetches and validates
+            // its own challenge, so the finished clip is still collected.
+            fallBackToPaidPolling(`the completion challenge could not be read (${err instanceof Error ? err.message : String(err)})`);
+            continue;
+          }
           const originalFeePayer = (original.details.extra as { feePayer?: string } | undefined)?.feePayer;
           const freshFeePayer = (fresh.details.extra as { feePayer?: string } | undefined)?.feePayer;
           if (
@@ -736,8 +781,26 @@ export async function solanaPaidAsyncPost(
       // The gateway's settle-failure 402 carries PAYMENT-RESPONSE (the reason),
       // not a fresh challenge; the challenge comes from a separate unpaid GET.
       // Its body is informational only — consume it to release the socket.
-      lastSettleReason = settleFailureReason(pollResp) ?? lastSettleReason;
-      await pollResp.json().catch(() => ({}));
+      const thisReason = settleFailureReason(pollResp);
+      lastSettleReason = thisReason ?? lastSettleReason;
+      const refusalBody = await pollResp.json().catch(() => ({})) as Record<string, unknown>;
+      // Classified on THIS answer's reason and body, never the remembered
+      // reason: the route's "Payment verification failed" 402 carries no
+      // PAYMENT-RESPONSE, and reading it as "still held" would re-sign a
+      // transaction every poll interval for the whole budget instead of
+      // taking the bounded re-sign path. Checked first: the body's error is
+      // the authoritative class of the unknown-outcome answer.
+      if (!settledAtSubmit && isSettleHeld(thisReason, refusalBody)) {
+        // Wait as told (the hold lasts up to ~90s), then poll again with a
+        // fresh blockhash. Safe from a double charge: the gateway lets one
+        // poll settle per job and checks on chain whether a held
+        // authorization landed before it settles anything new (sol #398).
+        // Bounded by the deadline, not by the re-sign budget.
+        settleOutcomeUnknown = true;
+        nextWaitMs = retryAfterMs(pollResp) || undefined;
+        nextResignAt = 0;
+        continue;
+      }
       if (isFundingFailure(lastSettleReason)) {
         // On a settled-at-submit route the poll never settles, so a funding
         // reason there is the delivery signature being refused — the charge
@@ -799,7 +862,7 @@ export async function solanaPaidAsyncPost(
   // needs a signed poll to observe "completed". An ownership-proof poll
   // carries no payment, so it is never the one in flight.
   const deadlineCore = `${what} did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}).`;
-  if (settledAtSubmit) throw giveUp(deadlineCore, "");
+  if (settledAtSubmit || settleOutcomeUnknown) throw giveUp(deadlineCore, "");
   throw new Error(
     paidPollInFlight
       ? `${deadlineCore} No settlement receipt was observed by this client, but a poll carrying the payment signature was still in flight at the deadline and can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`
