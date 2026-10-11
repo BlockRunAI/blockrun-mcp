@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.54.3
+
+### Changed — Solana media polls prove the wallet instead of paying (#176)
+
+On the Solana wallet rail, a pending video job used to need a fresh SPL
+payment signature on every poll (~20s apart): a payment is a transaction
+pinned to a ~60-90s blockhash, and it was the only proof of who was asking.
+sol.blockrun.ai now also accepts an ownership proof: an ed25519 signature by
+the submitting wallet over `blockrun-poll:v1:<kind>:<job id>:<unix seconds>`,
+sent as `x-poll-wallet` / `x-poll-timestamp` / `x-poll-signature`. It signs a
+text message, not a transaction, so nothing it carries can move money.
+
+- **video**: pending polls send only the proof. The finished job answers 402
+  with `status: "completed"`; the client signs **one** payment from that
+  challenge, pinned to the submit's amount, recipient and fee payer, and the
+  existing payment-signed path settles it.
+- **music / image**: paid at submit, so their polls never sign a payment.
+- **fallback**: a refused proof (video 400 `Invalid job id`, audio/image 404
+  `Job not found`) or any 402 that is not the completion challenge switches
+  the job once to payment-signed polling, and says so on stderr.
+- An unpaid completion challenge is not a result: the poll classifier decides
+  on each answer's own `status`, so a later bodiless 2xx keeps polling
+  instead of booking the quote with no video.
+- The Base rail and the account (API key) rail are unchanged. `bs58` is now
+  a declared dependency.
+
+### Changed — the `decide` skill now teaches Decisions; OpenJev is retired
+
+BlockRun replaced OpenJev (its self-hosted NLI judgment model) with an OpenAI
+Decisions-compatible endpoint served by `gpt-6-luna` on 2026-10-07. The skill
+taught `api.blockrun.ai/v1/decide` with the `state` / `noul` / `criteria`
+shape and explained OpenJev's normalised scores, none of which describe what
+answers now.
+
+`skills/decide` now covers `POST https://api.blockrun.ai/v1/decisions`:
+`input` + `questions` as an array, `predicate` / `choice` (`choices`) /
+`score` (`levels`), and image input. It is served only there, free for any
+registered key. There is no x402 rail: the x402 floor is above what a
+Decisions call costs, so the paid route was never deployed (gateway #804).
+The example response is a live call. The old `/v1/decide` shape is still
+accepted there and is named as legacy. Still a skill, not a tool, for the
+reason 0.52.0 gave. `skills/blockrun` and the marketplace entry point at the
+new path.
+
 ## 0.54.2
 
 ### Fixed — a withdrawal that may have moved money is never signed twice
