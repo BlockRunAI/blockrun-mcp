@@ -584,8 +584,10 @@ Source images and masks accept a base64 data URI, an http(s) URL, or a local fil
             //
             // This is the same defect #140 fixed on the account rail; the
             // Solana wallet rail was never moved across. The async helper
-            // handles the inline 200 and the 202 alike and re-signs each poll
-            // with a fresh blockhash, which is what the poll GET needs.
+            // handles the inline 200 and the 202 alike, and polls with the
+            // wallet's ownership proof (utils/poll-ownership.ts) — no payment
+            // is signed on an image poll; a gateway that refuses the proof gets
+            // payment-signed polls with a fresh blockhash instead.
             let solQuotedUsd: number | null = null;
             const { data, paidUsd } = await solanaPaidAsyncPost(endpoint, body, {
               pollBudgetMs: SOLANA_IMAGE_TIMEOUT_MS,

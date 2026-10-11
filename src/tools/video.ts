@@ -50,7 +50,8 @@ export const VIDEO_POLL_TIMEOUT_MS = 60_000;
 // rather than a literal restated in the test.
 export const VIDEO_PAYMENT_AUTH_SECONDS = 600;
 // Solana has no EIP-3009 validBefore to stay inside: utils/solana-402.ts
-// re-signs the SPL transaction with a fresh blockhash throughout polling, so
+// polls with the wallet's ownership proof (no payment) and signs the one SPL
+// payment only when the gateway reports the video ready, so
 // the budget is bounded by the tool's patience, not an authorization. Measured
 // from the helper's entry (quote + submit + polling), so the description's
 // "15 min Solana hard cap" is a true total, not a polling budget that starts
@@ -847,7 +848,10 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
                 paid.arm(solQuotedUsd);
               },
               // The edges of every request carrying PAYMENT-SIGNATURE — the
-              // submit and each poll. A poll that drops leaves the tracker
+              // submit and the poll that settles the finished video (plus
+              // every poll after a fallback to payment-signed polling; the
+              // ownership-proof polls carry no payment and fire neither
+              // hook). A poll that drops leaves the tracker
               // armed; a poll that answers "in_progress" settles it, so a
               // deadline reached with nothing outstanding books nothing, the
               // way Base's loop already behaved. Before these hooks the rail

@@ -25,6 +25,23 @@
 // Until audit round 3 the helper assumed the first model for every route and
 // said "No payment was taken" for a failed music job the gateway had already
 // settled.
+//
+// How the polls prove who is asking. Since 2026-10-10 the Solana poll routes
+// accept an ownership proof — an ed25519 signature over the job id by the
+// wallet that paid the submit (utils/poll-ownership.ts) — in place of a
+// payment signature. The helper polls with that proof, so a pending job costs
+// no transaction signatures at all:
+//
+//   video   pending polls carry the proof; the finished job answers 402 with
+//           the x402 challenge and body status "completed", and the helper
+//           signs ONE payment from it and re-sends the poll with it.
+//   music,  paid at submit; the proof alone delivers the result and no poll
+//   image   ever signs a payment.
+//
+// A refusal of the proof for the job this client just submitted ("Invalid job
+// id" 400 on video, "Job not found" 404 on audio/image), or a 402 that is not
+// the video completion challenge, switches the job ONCE to the payment-signed
+// polling below, which every gateway revision still accepts.
 import {
   SolanaLLMClient,
   PaymentError,
@@ -40,6 +57,7 @@ import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { resolveSolanaKey } from "./wallet.js";
 import { amountToUsd } from "./budget.js";
 import { BilledJobError } from "./api-key-call.js";
+import { createPollSigner, pollRouteFor, type PollSigner } from "./poll-ownership.js";
 
 const QUOTE_TIMEOUT_MS = 15_000;
 
@@ -245,6 +263,14 @@ export interface SolanaPaidAsyncPostOptions extends PaidRequestHooks {
   /** Maximum reactive re-signs after a completed poll rejects a stale signature. Defaults to SOLANA_ASYNC_MAX_REACTIVE_RESIGNS. */
   maxReactiveResigns?: number;
   /**
+   * Poll with the wallet's x-poll-* ownership proof (utils/poll-ownership.ts)
+   * instead of a payment signature, on the poll routes that accept it.
+   * Default true. False keeps the payment-signed polling this helper did
+   * before the gateway shipped the proof — the same path it falls back to
+   * when the gateway refuses the proof.
+   */
+  pollOwnership?: boolean;
+  /**
    * Called after the authoritative quote is parsed and before anything is
    * signed. `details` is the decoded 402 (amount, recipient, resource
    * description) so a caller can check WHAT was quoted, not just how much.
@@ -258,10 +284,13 @@ type SolanaPaymentContext = {
   paidUsd: number | null;
 };
 
-async function readPaymentRequired(response: Response): Promise<string> {
+/** `preReadBody`: the body, when the caller already consumed it (a Response body reads once). */
+async function readPaymentRequired(response: Response, preReadBody?: Record<string, unknown> | null): Promise<string> {
   let header = response.headers.get("payment-required") || response.headers.get("PAYMENT-REQUIRED");
   if (!header) {
-    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+    const body = preReadBody !== undefined
+      ? preReadBody
+      : await response.json().catch(() => null) as Record<string, unknown> | null;
     if (body && (body.accepts || body.x402Version)) {
       header = Buffer.from(JSON.stringify(body)).toString("base64");
     }
@@ -546,6 +575,33 @@ export async function solanaPaidAsyncPost(
   // this client gives up; one that was answered cannot.
   let paidPollInFlight = false;
 
+  // Ownership-proof polling (module comment). Null route or signer = the
+  // payment-signed polling below from the first poll. A key that will not
+  // load here is not an error: the same key just signed the submit, and the
+  // paid path reports any real fault precisely.
+  const pollRoute = opts.pollOwnership === false ? null : pollRouteFor(pollUrl);
+  let pollSigner: PollSigner | null = null;
+  if (pollRoute) {
+    try {
+      pollSigner = createPollSigner(await solanaKeyToBytes(privateKey));
+    } catch {
+      pollSigner = null;
+    }
+  }
+  let ownershipPolling = pollSigner !== null;
+  // Send the next poll without the interval sleep: the completion payment and
+  // the first payment-signed poll after a fallback answer a response that
+  // just arrived, not a job that needs more time.
+  let pollNow = false;
+  const fallBackToPaidPolling = (why: string) => {
+    ownershipPolling = false;
+    pollNow = true;
+    // The submit's signature is as old as the job by now: re-sign first.
+    nextResignAt = 0;
+    // stderr is the MCP log channel; only the job id and the reason, never key material.
+    console.error(`[blockrun] ${what}: ${why}; polling job ${pollRoute?.jobId ?? jobId ?? "?"} with payment signatures instead.`);
+  };
+
   // EVERY escape from here on goes through one classifier, not only the ones
   // enumerated below. Round 3 typed the failed-job, poll-error and deadline
   // exits and left the reactive re-sign path throwing plain Errors — a
@@ -566,7 +622,73 @@ export async function solanaPaidAsyncPost(
 
   async function pollUntilDone(): Promise<SolanaPaidPostResult> {
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (!pollNow) await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    pollNow = false;
+
+    if (ownershipPolling && pollSigner && pollRoute) {
+      const pollTimeout = pollTimeoutFor(deadline, Date.now(), pollTimeoutMs);
+      if (pollTimeout === 0) break;
+      let ownedResp: Response;
+      try {
+        // Carries no payment: nothing armed, nothing that can settle. Signed
+        // fresh per poll — the timestamp is inside the signed message.
+        ownedResp = await fetchWithTimeout(pollUrl.toString(), {
+          method: "GET",
+          headers: pollSigner.headers(pollRoute.kind, pollRoute.jobId),
+        }, pollTimeout);
+      } catch {
+        continue;
+      }
+      const ownedData = await ownedResp.json().catch(() => null) as Record<string, unknown> | null;
+
+      if (ownedResp.status === 402) {
+        if (pollRoute.kind === "video" && ownedData?.status === "completed") {
+          // The video is ready and unpaid: this 402 is the challenge for the
+          // ONE payment that settles it. Pinned to the submit's quote like
+          // every re-sign — a finished job is no reason to pay more, or
+          // someone else.
+          const fresh = parseSolanaChallenge(await readPaymentRequired(ownedResp, ownedData));
+          const originalFeePayer = (original.details.extra as { feePayer?: string } | undefined)?.feePayer;
+          const freshFeePayer = (fresh.details.extra as { feePayer?: string } | undefined)?.feePayer;
+          if (
+            String(fresh.details.amount) !== String(original.details.amount) ||
+            fresh.details.recipient !== original.details.recipient ||
+            freshFeePayer !== originalFeePayer
+          ) {
+            throw giveUp("The completed job's payment challenge changed the payment amount, recipient or fee payer; refusing to authorize it.", "No charge was made.");
+          }
+          lastStatus = "completed";
+          const signedAt = Date.now();
+          try {
+            paymentPayload = await signSolanaChallenge(fresh, pollUrl.toString(), privateKey);
+          } catch {
+            // Nothing left the machine. The next proof poll gets the same
+            // challenge; the deadline bounds the retries.
+            continue;
+          }
+          nextResignAt = signedAt + resignIntervalMs;
+          // From here the job is on the payment-signed path below, which
+          // settles it and handles every settle answer.
+          ownershipPolling = false;
+          pollNow = true;
+          continue;
+        }
+        fallBackToPaidPolling("the gateway answered the ownership-proof poll with a payment challenge");
+        continue;
+      }
+
+      const refused =
+        (pollRoute.kind === "video" && ownedResp.status === 400 && ownedData?.error === "Invalid job id") ||
+        (pollRoute.kind !== "video" && ownedResp.status === 404 && ownedData?.error === "Job not found");
+      if (refused) {
+        fallBackToPaidPolling(`the gateway refused the ownership proof (HTTP ${ownedResp.status} ${String(ownedData?.error)})`);
+        continue;
+      }
+
+      const outcome = classifyPollAnswer(ownedResp, ownedData ?? {});
+      if (outcome) return outcome;
+      continue;
+    }
 
     // Proactively refresh only the transaction/blockhash. The authorized
     // amount, recipient and fee payer remain pinned to the original 402.
@@ -662,6 +784,31 @@ export async function solanaPaidAsyncPost(
     }
 
     const pollData = await pollResp.json().catch(() => ({})) as Record<string, unknown>;
+    const outcome = classifyPollAnswer(pollResp, pollData);
+    if (outcome) return outcome;
+  }
+
+  // The deadline says what this helper KNOWS, and the hooks above let the
+  // caller's tracker know the same thing: a poll that was still in flight can
+  // settle server-side (the gateway does not stop because we hung up); a poll
+  // that was answered "in_progress" cannot, because on this model settlement
+  // needs a signed poll to observe "completed". An ownership-proof poll
+  // carries no payment, so it is never the one in flight.
+  const deadlineCore = `${what} did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}).`;
+  if (settledAtSubmit) throw giveUp(deadlineCore, "");
+  throw new Error(
+    paidPollInFlight
+      ? `${deadlineCore} No settlement receipt was observed by this client, but a poll carrying the payment signature was still in flight at the deadline and can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`
+      : `${deadlineCore} The last poll was answered and no request carrying the payment signature is outstanding, so no charge was made. ${reclaimNote}`,
+  );
+  }
+
+  /**
+   * Every non-402 poll answer, from either kind of poll: the result to return,
+   * undefined to poll again, or a throw. One classifier so the proof polls and
+   * the payment-signed polls cannot drift on what "done" and "failed" mean.
+   */
+  function classifyPollAnswer(pollResp: Response, pollData: Record<string, unknown>): SolanaPaidPostResult | undefined {
     if (typeof pollData.status === "string") lastStatus = pollData.status;
 
     // A receipt header IS settlement — the USDC moved the moment the gateway
@@ -686,23 +833,9 @@ export async function solanaPaidAsyncPost(
     if (pollResp.ok && lastStatus === "completed") {
       return { data: pollData, paidUsd: original.paidUsd, txHash: undefined, jobId };
     }
-    if (pollResp.status === 202 || pollResp.status === 504 || pollResp.ok) continue;
+    if (pollResp.status === 202 || pollResp.status === 504 || pollResp.ok) return undefined;
     const pollError = `${what} poll error ${pollResp.status}: ${JSON.stringify(pollData)}`;
     if (settledAtSubmit) throw giveUp(pollError, "");
     throw new Error(pollError);
-  }
-
-  // The deadline says what this helper KNOWS, and the hooks above let the
-  // caller's tracker know the same thing: a poll that was still in flight can
-  // settle server-side (the gateway does not stop because we hung up); a poll
-  // that was answered "in_progress" cannot, because on this model settlement
-  // needs a signed poll to observe "completed".
-  const deadlineCore = `${what} did not complete within ${Math.round(pollBudgetMs / 1000)}s (last status: ${lastStatus}).`;
-  if (settledAtSubmit) throw giveUp(deadlineCore, "");
-  throw new Error(
-    paidPollInFlight
-      ? `${deadlineCore} No settlement receipt was observed by this client, but a poll carrying the payment signature was still in flight at the deadline and can settle server-side, so check the wallet's recent transactions before retrying. ${reclaimNote}`
-      : `${deadlineCore} The last poll was answered and no request carrying the payment signature is outstanding, so no charge was made. ${reclaimNote}`,
-  );
   }
 }
