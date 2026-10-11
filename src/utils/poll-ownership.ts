@@ -20,7 +20,15 @@
 // Pure node:crypto + bs58, no @blockrun/llm import, so the signature can be
 // checked in tests against the real verifier without any module mocks.
 import { createPrivateKey, createPublicKey, sign as ed25519Sign, type KeyObject } from "node:crypto";
-import bs58 from "bs58";
+import bs58Module from "bs58";
+
+// bs58 ships an ESM build (default export = the codec) and a CJS build
+// (exports.default = the codec). The published ESM bundle resolves the ESM
+// build, but Node 20's --experimental-test-module-mocks loader resolves the
+// CJS one, where the default import is { default: codec } and bs58.encode is
+// undefined — 13 red tests on node 20.19 only. Unwrap either shape.
+const bs58: typeof bs58Module =
+  (bs58Module as unknown as { default?: typeof bs58Module }).default ?? bs58Module;
 
 /** The poll route's <kind>; music polls are "audio" on the wire. */
 export type PollKind = "video" | "audio" | "image";

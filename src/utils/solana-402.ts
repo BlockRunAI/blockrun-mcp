@@ -584,8 +584,12 @@ export async function solanaPaidAsyncPost(
   if (pollRoute) {
     try {
       pollSigner = createPollSigner(await solanaKeyToBytes(privateKey));
-    } catch {
+    } catch (err) {
       pollSigner = null;
+      // Not fatal, but never silent: a signer that cannot be built is a bug
+      // (it hid a bs58 interop fault behind 10s poll timeouts). Only the
+      // error's message, never key material.
+      console.error(`[blockrun] ${what}: could not build the poll ownership proof (${err instanceof Error ? err.message : String(err)}); polling with payment signatures instead.`);
     }
   }
   let ownershipPolling = pollSigner !== null;
