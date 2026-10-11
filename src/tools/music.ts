@@ -241,9 +241,11 @@ Returns a permanent BlockRun-hosted URL.`,
               // helper signs next (see video.ts for the residual window).
               paid.arm(solQuotedUsd);
             },
-            // Exact edges of every signed request — submit and each poll — so
-            // a deadline reached with the last poll answered books nothing and
-            // one reached with a poll in flight books the quote (C32/C37).
+            // Exact edges of every payment-signed request — the submit, and a
+            // poll only if the gateway refused the ownership proof and the
+            // helper fell back to payment-signed polling (utils/solana-402.ts)
+            // — so a deadline reached with the last poll answered books nothing
+            // and one reached with a poll in flight books the quote (C32/C37).
             onPaidRequest: () => { paidRequestSent = true; paid.arm(quotedUsd); },
             onPaidResponse: () => paid.settle(),
           });
