@@ -204,6 +204,19 @@ test("video: a signing failure on the completion payment retries on the next pro
   assert.deepEqual(gets().map(hasProof), [true, true, false]);
 });
 
+test("video: an unpaid completion challenge is not a result — a later 2xx with no status and no receipt keeps polling", async () => {
+  // The 402 said "completed", but nothing has settled. A bodiless 202 on the
+  // settling poll must not be read as the delivered video (it would book the
+  // quote and fail on the missing URL); only the receipt or the response's
+  // OWN status can end the job.
+  const bodiless = () => ({ status: 202, ok: true, headers: headers(), json: async () => { throw new SyntaxError("Unexpected end of JSON input"); } });
+  script = [quote, videoSubmit, completion402, bodiless, settled];
+  const r = await solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, fast);
+  assert.equal(r.txHash, "solana-tx");
+  assert.equal((r.data.data as Array<{ url: string }>)[0].url, "https://blockrun.ai/media/vid_1.mp4");
+  assert.equal(paymentsSigned, 2, "submit + the one completion payment");
+});
+
 test("video: a stale-blockhash 402 on the settling poll uses the existing re-sign path", async () => {
   const fail = Buffer.from(JSON.stringify({ success: false, errorReason: "Blockhash not found" })).toString("base64");
   script = [

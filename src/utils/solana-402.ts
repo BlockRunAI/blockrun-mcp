@@ -813,7 +813,12 @@ export async function solanaPaidAsyncPost(
    * the payment-signed polls cannot drift on what "done" and "failed" mean.
    */
   function classifyPollAnswer(pollResp: Response, pollData: Record<string, unknown>): SolanaPaidPostResult | undefined {
-    if (typeof pollData.status === "string") lastStatus = pollData.status;
+    // Decide on THIS answer's status, never the remembered one. `lastStatus`
+    // is for messages: the completion 402 sets it to "completed" before
+    // anything has settled, and a later bodiless 2xx must keep polling, not
+    // read as the delivered (and billable) result.
+    const status = typeof pollData.status === "string" ? pollData.status : undefined;
+    if (status) lastStatus = status;
 
     // A receipt header IS settlement — the USDC moved the moment the gateway
     // wrote it, whatever the body looks like. Return so the caller books it
@@ -823,7 +828,7 @@ export async function solanaPaidAsyncPost(
       return { data: pollData, paidUsd: original.paidUsd, txHash: receipt, jobId };
     }
 
-    if (lastStatus === "failed") {
+    if (status === "failed") {
       // Typed on both models. The gateway echoes the upstream failure text
       // verbatim, and MiniMax's is "The operation was aborted due to timeout";
       // a tool that classified this by prose booked a render the gateway had
@@ -834,7 +839,7 @@ export async function solanaPaidAsyncPost(
       }
       throw new JobFailedError(`${failed} No payment was taken.`, { jobId });
     }
-    if (pollResp.ok && lastStatus === "completed") {
+    if (pollResp.ok && status === "completed") {
       return { data: pollData, paidUsd: original.paidUsd, txHash: undefined, jobId };
     }
     if (pollResp.status === 202 || pollResp.status === 504 || pollResp.ok) return undefined;
