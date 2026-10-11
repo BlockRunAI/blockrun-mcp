@@ -30,10 +30,12 @@ function headers(map: Record<string, string>) {
 // call shifts one. Empty script = the test expected NO network call.
 let script: Array<() => unknown> = [];
 let fetchCalls = 0;
+let fetchInits: Array<{ method?: string; headers?: Record<string, string> }> = [];
 mock.module("../src/utils/http.js", {
   namedExports: {
-    fetchWithTimeout: async () => {
+    fetchWithTimeout: async (_url: string, init: { method?: string; headers?: Record<string, string> } = {}) => {
       fetchCalls++;
+      fetchInits.push(init);
       const next = script.shift();
       if (!next) throw new Error("UNEXPECTED_NETWORK_CALL");
       return next();
@@ -178,6 +180,26 @@ test("the happy path books the settled amount exactly once", async () => {
   assert.equal(res.structuredContent.cost_usd, 0.4);
   assert.equal(res.structuredContent.last_frame_url, "https://blockrun.ai/media/last.png");
   assert.ok(Math.abs(budget.spent - 0.4) < 1e-9, `booked once, not twice: spent=${budget.spent}`);
+});
+
+// The Solana ownership proof (utils/poll-ownership.ts) is Solana-rail only.
+// Base keeps polling with the submit's EIP-3009 payment header, which lives
+// for the whole job and never needed a proof.
+test("Base polls keep the submit's payment header and never carry the Solana ownership proof", async () => {
+  fetchInits = [];
+  script = [resp402, respSubmit, () => respPoll({ status: "in_progress" }), () => respPoll({ status: "completed", data: [{ url: "https://blockrun.ai/media/vid_1.mp4", duration_seconds: 8 }] })];
+  quotedAmount = "400000";
+  paymentsSigned = 0;
+  const { call } = makeHarness();
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
+  assert.notEqual(res.isError, true, res.content?.[0]?.text);
+  const polls = fetchInits.filter((i) => i.method === "GET");
+  assert.equal(polls.length, 2);
+  for (const p of polls) {
+    assert.equal(p.headers?.["PAYMENT-SIGNATURE"], "0xpaymentpayloadmock");
+    assert.equal(Object.keys(p.headers ?? {}).some((h) => h.toLowerCase().startsWith("x-poll-")), false);
+  }
+  assert.equal(paymentsSigned, 1, "one EIP-3009 authorization for the whole job");
 });
 
 test("upstream failure before completion books nothing (no charge per gateway contract)", async () => {

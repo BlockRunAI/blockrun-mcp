@@ -99,7 +99,11 @@ const paymentResponse = (errorReason: string) => Buffer.from(JSON.stringify({ su
 const settleFail402 = (errorReason = "Transaction simulation failed: Blockhash not found") =>
   ({ status: 402, ok: false, headers: headers({ "payment-response": paymentResponse(errorReason) }), json: async () => ({ error: "Payment settlement failed" }) });
 const challenge402 = () => ({ status: 402, ok: false, headers: headers({ "payment-required": "fresh" }), json: async () => ({}) });
-const fast = { pollBudgetMs: 10_000, pollIntervalMs: 1, resignIntervalMs: 60_000 };
+// pollOwnership:false — this suite pins the payment-signed polling path, which
+// is the fallback when the gateway refuses the ownership proof and still the
+// path every settling video poll takes. The proof path has its own suite,
+// test/solana-poll-ownership.test.ts.
+const fast = { pollBudgetMs: 10_000, pollIntervalMs: 1, resignIntervalMs: 60_000, pollOwnership: false };
 const gets = () => requests.filter((r) => r.method === "GET");
 const posts = () => requests.filter((r) => r.method === "POST");
 
