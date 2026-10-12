@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.54.4
+
+### Fixed — a Solana video settle whose outcome is unknown is waited out, never "no charge" (#177)
+
+When a finished video's payment settle times out, sol.blockrun.ai answers 402
+`Payment settlement outcome unknown` with `Retry-After` and holds the job;
+other polls get `settlement in progress on a concurrent poll`. The client
+ignored `Retry-After`, spent its three re-signs about 15s into a 90s hold, and
+reported "no charge was made" while that payment could still land.
+
+- Held answers honour `Retry-After` and re-sign with a fresh blockhash without
+  spending the re-sign budget; the call deadline still bounds them.
+- Once a payment's outcome is open, every exit (deadline, a 500 poll answer,
+  an unreadable challenge, a refused fresh settle) books the quote and says
+  the job MAY have been charged, instead of booking nothing.
+- A completion 402 whose challenge cannot be read falls back to
+  payment-signed polling instead of aborting the finished job.
+- Music and image (paid at submit), the Base rail and the account rail are
+  unchanged.
+
 ## 0.54.3
 
 ### Changed — Solana media polls prove the wallet instead of paying (#176)
