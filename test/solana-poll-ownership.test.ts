@@ -325,3 +325,94 @@ test("pollOwnership:false keeps payment-signed polling from the first poll", asy
   assert.equal(hasProof(gets()[0]), false);
   assert.equal(gets()[0].headers["PAYMENT-SIGNATURE"], "signed-svm-payment-1");
 });
+
+// ---- the settling poll: an outcome the gateway itself does not know ----
+//
+// The gateway answers a settle that timed out with 402 "Payment settlement
+// outcome unknown" + Retry-After: 90 and HOLDS the job's claim with that
+// authorization recorded; until it resolves on chain, every other poll gets
+// "settlement in progress on a concurrent poll". That payment may still land.
+// Every finished video now reaches this path on its first paid poll, so the
+// helper must wait as told instead of burning its re-sign budget in seconds,
+// and must never report "no charge" while that outcome is open.
+const reasonHeader = (errorReason: string) => Buffer.from(JSON.stringify({ success: false, errorReason })).toString("base64");
+const outcomeUnknown = (retryAfter = "0.03") => ({
+  status: 402, ok: false,
+  headers: headers({ "payment-response": reasonHeader("facilitator_timeout"), "retry-after": retryAfter }),
+  json: async () => ({ error: "Payment settlement outcome unknown", status: "completed" }),
+});
+const heldByConcurrentPoll = () => ({
+  status: 402, ok: false,
+  headers: headers({ "payment-response": reasonHeader("settlement in progress on a concurrent poll") }),
+  json: async () => ({ error: "Payment Required" }),
+});
+const alreadySettled = () => ({ status: 200, ok: true, headers: headers(), json: async () => ({ status: "completed", data: [{ url: "u" }], payment: { status: "already_settled" } }) });
+
+test("video: an unknown settle outcome is waited out (Retry-After), not given up on after the re-sign budget", async () => {
+  const at: number[] = [];
+  const stamp = (f: () => unknown) => () => { at.push(Date.now()); return f(); };
+  script = [quote, videoSubmit, completion402, stamp(() => outcomeUnknown()), stamp(heldByConcurrentPoll), heldByConcurrentPoll, heldByConcurrentPoll, heldByConcurrentPoll, alreadySettled];
+  const r = await solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, { ...fast, maxReactiveResigns: 3 });
+  assert.equal((r.data.data as Array<{ url: string }>)[0].url, "u", "the held payment landed: delivered, not abandoned");
+  assert.ok(at[1] - at[0] >= 25, `waited the gateway's Retry-After before re-polling (${at[1] - at[0]}ms)`);
+  // Every request after the completion challenge carried a payment; no unpaid challenge fetches while held.
+  assert.ok(gets().slice(1).every((g) => typeof g.headers["PAYMENT-SIGNATURE"] === "string"));
+});
+
+test("video: a deadline while the settle outcome is unknown is booked as MAY have been charged, never 'no charge'", async () => {
+  const { BilledJobError } = await import("../src/utils/api-key-call.js");
+  script = [quote, videoSubmit, completion402, () => outcomeUnknown("0.02"), ...Array.from({ length: 400 }, () => heldByConcurrentPoll)];
+  await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, { ...fast, pollBudgetMs: 300, pollIntervalMs: 5 }), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `typed so the tool books it (got ${err.name}: ${err.message})`);
+    assert.equal((err as InstanceType<typeof BilledJobError>).billing, "unknown");
+    assert.equal((err as InstanceType<typeof BilledJobError>).paidUsd, 0.5);
+    assert.doesNotMatch(err.message, /no charge was made/i);
+    assert.match(err.message, /may/i);
+    return true;
+  });
+  script = [];
+});
+
+test("video: a completion 402 whose challenge cannot be read falls back to payment-signed polling, not an abort", async () => {
+  // No payment-required header and no accepts in the body: the paid path
+  // fetches and validates its own challenge, so the finished clip is still collected.
+  const unreadable = () => ({ status: 402, ok: false, headers: headers(), json: async () => ({ error: "Payment Required", status: "completed" }) });
+  script = [quote, videoSubmit, unreadable, settled];
+  const r = await solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, fast);
+  assert.equal(r.txHash, "solana-tx");
+  assert.deepEqual(gets().map(hasProof), [true, false]);
+  assert.equal(paymentsSigned, 2, "submit + one fresh signature for the paid poll");
+});
+
+test("video: after a hold, a 402 with no PAYMENT-RESPONSE is a refusal on the bounded re-sign path, not another hold", async () => {
+  // The route's "Payment verification failed" 402 carries no PAYMENT-RESPONSE.
+  // A sticky "last reason" from the earlier hold must not re-classify it as
+  // held: that would re-sign an SPL transaction every poll interval for the
+  // whole budget and never reach the re-sign ceiling.
+  const verificationFailed = () => ({ status: 402, ok: false, headers: headers(), json: async () => ({ error: "Payment verification failed" }) });
+  const freshChallenge = () => ({ status: 402, ok: false, headers: headers({ "payment-required": "fresh" }), json: async () => ({}) });
+  script = [
+    quote, videoSubmit, completion402, () => outcomeUnknown("0.01"), heldByConcurrentPoll,
+    verificationFailed, freshChallenge, verificationFailed, freshChallenge, verificationFailed,
+  ];
+  await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, { ...fast, maxReactiveResigns: 2 }), (err: Error) => {
+    assert.match(err.message, /did not go through after 2 re-signs/);
+    assert.doesNotMatch(err.message, /no charge was made/i, "a held payment may have landed");
+    return true;
+  });
+  // Two unpaid challenge fetches = the two reactive re-signs, then the ceiling.
+  assert.equal(gets().filter((g) => !hasProof(g) && g.headers["PAYMENT-SIGNATURE"] === undefined).length, 2);
+});
+
+test("video: every give-up after a hold is booked as MAY have been charged — a 500 poll answer included", async () => {
+  const { BilledJobError } = await import("../src/utils/api-key-call.js");
+  const serverError = () => ({ status: 500, ok: false, headers: headers(), json: async () => ({ error: "Internal server error" }) });
+  script = [quote, videoSubmit, completion402, () => outcomeUnknown("0.01"), serverError];
+  await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, fast), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `got ${err.name}: ${err.message}`);
+    assert.equal((err as InstanceType<typeof BilledJobError>).billing, "unknown");
+    assert.match(err.message, /poll error 500/);
+    assert.match(err.message, /MAY have been charged/);
+    return true;
+  });
+});

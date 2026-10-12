@@ -137,7 +137,8 @@ function connectionNeverOpened(err: unknown): boolean {
   return typeof cause?.code === "string" && NEVER_CONNECTED.has(cause.code);
 }
 
-function retryAfterMs(response: Response): number {
+/** Retry-After in ms (delta-seconds only), or 0 when absent/unreadable. */
+export function retryAfterMs(response: Response): number {
   const raw = response.headers.get("retry-after");
   const seconds = raw === null ? NaN : Number(raw.trim());
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
