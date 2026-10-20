@@ -68,7 +68,10 @@ export const BASE_RPC_URLS = [
 //   $3/$15; both gateways 2026-09-08. On the native path the price row IS the
 //   ledger, so the stale row over-booked every sonnet-5 call 1.5x),
 //   claude-opus-4.5, claude-sonnet-4.6, claude-sonnet-4.5, claude-haiku-4.5
-// Google (10): gemini-3.1-pro ($2/$12), gemini-3.8-flash and gemini-3.6-flash
+// Google (11): gemini-4-argon ($2/$10, 1M, 65,536 out — live 2026-10-20 on
+//   both chains; Google's rate through 2026-11-30, $4/$20 from 2026-12-01; NO
+//   long-context tier, unlike 3.1 Pro — priced only, in no routing tier),
+//   gemini-3.1-pro ($2/$12), gemini-3.8-flash and gemini-3.6-flash
 //   ($0.75/$3.75 each — 3.6 was $1.5/$7.5 when first listed), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
 //   file recorded in July), gemini-3-flash-preview ($0.5/$3),
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
@@ -462,6 +465,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/o3-mini": { input: 1.1, output: 4.4 },
   "openai/o4-mini": { input: 1.1, output: 4.4 },
   "google/gemini-3.8-flash": { input: 0.75, output: 3.75 },
+  // ⏰ 2026-12-01: Google moves Argon to $4/$20 — re-price this row.
+  "google/gemini-4-argon": { input: 2, output: 10 },
   "google/gemini-3.6-flash": { input: 0.75, output: 3.75 },
   "google/gemini-2.5-pro": { input: 1.25, output: 10 },
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5 },

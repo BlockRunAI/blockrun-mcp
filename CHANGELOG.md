@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.54.6
+
+### Added — Gemini 4 Argon price row
+
+`google/gemini-4-argon` (live 2026-10-20 on Base and Solana) reserves its own
+$2/$10 per 1M instead of the $5/$30 default. That is Google's rate through
+2026-11-30; it moves to $4/$20 on 2026-12-01. Argon has no long-context tier.
+It is priced only: no routing tier or mode includes it.
+
 ## 0.54.5
 
 ### Added — DeepSeek V4.1 Flash
