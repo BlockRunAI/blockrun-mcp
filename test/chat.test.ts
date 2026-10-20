@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost, freeTierTruncationNote } from "../src/tools/chat.js";
 import { handleAnthropicNative, anthropicCallCost } from "../src/tools/chat-anthropic.js";
-import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS } from "../src/utils/constants.js";
+import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, FREE_SHADOWED_BY_PAID } from "../src/utils/constants.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 import type { BudgetState } from "../src/types.js";
 
@@ -203,8 +203,14 @@ test("every MODEL_TIERS.free entry is in FREE_CHAT_MODELS, and every member rese
   }
   for (const m of FREE_CHAT_MODELS) {
     assert.equal(estimateChatCost(1024, undefined, m, undefined, 600 * 1024), 0, m);
-    // The bare spelling is a real, chargeable-or-free id too (see BARE_TO_PREFIXED).
-    assert.equal(estimateChatCost(1024, undefined, m.slice(m.indexOf("/") + 1), undefined, 600 * 1024), 0, `bare ${m}`);
+    // The bare spelling is a real, chargeable-or-free id too (see BARE_TO_PREFIXED)
+    // — unless a PAID model owns it, in which case it must reserve that model.
+    const bare = m.slice(m.indexOf("/") + 1);
+    if (FREE_SHADOWED_BY_PAID.has(m)) {
+      assert.ok(estimateChatCost(1024, undefined, bare, undefined, 600 * 1024) > 0, `bare ${m} belongs to a paid model`);
+    } else {
+      assert.equal(estimateChatCost(1024, undefined, bare, undefined, 600 * 1024), 0, `bare ${m}`);
+    }
   }
 });
 
@@ -366,8 +372,40 @@ test("every catalog id has a unique vendor-less segment — the mapping cannot b
     if (!byBare.has(bare)) byBare.set(bare, new Set());
     byBare.get(bare)!.add(id);
   }
-  const clashes = [...byBare.entries()].filter(([, set]) => set.size > 1);
+  // The one tolerated clash: a $0 NVIDIA mirror sharing a PAID model's name.
+  // The paid id owns the bare spelling (FREE_SHADOWED_BY_PAID), so the clash
+  // can only over-reserve, never reserve $0 for a paid call.
+  const clashes = [...byBare.entries()].filter(([, set]) => {
+    if (set.size < 2) return false;
+    const paid = [...set].filter((id) => !FREE_CHAT_MODELS.has(id));
+    const free = [...set].filter((id) => FREE_CHAT_MODELS.has(id));
+    return !(paid.length === 1 && free.every((id) => FREE_SHADOWED_BY_PAID.has(id)));
+  });
   assert.deepEqual(clashes, [], `two vendors ship the same model name: ${JSON.stringify(clashes)}`);
+  assert.deepEqual([...FREE_SHADOWED_BY_PAID], ["nvidia/deepseek-v4-pro"]);
+});
+
+// The account sheet (blockrun.ai/api/pricing) prices these hidden NVIDIA ids
+// at $0 and both wallet gateways answer them unpaid (2026-10-20); before this
+// an explicit call reserved the $5/$30 default and an exhausted budget refused it.
+test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
+  const ids = [
+    "nvidia/nemotron-3-super-120b-a12b-free", "nvidia/qwen3.5-397b-a17b", "nvidia/nemotron-ultra-253b",
+    "nvidia/nemotron-super-49b", "nvidia/deepseek-v3.2", "nvidia/deepseek-v4-pro", "nvidia/deepseek-v4-flash",
+    "nvidia/nemotron-3-nano-omni-nim", "nvidia/mistral-large-3-675b", "nvidia/qwen3-coder-480b",
+    "nvidia/devstral-2-123b", "nvidia/glm-4.7", "nvidia/llama-4-maverick", "nvidia/qwen3-next-80b-a3b-instruct",
+    "nvidia/qwen3.5-122b-a10b", "nvidia/seed-oss-36b", "nvidia/mistral-small-4-119b",
+  ];
+  for (const id of ids) {
+    assert.equal(estimateChatCost(1024, undefined, id, undefined, 100_000), 0, id);
+    assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(id), `${id} must not join the routing order`);
+  }
+  // The bare name of the paid DeepSeek still reserves the paid rate.
+  assert.equal(
+    estimateChatCost(1024, undefined, "deepseek-v4-pro", undefined, 100_000),
+    estimateChatCost(1024, undefined, "deepseek/deepseek-v4-pro", undefined, 100_000),
+  );
+  assert.ok(estimateChatCost(1024, undefined, "deepseek-v4-pro", undefined, 100_000) > 0);
 });
 
 // ── Two flagship ids landed above the default, and nothing noticed ──
