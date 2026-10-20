@@ -382,7 +382,8 @@ test("every catalog id has a unique vendor-less segment — the mapping cannot b
     return !(paid.length === 1 && free.every((id) => FREE_SHADOWED_BY_PAID.has(id)));
   });
   assert.deepEqual(clashes, [], `two vendors ship the same model name: ${JSON.stringify(clashes)}`);
-  assert.deepEqual([...FREE_SHADOWED_BY_PAID], ["nvidia/deepseek-v4-pro"]);
+  // nvidia/deepseek-v4-pro was the one case until it was retired (2026-10-20).
+  assert.deepEqual([...FREE_SHADOWED_BY_PAID], []);
 });
 
 // The account sheet (blockrun.ai/api/pricing) prices these hidden NVIDIA ids
@@ -391,7 +392,7 @@ test("every catalog id has a unique vendor-less segment — the mapping cannot b
 test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
   const ids = [
     "nvidia/nemotron-3-super-120b-a12b-free", "nvidia/qwen3.5-397b-a17b", "nvidia/nemotron-ultra-253b",
-    "nvidia/nemotron-super-49b", "nvidia/deepseek-v3.2", "nvidia/deepseek-v4-pro", "nvidia/deepseek-v4-flash",
+    "nvidia/nemotron-super-49b", "nvidia/deepseek-v3.2",
     "nvidia/nemotron-3-nano-omni-nim", "nvidia/mistral-large-3-675b", "nvidia/qwen3-coder-480b",
     "nvidia/devstral-2-123b", "nvidia/glm-4.7", "nvidia/llama-4-maverick", "nvidia/qwen3-next-80b-a3b-instruct",
     "nvidia/qwen3.5-122b-a10b", "nvidia/seed-oss-36b", "nvidia/mistral-small-4-119b",
@@ -399,6 +400,11 @@ test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
   for (const id of ids) {
     assert.equal(estimateChatCost(1024, undefined, id, undefined, 100_000), 0, id);
     assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(id), `${id} must not join the routing order`);
+  }
+  // Retired from the gateways (unknown-model 400 since 2026-10-20): not free.
+  for (const gone of ["nvidia/deepseek-v4-pro", "nvidia/deepseek-v4-flash", "deepseek-v4-flash"]) {
+    assert.ok(!FREE_CHAT_MODELS.has(gone), gone);
+    assert.ok(estimateChatCost(1024, undefined, gone, undefined, 100_000) > 0, gone);
   }
   // The bare name of the paid DeepSeek still reserves the paid rate.
   assert.equal(

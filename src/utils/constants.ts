@@ -256,7 +256,7 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  * promise "still free when it returns".
  *
  * What that check cannot cover, and does not pretend to: a member the catalogue
- * does not list at all. Twenty-five of these are in that state on both gateways today,
+ * does not list at all. Twenty-three of these are in that state on both gateways today,
  * and delisting is not death — gpt-oss-120b is the gateway's own free fallback
  * and answers for itself while absent from GET /v1/models. The sweep names each
  * one as UNVERIFIED rather than counting it as checked; the only way to settle
@@ -291,7 +291,7 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   // Retired/hidden NVIDIA ids the ACCOUNT rail still prices at $0
   // (blockrun.ai/api/pricing, billingMode "free", 2026-10-20) and the wallet
   // gateways redirect onto a $0 model (MODEL_REDIRECTS / fallbackModel). All
-  // seventeen answered 200 with no payment header on BOTH chains on
+  // fifteen kept here answered 200 with no payment header on BOTH chains on
   // 2026-10-20, served by nemotron-3-super-120b, gpt-oss-20b, nano-omni or
   // llama-3.2-11b-vision. Not routed — an explicit call just reserves $0
   // instead of the $5/$30 default (verify:prices flagged each one).
@@ -300,11 +300,10 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "nvidia/nemotron-ultra-253b",
   "nvidia/nemotron-super-49b",
   "nvidia/deepseek-v3.2",
-  // Free ONLY when prefixed: bare `deepseek-v4-pro` is the PAID
-  // deepseek/deepseek-v4-pro ($1.32/$3.96). BARE_TO_PREFIXED lets the paid id
-  // win that spelling — see FREE_SHADOWED_BY_PAID below.
-  "nvidia/deepseek-v4-pro",
-  "nvidia/deepseek-v4-flash",
+  // NOT nvidia/deepseek-v4-pro or nvidia/deepseek-v4-flash: both are being
+  // removed from the gateways (blockrun#848 for -flash, live on blockrun.ai;
+  // -pro approved 2026-10-20) and then answer an unknown-model 400 — a $0
+  // reserve for an id that no longer exists would only hide that.
   "nvidia/nemotron-3-nano-omni-nim",
   "nvidia/mistral-large-3-675b",
   "nvidia/qwen3-coder-480b",
@@ -618,7 +617,8 @@ export const GATEWAY_CHARS_PER_TOKEN_OBSERVED = 2.08;
  * Post-slash segments are unique across the catalog (pinned by a test), so the
  * mapping is unambiguous — with one deliberate exception class: a $0 NVIDIA
  * mirror whose bare name is also a PAID model's (nvidia/deepseek-v4-pro vs
- * deepseek/deepseek-v4-pro). There the paid id must own the bare spelling:
+ * deepseek/deepseek-v4-pro was the case, until the mirror was retired on
+ * 2026-10-20; none remain). There the paid id must own the bare spelling:
  * mapping it to the free mirror would reserve $0 for a paid call, the gate
  * bypass this file exists to prevent. Free ids go in FIRST so any paid id
  * with the same bare name overwrites them.
