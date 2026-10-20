@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.54.5
+
+### Added — DeepSeek V4.1 Flash
+
+`deepseek/deepseek-v4.1-flash` ($0.14/$0.28, the same model and price as
+`deepseek-chat`) has a price row and sits right after `deepseek-chat` in the
+fast and cheap tiers. Base and Solana both serve it.
+
+### Fixed — the chat, free, image and video tables match the live catalogue (2026-10-20)
+
+- 33 live paid chat ids that had no price row now reserve their own rate
+  instead of the $5/$30 default (gpt-6.1-sol, gpt-5.6-*-pro, mistral-large-4,
+  glm-5.3/-flash, qwen3.8-max/-flash, gemini-3.6/3.8-flash, hy4-preview,
+  mimo-v2.5 and others). `tencent/hy3` is dropped. gpt-6.1-sol's >272K
+  long-context step is priced.
+- The 17 hidden NVIDIA ids that the gateways serve at $0 now reserve $0, so an
+  exhausted budget no longer refuses a free call.
+- `nvidia/deepseek-v4-pro` and `nvidia/deepseek-v4-flash` leave the free set:
+  the gateways retired both and answer 400. Bare `deepseek-v4-pro` reserves
+  the paid `deepseek/deepseek-v4-pro` rate.
+- The free tier was re-probed on both chains: `nemotron-3-super-120b` joins;
+  `north-mini-code` and `laguna-xs-2.1` leave it.
+- Images: `gpt-image-2.5-flare`/`-sunburst` and `grok-imagine-image-2.0` are
+  added; `grok-imagine-image-pro` drops to $0.05. Video:
+  `grok-imagine-video-1.5` is added.
+
 ## 0.54.4
 
 ### Fixed — a Solana video settle whose outcome is unknown is waited out, never "no charge" (#177)
