@@ -22,23 +22,23 @@ Most image failures are prompt failures. This skill gives the MCP agent a repeat
 
 ## Quick Decision Table
 
-Costs are what you are actually CHARGED, verified live. **Size is the biggest
+**Prices:** per image, and they change — look the model up live rather than trusting a number here: `GET https://blockrun.ai/api/v1/models` (Solana: `https://sol.blockrun.ai/api/v1/models`), find the entry whose `id` is the model below, and read `pricing.per_image` plus `pricing.transaction_fee`. That is the base-size rate; the exact amount for your size and quality is quoted in the HTTP 402 challenge before anything is signed. **Size is the biggest
 lever:** any dimension above 1024 moves GPT Image 2 to the large tier and roughly
 doubles the price ($0.064 → $0.127). Ask for `1536x1024` only when you need it.
 
-| User wants... | Model | Mode | Size | Cost |
-|---|---|---|---|---|
-| Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` | $0.127 |
-| Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` | $0.064 |
-| Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` | $0.064–0.106 |
-| Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) | $0.0955 |
-| Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | $0.0535 |
-| Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` | $0.01675 |
-| Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` | $0.04825 ($0.0955 when both sides >1024) |
-| Premium render or high-precision edit | `openai/gpt-image-2.5-sunburst` (`-flare` generates only, same price) | generate or edit | `1024x1024` | $0.295 ($0.589 at `1536x1024` / `1024x1536`) |
-| Stylized Grok render, one step above the base | `xai/grok-imagine-image-2.0` | generate | `1024x1024` (only size) | $0.043 |
-| Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | $0.064 at 1024x1024, $0.127 above |
-| Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target | $0.064 at 1024x1024, $0.127 above |
+| User wants... | Model | Mode | Size |
+|---|---|---|---|
+| Poster / typography-heavy asset | `openai/gpt-image-2` | generate | `1536x1024` or `1024x1536` |
+| Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` |
+| Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` |
+| Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) |
+| Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` |
+| Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` |
+| Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` |
+| Premium render or high-precision edit | `openai/gpt-image-2.5-sunburst` (`-flare` generates only, same price) | generate or edit | `1024x1024` |
+| Stylized Grok render, one step above the base | `xai/grok-imagine-image-2.0` | generate | `1024x1024` (only size) |
+| Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source |
+| Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target |
 
 **Valid GPT Image 2 sizes:** `1024x1024` (square), `1536x1024` (landscape ~3:2), `1024x1536` (portrait ~2:3).
 

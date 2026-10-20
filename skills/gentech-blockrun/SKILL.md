@@ -209,13 +209,15 @@ blockrun_video({ prompt: "animated data visualization", duration_seconds: 8 })
 | `blockrun_chat` (free mode) | $0 | NVIDIA-backed chat |
 | `blockrun_chat` (glm mode) | per-token | Zhipu GLM-5 coding — billed on tokens used, not a flat rate |
 | `blockrun_exa` (search) | $0.0110 | deep research (`contents`: $0.002/URL + $0.001) |
-| `blockrun_speech` | $0.0535/1k chars | TTS |
-| `blockrun_image` | $0.01675–0.106 | image generation |
-| `blockrun_music` | $0.1585 | music tracks |
-| `blockrun_video` | $0.421+ | short video clips (per-second × duration) |
+| `blockrun_speech` | per model — live `pricing` at `/api/v1/models` | TTS |
+| `blockrun_image` | per model — live `pricing` at `/api/v1/models` | image generation |
+| `blockrun_music` | per model — live `pricing` at `/api/v1/models` | music tracks |
+| `blockrun_video` | per model — live `pricing` at `/api/v1/models` | short video clips (per-second × duration) |
 | `blockrun_markets` | $0.0085 | prediction market data, wallet analytics (flat) |
 | `blockrun_modal` | $0.0020–$192 | remote sandbox execution — `timeout` drives the price, see the modal skill |
 | `blockrun_phone` | $0.0110–$5.001 | lookups; number buy/renew is $5.001 |
+
+Model-priced tools (chat beyond the free tier, speech, image, music, video) carry no number here because their prices move: read the model's `pricing` object from `GET https://blockrun.ai/api/v1/models` (Solana: `https://sol.blockrun.ai/api/v1/models`) — `input`/`output` per 1M tokens for chat, `per_1k_chars` for speech, `per_image`, `per_track`, or `per_second` for media, each plus `transaction_fee`. The HTTP 402 challenge quotes the exact amount before anything is signed.
 
 ### Daily Budget Formula (GenTech's Setup)
 
