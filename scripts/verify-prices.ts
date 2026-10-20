@@ -187,6 +187,22 @@ const PROBES: Probe[] = [
   // nano-banana-2 is 1024-only upstream (the gateway 400s any other size), so a
   // single probe covers its whole price surface.
   { label: "image nano-banana-2 1024", path: "images/generations", body: { model: "google/nano-banana-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("google/nano-banana-2", "1024x1024") },
+  // Added 2026-10-20 with their rows: the 2.5 pair at both size tiers (flat
+  // across quality, $0.28 / $0.56), Grok Imagine 2.0, and the Pro row that
+  // had sat at $0.07 for six weeks after the gateway cut it to $0.05.
+  ...([
+    ["openai/gpt-image-2.5-flare", "1024x1024"],
+    ["openai/gpt-image-2.5-flare", "1536x1024"],
+    ["openai/gpt-image-2.5-sunburst", "1024x1024"],
+    ["openai/gpt-image-2.5-sunburst", "1024x1536"],
+    ["xai/grok-imagine-image-2.0", "1024x1024"],
+    ["xai/grok-imagine-image-pro", "1024x1024"],
+  ] as const).map(([model, size]) => ({
+    label: `image ${model.slice(model.indexOf("/") + 1)} ${size}`,
+    path: "images/generations",
+    body: { model, prompt: "a cube", size },
+    expected: estimateImageCost(model, size),
+  })),
   // Seedream's tier is keyed on min(w,h), not max: 2048x1024 must bill BASE
   // while 2048x2048 bills the large tier. Pin the boundary from both sides.
   ...(["1024x1024", "2048x1024", "2048x2048"].map((size) => ({
@@ -207,6 +223,10 @@ const PROBES: Probe[] = [
     ["xai/grok-imagine-video", undefined, undefined],
     ["xai/grok-imagine-video", undefined, "720p"],
     ["xai/grok-imagine-video", 15, "720p"],
+    ["xai/grok-imagine-video-1.5", undefined, undefined],
+    ["xai/grok-imagine-video-1.5", undefined, "720p"],
+    ["xai/grok-imagine-video-1.5", undefined, "1080p"],
+    ["xai/grok-imagine-video-1.5", 15, "1080p"],
     ["azure/sora-2", undefined, undefined],
     ["bytedance/seedance-1.5-pro", undefined, undefined],
     ["bytedance/seedance-1.5-pro", 12, undefined],

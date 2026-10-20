@@ -25,6 +25,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
+import { MODEL_TIERS } from "../src/utils/constants.js";
 
 type Fail = false | "unpaid-400" | "after-payment-524" | "after-payment-400" | "abort" | "midstream";
 type Attempt = { settleUsd: number; fail: Fail; served?: string; finish?: string; text?: string };
@@ -203,7 +204,7 @@ for (const c of ["solana", "base"] as const) {
 
   test(`${c}: a free model that aborts is never "may have settled" — the free tier walks on`, async () => {
     chain = c;
-    const free = ["nvidia/gpt-oss-20b", "cohere/north-mini-code", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"];
+    const free = MODEL_TIERS.free;
     script = new Map([[free[0], { settleUsd: 0, fail: "abort" }], [free[1], { settleUsd: 0, fail: "after-payment-524" }]]);
     attempts = [];
     const { budget, call } = makeHarness();
