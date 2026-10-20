@@ -498,15 +498,20 @@ test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => 
 // has capacity), which is exactly why the tier keys on ids that echo their
 // own name: those are distinct backends. The pruned ids stay in
 // FREE_CHAT_MODELS so an explicit call still reserves $0 (D56).
-test("free[] is the self-serving, both-chain set from the 2026-09-13 probe, fastest first", () => {
+// 2026-10-20 re-probe (same shape): every $0 id still answers 200 unpaid on
+// both chains, but north-mini-code and laguna-xs-2.1 now answer as
+// nemotron-3-super-120b on BOTH — out of the tier, still in FREE_CHAT_MODELS.
+test("free[] is the self-serving set from the 2026-10-20 probe, fastest first", () => {
   assert.deepEqual([...MODEL_TIERS.free], [
-    "nvidia/gpt-oss-20b",                              // itself, 0.7s sol / 1.7s base
-    "cohere/north-mini-code",                          // itself, 1.0s / 3.0s
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",   // itself (…-nim on sol), 2.3s / 3.6s
-    "poolside/laguna-xs-2.1",                          // itself on sol 0.7s; 429 capacity on base that day
-    "nvidia/llama-3.2-11b-vision",                     // itself on sol 9.8s; no answer in 90s on base — last
+    "nvidia/gpt-oss-20b",                              // itself on both, 0.8-1.1s
+    "nvidia/nemotron-3-super-120b",                    // itself on both, 1.0-1.2s (the redirect target)
+    "nvidia/llama-3.2-11b-vision",                     // itself on both, 1.1-6.6s
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",   // itself on base once, aliased in the re-probe — last
   ]);
-  for (const aliased of ["nvidia/gpt-oss-120b", "nvidia/nemotron-3-ultra-550b", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2"]) {
+  for (const aliased of [
+    "nvidia/gpt-oss-120b", "nvidia/nemotron-3-ultra-550b", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron",
+    "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2", "cohere/north-mini-code", "poolside/laguna-xs-2.1",
+  ]) {
     assert.ok(FREE_CHAT_MODELS.has(aliased), `${aliased} is still $0 — an explicit call must reserve nothing`);
     assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(aliased), `${aliased} answers as another model on both chains — not a fallback rung`);
   }

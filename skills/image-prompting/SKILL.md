@@ -35,6 +35,8 @@ doubles the price ($0.064 → $0.127). Ask for `1536x1024` only when you need it
 | Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` | $0.0535 |
 | Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` | $0.01675 |
 | Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` | $0.04825 ($0.0955 when both sides >1024) |
+| Premium render or high-precision edit | `openai/gpt-image-2.5-sunburst` (`-flare` generates only, same price) | generate or edit | `1024x1024` | $0.295 ($0.589 at `1536x1024` / `1024x1536`) |
+| Stylized Grok render, one step above the base | `xai/grok-imagine-image-2.0` | generate | `1024x1024` (only size) | $0.043 |
 | Edit an existing image (localized change) | `openai/gpt-image-2` | edit | match source | $0.064 at 1024x1024, $0.127 above |
 | Composite from multiple refs | `openai/gpt-image-2` | edit (multi-ref) | match target | $0.064 at 1024x1024, $0.127 above |
 
@@ -312,4 +314,4 @@ CONSTRAINTS:
 
 ## Reference
 
-BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-2`, `google/nano-banana-pro`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-pro`, `bytedance/seedream-5-pro`
+BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-2`, `google/nano-banana-pro`, `openai/gpt-image-2.5-flare`, `openai/gpt-image-2.5-sunburst`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-2.0`, `xai/grok-imagine-image-pro`, `bytedance/seedream-5-pro`

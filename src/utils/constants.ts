@@ -14,8 +14,10 @@ export const BASE_RPC_URLS = [
   "https://1rpc.io/base",
 ];
 
-// Model catalogue, refreshed against the live GET /v1/models on 2026-08-12
-// (91 models on BOTH chains; free tier re-probed the same day — see free[]).
+// Model catalogue, refreshed against the live GET /v1/models on 2026-10-20
+// (88 chat models on BOTH chains, identical $/M input/output; Base also lists
+// azure/sora-2). Free tier re-probed the same day — see free[]. Earlier
+// refreshes: 2026-08-12, 2026-09-08.
 // Prices below are $/M input / $/M output as the BASE gateway quotes them.
 // Known chain drift on 2026-08-12, confirmed against both gateways' source:
 // sol still quotes deepseek-chat/reasoner at $0.2/$0.4 (Base took DeepSeek's
@@ -38,7 +40,8 @@ export const BASE_RPC_URLS = [
 //   presence in the catalogue is NECESSARY BUT NOT SUFFICIENT for health;
 //   absence from it is NOT SUFFICIENT for death — probe before deleting.
 //
-// OpenAI (31): gpt-6-astra ($10/$50, 1M — the GPT-6 flagship; listed by
+// OpenAI (32): gpt-6.1-sol ($2/$10, 1M — refreshed GPT-6 Sol, same 272K step
+//   as gpt-6-sol: $4/$15), gpt-6-astra ($10/$50, 1M — the GPT-6 flagship; listed by
 //   2026-09-08 ABOVE the $5/$30 default, so it carries a CHAT_PRICE_PER_MTOKEN
 //   row), gpt-6-sol ($2/$10, 1M — the cost-efficient GPT-6 tier), gpt-6-luna
 //   ($0.1/$0.5, 1M — fast, low-cost GPT-6); all three GPT-6 bill input 2x and
@@ -46,13 +49,13 @@ export const BASE_RPC_URLS = [
 //   reasoning; CUT from $5/$30 on 2026-08-21), gpt-5.6-terra
 //   ($2/$12, 1M — the balanced default; CUT from $2.5/$15), gpt-5.6-luna
 //   ($0.2/$1.2, 1M, no reasoning; CUT from $1/$6), plus the 2026-08 "pro
-//   reasoning mode" trio: gpt-5.6-sol-pro ($4/$20), gpt-5.6-terra-pro ($1/$6 —
-//   deliberately HALF the standard Terra rate, per the gateway registry, not a
-//   pricing bug), gpt-5.6-luna-pro ($0.1/$0.6). gpt-5.5 ($5/$30), gpt-5.5-pro
+//   reasoning mode" trio, now billed at the standard rates of their base
+//   models (2026-10-20 catalogue): gpt-5.6-sol-pro ($4/$20), gpt-5.6-terra-pro
+//   ($2/$12 — no longer the half rate it launched at), gpt-5.6-luna-pro ($0.2/$1.2). gpt-5.5 ($5/$30), gpt-5.5-pro
 //   ($30/$180 — ties gpt-5.4-pro for priciest model served), chat-latest
 //   (rolling ChatGPT alias, currently GPT-5.5 Instant, 128K, $5/$30),
-//   gpt-5.4 ($2.5/$15), gpt-5.4-pro ($30/$180), gpt-5.3 / gpt-5.2 /
-//   gpt-5.3-codex ($1.75/$14), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
+//   gpt-5.4 ($2.5/$15), gpt-5.4-pro ($30/$180), gpt-5.2 /
+//   gpt-5.3-codex ($1.75/$14) (gpt-5.3 is hidden + available:false), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
 //   o1 ($15/$60), o3 ($2/$8), o3-mini, o4-mini
 // Anthropic (12): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
@@ -65,18 +68,19 @@ export const BASE_RPC_URLS = [
 //   $3/$15; both gateways 2026-09-08. On the native path the price row IS the
 //   ledger, so the stale row over-booked every sonnet-5 call 1.5x),
 //   claude-opus-4.5, claude-sonnet-4.6, claude-sonnet-4.5, claude-haiku-4.5
-// Google (9): gemini-3.1-pro ($2/$12), gemini-3.6-flash ($1.5/$7.5, thinking —
-//   newest Flash), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
+// Google (10): gemini-3.1-pro ($2/$12), gemini-3.8-flash and gemini-3.6-flash
+//   ($0.75/$3.75 each — 3.6 was $1.5/$7.5 when first listed), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
 //   file recorded in July), gemini-3-flash-preview ($0.5/$3),
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
 //   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro, gemini-2.5-flash,
 //   gemini-2.5-flash-lite — all 1M context
-// DeepSeek (3): deepseek-v4-pro ($1.32/$3.96, 1M, reasoning + coding;
+// DeepSeek (4): deepseek-v4-flash-vision-exp ($0.3/$1.2), deepseek-v4-pro ($1.32/$3.96, 1M, reasoning + coding;
 //   repriced by the gateway and re-probed 2026-09-02),
 //   deepseek-chat, deepseek-reasoner ($0.14/$0.28 on Base since DeepSeek's
 //   2026-08-07 cut; sol still quotes $0.2/$0.4 — see the drift note above)
 // Moonshot (1): kimi-k3 ($3/$15, 1M, vision + reasoning + coding)
-// ZAI (4): glm-5.2 ($1.4/$4.4, 1M), glm-5.1 ($1.4/$4.4), glm-5 ($1/$3.2 —
+// ZAI (6): glm-5.3 ($1.4/$4.4), glm-5.3-flash ($0.15/$0.5, vision),
+//   glm-5.2 ($1.4/$4.4, 1M), glm-5.1 ($1.4/$4.4), glm-5 ($1/$3.2 —
 //   Z.AI RAISED the list rate; still the cheapest ZAI, but no longer a
 //   cheap-tier pick), glm-5-turbo ($1.2/$4)
 // xAI (5): grok-4.7 ($2/$6, 500K, vision, always-on reasoning), grok-4.6
@@ -84,12 +88,20 @@ export const BASE_RPC_URLS = [
 //   native Live Search; grok-4.3 ($1.25/$2.5, 1M),
 //   grok-build-0.1 ($1/$2, coding)
 // MiniMax (2): minimax-m3 ($0.3/$1.2, 1M), minimax-m2.7 ($0.3/$1.2, 200K)
-// Qwen (3): qwen3.7-max ($1.475/$4.425, 1M), qwen3.7-plus ($0.32/$1.28, 1M),
+// Qwen (5): qwen3.8-max ($2/$6), qwen3.8-flash ($0.15/$0.47, vision),
+//   qwen3.7-max ($1.475/$4.425, 1M), qwen3.7-plus ($0.32/$1.28, 1M),
 //   qwen3.7-flash ($0.03/$0.13, 1M — the cheapest PAID model in the catalogue;
 //   live-probed 2026-08-12)
-// Tencent: hy3 RETIRED 2026-09-24 (hidden; the gateway redirects pins to
-//   qwen3.7-flash, already second in cheap[]). Price row kept for pinned callers.
-// Xiaomi (1): mimo-v2.5-pro ($0.435/$0.87, 1M reasoning)
+// Tencent (1): hy4-preview ($0.834/$2.501). hy3 RETIRED 2026-09-24 (hidden;
+//   the wallet gateways redirect pins to qwen3.7-flash). Its price row was
+//   dropped 2026-10-20: it had gone stale against the account sheet
+//   ($0.0825/$0.33), and a row at either rate would under-cover a huge prompt
+//   on the wallet rails, where the redirect target's own long-context steps
+//   reach $0.2/$0.8. Unlisted, a pinned hy3 reserves the $5/$30 default,
+//   which covers every rail.
+// Xiaomi (2): mimo-v2.5 ($0.14/$0.28, vision), mimo-v2.5-pro ($0.435/$0.87)
+// Mistral (1): mistral-large-4 ($0.68/$2.09, vision)
+// Poolside: laguna-s-2.1 ($0.09/$0.18, paid); laguna-xs-2.1 is the $0 one
 // NVIDIA — genuinely $0. Serving healthy on the 2026-08-12 probe (both chains,
 //   realistic ~1.4K-token prompt): nemotron-3-nano-omni-30b-a3b-reasoning
 //   (vision, ~1s), step-3.7-flash, mistral-nemotron (24.9s on sol — slowest
@@ -196,9 +208,27 @@ export const MODEL_TIERS = {
   // sol), muse-glimmer-30b and gemma-4-31b (400 "Unknown model" on Base;
   // gemma crawled 79.8s on sol) — routing has to hold on both chains. They are
   // still in FREE_CHAT_MODELS, so an explicit call to one reserves $0.
+  //
+  // 2026-10-20 SWEEP — same probe (~3,000 chars, max_tokens 32, no payment
+  // header, both gateways, response `model` read). All fourteen $0 ids still
+  // answer 200 unpaid on both chains, so none is dead in the money sense; but
+  // most now answer as nemotron-3-super-120b, the gateway's MODEL_REDIRECTS /
+  // fallback target. Two probes that day; self-serving:
+  //   gpt-oss-20b           itself on both, both probes (0.8-1.1s)
+  //   nemotron-3-super-120b itself on both, both probes (1.0-1.2s) — hidden
+  //                         from GET /v1/models but it IS the backend every
+  //                         redirect lands on, so it joins the tier
+  //   llama-3.2-11b-vision  itself on both, both probes (1.1-6.6s)
+  //   nemotron-3-nano-omni  itself on Base in the first probe (3.3s), aliased
+  //                         on both in the second — tail rung only, kept
+  //                         because it is the other free vision model
+  //   muse-glimmer-30b      itself on sol only; nemotron-3.5-lightning sol only
+  // north-mini-code and laguna-xs-2.1 now answer as nemotron-3-super-120b on
+  // BOTH chains (and are available:false in the Base catalogue), so by this
+  // list's rule they leave the tier and stay in FREE_CHAT_MODELS.
   free: [
-    "nvidia/gpt-oss-20b", "cohere/north-mini-code", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-    "poolside/laguna-xs-2.1", "nvidia/llama-3.2-11b-vision",
+    "nvidia/gpt-oss-20b", "nvidia/nemotron-3-super-120b", "nvidia/llama-3.2-11b-vision",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   ],
   coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
@@ -226,7 +256,7 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  * promise "still free when it returns".
  *
  * What that check cannot cover, and does not pretend to: a member the catalogue
- * does not list at all. Six of these are in that state on both gateways today,
+ * does not list at all. Eight of these are in that state on both gateways today,
  * and delisting is not death — gpt-oss-120b is the gateway's own free fallback
  * and answers for itself while absent from GET /v1/models. The sweep names each
  * one as UNVERIFIED rather than counting it as checked; the only way to settle
@@ -238,7 +268,14 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  */
 export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   ...MODEL_TIERS.free,
-  // Still $0 on both gateways (200 without a payment header, 2026-09-13) but
+  // billing_mode:"free" in GET /v1/models (2026-10-20) but answering as
+  // nemotron-3-super-120b on both chains — out of the tier, still $0.
+  "cohere/north-mini-code",
+  "poolside/laguna-xs-2.1",
+  // Still $0 on both gateways (200 without a payment header, 2026-09-13 and
+  // again 2026-10-20 — every one now answers as nemotron-3-super-120b, or
+  // llama-3.2-11b-vision for the two nano-* ids on Base, via the gateway's
+  // MODEL_REDIRECTS, all of whose free targets are $0) but
   // answering as ANOTHER model — pulled from the routing tier, kept here so an
   // explicit call reserves $0. See the free[] sweep note.
   "nvidia/gpt-oss-120b",
@@ -247,10 +284,10 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "nvidia/mistral-nemotron",
   "nvidia/nemotron-nano-12b-v2-vl",
   "nvidia/nemotron-nano-9b-v2",
-  // Live billing_mode:"free" on 2026-09-08 but deliberately not routed.
-  "nvidia/nemotron-3.5-lightning", // 429 capacity on Base, no answer on sol (09-13)
-  "nvidia/muse-glimmer-30b", // Solana catalogue only (400 on Base)
-  "nvidia/gemma-4-31b", // Solana catalogue only (400 on Base; 79.8s crawl on sol)
+  // Live billing_mode:"free" but deliberately not routed (2026-10-20 probe).
+  "nvidia/nemotron-3.5-lightning", // itself on sol only; super-120b on Base
+  "nvidia/muse-glimmer-30b", // now listed on both; itself on sol only
+  "nvidia/gemma-4-31b", // delisted on both; redirected to super-120b (gateway MODEL_REDIRECTS)
 ]);
 
 /**
@@ -258,7 +295,10 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
  * catalog model priced ABOVE the DEFAULT_CHAT_PRICE an explicit `model` falls
  * back to. Read off the live GET /v1/models on 2026-08-13; gpt-6-astra and
  * claude-fable-5.1 added from the 2026-09-08 catalogue, after both had sat
- * above the default with no row for weeks (see the block comment below).
+ * above the default with no row for weeks (see the block comment below). Since
+ * 2026-10-20 it also carries every other live, paid chat id in the catalogue,
+ * so the table is the whole priced catalogue plus the hidden-but-served
+ * claude-opus-4.
  *
  * This exists because the budget gate used to reserve chat against two hardcoded
  * constants — "$5/M input" and "4 chars per token" — and BOTH were wrong at the
@@ -368,7 +408,45 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "deepseek/deepseek-chat": { input: 0.14, output: 0.28 },
   "deepseek/deepseek-reasoner": { input: 0.14, output: 0.28 },
   "minimax/minimax-m3": { input: 0.3, output: 1.2 },
-  "tencent/hy3": { input: 0.132, output: 0.528 },
+  // Every other live, available, paid chat id in GET /v1/models (2026-10-20;
+  // Base and Solana quote identical $/M input/output for all of them). None is
+  // above the default, so none is needed for safety — they are here so an
+  // explicit call reserves its own rate instead of the $5/$30 worst case, which
+  // would lock a small budget out of a $0.09/M model. verify:prices fails on a
+  // row the live catalogue prices above, so a reprice surfaces as a failure.
+  "openai/gpt-6.1-sol": { input: 2, output: 10 },
+  "openai/gpt-5.6-sol-pro": { input: 4, output: 20 },
+  "openai/gpt-5.6-terra-pro": { input: 2, output: 12 },
+  "openai/gpt-5.6-luna-pro": { input: 0.2, output: 1.2 },
+  "openai/chat-latest": { input: 5, output: 30 },
+  "openai/gpt-5.4": { input: 2.5, output: 15 },
+  "openai/gpt-5.4-mini": { input: 0.75, output: 4.5 },
+  "openai/gpt-5.2": { input: 1.75, output: 14 },
+  "openai/gpt-4.1": { input: 2, output: 8 },
+  "openai/gpt-4.1-mini": { input: 0.4, output: 1.6 },
+  "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
+  "openai/gpt-4o": { input: 2.5, output: 10 },
+  "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "openai/o3": { input: 2, output: 8 },
+  "openai/o3-mini": { input: 1.1, output: 4.4 },
+  "openai/o4-mini": { input: 1.1, output: 4.4 },
+  "google/gemini-3.8-flash": { input: 0.75, output: 3.75 },
+  "google/gemini-3.6-flash": { input: 0.75, output: 3.75 },
+  "google/gemini-2.5-pro": { input: 1.25, output: 10 },
+  "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5 },
+  "google/gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+  "deepseek/deepseek-v4-flash-vision-exp": { input: 0.3, output: 1.2 },
+  "zai/glm-5.3": { input: 1.4, output: 4.4 },
+  "zai/glm-5.3-flash": { input: 0.15, output: 0.5 },
+  "minimax/minimax-m2.7": { input: 0.3, output: 1.2 },
+  "qwen/qwen3.8-max": { input: 2, output: 6 },
+  "qwen/qwen3.8-flash": { input: 0.15, output: 0.47 },
+  "qwen/qwen3.7-plus": { input: 0.32, output: 1.28 },
+  "tencent/hy4-preview": { input: 0.834, output: 2.501 },
+  "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28 },
+  "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87 },
+  "poolside/laguna-s-2.1": { input: 0.09, output: 0.18 },
+  "mistral/mistral-large-4": { input: 0.68, output: 2.09 },
 };
 
 /**
@@ -403,7 +481,8 @@ export interface LongContextStep {
 /**
  * Long-context steps, copied from `pricing.long_context` in GET /v1/models
  * (blockrun.ai and sol.blockrun.ai agree; the Qwen steps are on Base only and
- * are kept because a reserve has to cover the dearer rail). Read 2026-10-02.
+ * are kept because a reserve has to cover the dearer rail). Read 2026-10-02;
+ * re-read 2026-10-20 (gpt-6.1-sol added — the only new step).
  *
  * Without this the gate reserved base rates for every prompt, and the gateway
  * quotes the step: a 300K-token prompt to gpt-6-astra reserved $10/M input
@@ -428,6 +507,7 @@ const XAI_200K = (input: number, output: number): readonly LongContextStep[] =>
 export const LONG_CONTEXT_PRICE_PER_MTOKEN: Record<string, readonly LongContextStep[]> = {
   // OpenAI GPT-6 and GPT-5.4+: 2x input / 1.5x output above 272K.
   "openai/gpt-6-astra": OPENAI_272K(20, 75),
+  "openai/gpt-6.1-sol": OPENAI_272K(4, 15),
   "openai/gpt-6-sol": OPENAI_272K(4, 15),
   "openai/gpt-6-luna": OPENAI_272K(0.2, 0.75),
   "openai/gpt-5.6-sol": OPENAI_272K(8, 30),

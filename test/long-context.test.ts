@@ -82,14 +82,15 @@ test("a multi-step ladder prices at the highest step reached (qwen3.7-flash: 32K
 });
 
 test("a step never lowers the reserve below the base it would otherwise use", () => {
-  // gpt-5.4 has no CHAT_PRICE_PER_MTOKEN row, so it reserves the $5/$30 default;
-  // its published >272K output rate ($22.50) is below that and must not win.
+  // Against the $5/$30 default base (what an id with no CHAT_PRICE_PER_MTOKEN
+  // row reserves), gpt-5.4's published >272K output rate ($22.50) is below the
+  // base and must not win.
   const rate = chatRateAt("openai/gpt-5.4", DEFAULT_CHAT_PRICE, 300_000);
   assert.deepEqual(rate, { input: DEFAULT_CHAT_PRICE.input, output: DEFAULT_CHAT_PRICE.output });
-  assert.ok(
-    estimateChatCost(MAX_TOKENS, undefined, "gpt-5.4", undefined, charsFor(300_000)) >=
-      estimateChatCost(MAX_TOKENS, undefined, "someone/unknown", undefined, charsFor(300_000)),
-  );
+  // Component-wise: a base above the step on one axis keeps that axis.
+  assert.deepEqual(chatRateAt("openai/gpt-5.4", { input: 6, output: 10 }, 300_000), { input: 6, output: 22.5 });
+  // With its own $2.5/$15 row (2026-10-20), gpt-5.4 reserves the step at 300K.
+  assert.deepEqual(chatRateAt("openai/gpt-5.4", CHAT_PRICE_PER_MTOKEN["openai/gpt-5.4"], 300_000), { input: 5, output: 22.5 });
 });
 
 test("bare ids pick up the step too", () => {

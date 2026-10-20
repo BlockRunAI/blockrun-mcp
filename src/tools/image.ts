@@ -122,14 +122,26 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
   return { dataUri: `data:${mime};base64,${buffer.toString("base64")}`, localPath };
 }
 
-// Base (1024x1024) prices, mirroring the live /v1/images/models catalog.
-// dall-e-3 and flux-schnell were delisted upstream — do not re-add them.
+// Base (1024x1024) prices, mirroring the gateway registry's IMAGE_MODELS
+// (blockrun src/lib/models.ts). GET /v1/models publishes these WITH the 5%
+// margin (per_image = base x 1.05, e.g. gpt-image-2 $0.063), so divide by 1.05
+// when checking a row against it. dall-e-3 and flux-schnell were delisted
+// upstream — do not re-add them.
+//
+// 2026-10-20: grok-imagine-image-pro cut $0.07 -> $0.05 (the gateway's own
+// size row was corrected on 2026-09-08; this table never followed, so it
+// over-reserved 40%). Added gpt-image-2.5-flare / -sunburst ($0.28, flat
+// across `quality`, which this tool does not send) and grok-imagine-image-2.0
+// ($0.04 — the gateway pins xAI's `quality: "low"`, the tier that price covers).
 const GENERATE_MODEL_COST: Record<string, number> = {
   "zai/cogview-4": 0.015,
   "xai/grok-imagine-image": 0.02,
-  "xai/grok-imagine-image-pro": 0.07,
+  "xai/grok-imagine-image-2.0": 0.04,
+  "xai/grok-imagine-image-pro": 0.05,
   "openai/gpt-image-1": 0.02,
   "openai/gpt-image-2": 0.06,
+  "openai/gpt-image-2.5-flare": 0.28,
+  "openai/gpt-image-2.5-sunburst": 0.28,
   "google/nano-banana": 0.05,
   "google/nano-banana-2": 0.09,
   "google/nano-banana-pro": 0.10,
@@ -140,14 +152,18 @@ const GENERATE_MODEL_COST: Record<string, number> = {
 const LARGE_SIZE_COST: Record<string, number> = {
   "openai/gpt-image-1": 0.04,
   "openai/gpt-image-2": 0.12,
+  "openai/gpt-image-2.5-flare": 0.56, // 1536x1024 / 1024x1536
+  "openai/gpt-image-2.5-sunburst": 0.56,
   "google/nano-banana-pro": 0.15, // 4096x4096 tier
   "bytedance/seedream-5-pro": 0.09, // min(w,h) > 1024 tier — see LARGE_SIZE_MIN_DIM_MODELS
 };
 
-// Mirrors the gateway's EDIT_SUPPORTED_MODELS (/v1/images/image2image).
+// Mirrors the gateway's EDIT_SUPPORTED_MODELS (/v1/images/image2image,
+// src/lib/image-editing.ts). Of the 2.5 pair only Sunburst edits.
 const EDIT_MODELS = new Set([
   "openai/gpt-image-1",
   "openai/gpt-image-2",
+  "openai/gpt-image-2.5-sunburst",
   "google/nano-banana",
   "google/nano-banana-2",
   "google/nano-banana-pro",
@@ -162,7 +178,7 @@ const MAX_EDIT_IMAGES_BY_PREFIX: Record<string, number> = {
 };
 
 // Mirrors the gateway's MASK_SUPPORTED_MODELS — only OpenAI image models inpaint.
-const MASK_MODELS = new Set(["openai/gpt-image-1", "openai/gpt-image-2"]);
+const MASK_MODELS = new Set(["openai/gpt-image-1", "openai/gpt-image-2", "openai/gpt-image-2.5-sunburst"]);
 
 const IMAGE_MODELS = [
   "zai/cogview-4",
@@ -171,7 +187,10 @@ const IMAGE_MODELS = [
   "google/nano-banana-pro",
   "openai/gpt-image-1",
   "openai/gpt-image-2",
+  "openai/gpt-image-2.5-flare",
+  "openai/gpt-image-2.5-sunburst",
   "xai/grok-imagine-image",
+  "xai/grok-imagine-image-2.0",
   "xai/grok-imagine-image-pro",
   "bytedance/seedream-5-pro",
 ] as const;
@@ -190,6 +209,8 @@ const IMAGE_MODELS = [
 const LARGE_SIZE_THRESHOLD: Record<string, number> = {
   "openai/gpt-image-1": 1024,
   "openai/gpt-image-2": 1024,
+  "openai/gpt-image-2.5-flare": 1024,
+  "openai/gpt-image-2.5-sunburst": 1024,
   "google/nano-banana-pro": 2048, // $0.107001 through 2048; $0.159500 at 4096
 };
 
@@ -343,16 +364,19 @@ Actions:
 
 Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - openai/gpt-image-2 ($0.06–0.12) — flagship, reasoning-driven, multilingual on-image text + character consistency (default)
+- openai/gpt-image-2.5-sunburst ($0.28–0.56) — OpenAI's most capable image model, high-precision editing
+- openai/gpt-image-2.5-flare ($0.28–0.56) — GPT Image 2.5 fast tier, same price as Sunburst (generate only)
 - openai/gpt-image-1 ($0.02–0.04) — GPT native image generation
 - google/nano-banana ($0.05) — Gemini-family image model
 - google/nano-banana-2 ($0.09) — Gemini 3.1 Flash, pro-level quality at Flash speed (1024x1024 only)
 - google/nano-banana-pro ($0.10; $0.15 at 4096px) — up to 4K, strongest photorealism
 - xai/grok-imagine-image ($0.02) — stylized, fast
-- xai/grok-imagine-image-pro ($0.07) — higher quality Grok Imagine
+- xai/grok-imagine-image-2.0 ($0.04) — Grok Imagine 2.0, between Grok Imagine and Pro on price
+- xai/grok-imagine-image-pro ($0.05) — higher quality Grok Imagine
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 - bytedance/seedream-5-pro ($0.045; $0.09 when both dimensions exceed 1024) — Seedream 5.0 Pro; cheap widescreen at 1280x720 / 2048x1024, large formats up to 2848x1600
 
-Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-pro
+Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-2.5-sunburst, openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-pro
 Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
 Source images and masks accept a base64 data URI, an http(s) URL, or a local file path (auto-encoded). Inpaint mask (openai/gpt-image-* only) via "mask"; not combinable with multiple source images.`,
       annotations: TOOL_ANNOTATIONS.generative,

@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { toImageDataUri, buildSolanaImageRequest, materializeImageUrl } from "../src/tools/image.js";
+import { toImageDataUri, buildSolanaImageRequest, materializeImageUrl, estimateCost } from "../src/tools/image.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "blockrun-img-"));
 
@@ -126,4 +126,25 @@ test("materializeImageUrl saves a data: URI to a temp file with the right bytes"
 test("materializeImageUrl maps image/jpeg data URIs to a .jpg file", async () => {
   const out = await materializeImageUrl(`data:image/jpeg;base64,${PNG_BYTES.toString("base64")}`);
   assert.match(out, /\.jpg$/);
+});
+
+// Live Base 402 quotes, unpaid probes 2026-10-20 (npm run verify:prices). The
+// reserve keeps the repo-wide $0.002 fee above the gateway's current $0.001,
+// so each sits one fee-gap above the charge — never below it. Pro was reserved
+// at $0.07 (0.0755) until this refresh: 41% over the live charge.
+const IMAGE_LIVE: Array<[string, string, number]> = [
+  ["openai/gpt-image-2.5-flare", "1024x1024", 0.295001],
+  ["openai/gpt-image-2.5-flare", "1536x1024", 0.589001],
+  ["openai/gpt-image-2.5-sunburst", "1024x1024", 0.295001],
+  ["openai/gpt-image-2.5-sunburst", "1024x1536", 0.589001],
+  ["xai/grok-imagine-image-2.0", "1024x1024", 0.043],
+  ["xai/grok-imagine-image-pro", "1024x1024", 0.053501],
+];
+
+test("estimateCost covers the 2026-10-20 image rows without over-reserving", () => {
+  for (const [model, size, charged] of IMAGE_LIVE) {
+    const reserved = estimateCost(model, size);
+    assert.ok(reserved >= charged, `${model} ${size}: ${reserved} < ${charged}`);
+    assert.ok(reserved <= charged + 0.0011, `${model} ${size}: ${reserved} too far above ${charged}`);
+  }
 });

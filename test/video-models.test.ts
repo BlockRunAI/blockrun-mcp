@@ -450,6 +450,31 @@ test("estimateVideoCost covers grok at both resolutions without over-reserving",
   }
 });
 
+// grok-imagine-video-1.5, live Base 402s 2026-10-20 (unpaid): per-second rate
+// x duration + $0.001 surcharge + $0.001 fee, no margin — the estimator lands
+// on the charge exactly.
+const GROK15_LIVE: Array<[number | undefined, string | undefined, number]> = [
+  [undefined, undefined, 0.642],
+  [undefined, "720p", 1.122],
+  [undefined, "1080p", 2.002],
+  [15, "1080p", 3.752],
+];
+
+test("estimateVideoCost covers grok-imagine-video-1.5 at every tier it renders", () => {
+  for (const [seconds, resolution, charged] of GROK15_LIVE) {
+    const reserved = estimateVideoCost("xai/grok-imagine-video-1.5", seconds, resolution);
+    assert.ok(reserved >= charged, `grok-1.5 ${seconds ?? "default"}s ${resolution ?? "default"}: ${reserved} < ${charged}`);
+    assert.ok(reserved <= charged + 0.003, `grok-1.5 ${seconds ?? "default"}s ${resolution ?? "default"}: ${reserved} too far above ${charged}`);
+  }
+  assert.throws(() => estimateVideoCost("xai/grok-imagine-video-1.5", 8, "4K"), /does not render/);
+});
+
+test("grok-imagine-video-1.5 takes 1080p but refuses 4K before paying", async () => {
+  assert.match(await errorText({ prompt: "a cube", model: "xai/grok-imagine-video-1.5", resolution: "4K" }), /does not render/);
+  const body = await bodySentFor({ prompt: "a cube", model: "xai/grok-imagine-video-1.5", resolution: "1080p" });
+  assert.equal(body.resolution, "1080p");
+});
+
 test("grok refuses the resolutions the gateway rejects, before paying", async () => {
   for (const resolution of ["1080p", "4K"]) {
     const text = await errorText({ prompt: "a cube", model: "xai/grok-imagine-video", resolution });

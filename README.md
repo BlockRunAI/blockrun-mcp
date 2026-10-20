@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 14.0K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.4K with --profile trading, 61% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 14.3K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.4K with --profile trading, 62% less.">
   </picture>
 </div>
 
@@ -252,13 +252,13 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,018 |
+| `full` *(default)* | 19 | 14,335 |
 | `trading` | 8 | 5,411 |
-| `media` | 7 | 6,827 |
+| `media` | 7 | 7,144 |
 | `research` | 5 | 2,727 |
 | `chat` | 3 | 2,082 |
 
-Running `--profile trading` instead of the default costs **61% less context** for the same trading
+Running `--profile trading` instead of the default costs **62% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
 
 Measure it yourself — against us, or against any other stdio MCP server:
