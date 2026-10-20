@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.54.7
+
+### Fixed — Mistral Large 4 reserves its list price
+
+Mistral's launch promotion ended and the gateways moved
+`mistral/mistral-large-4` from $0.68/$2.09 to $1.36/$4.18. The price row
+follows, so an explicit call reserves the real rate instead of half of it.
+
 ## 0.54.6
 
 ### Added — Gemini 4 Argon price row
