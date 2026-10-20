@@ -106,7 +106,7 @@ export const BASE_RPC_URLS = [
 //   reach $0.2/$0.8. Unlisted, a pinned hy3 reserves the $5/$30 default,
 //   which covers every rail.
 // Xiaomi (2): mimo-v2.5 ($0.14/$0.28, vision), mimo-v2.5-pro ($0.435/$0.87)
-// Mistral (1): mistral-large-4 ($0.68/$2.09, vision)
+// Mistral (1): mistral-large-4 ($1.36/$4.18, vision)
 // Poolside: laguna-s-2.1 ($0.09/$0.18, paid); laguna-xs-2.1 is the $0 one
 // NVIDIA — genuinely $0. Serving healthy on the 2026-08-12 probe (both chains,
 //   realistic ~1.4K-token prompt): nemotron-3-nano-omni-30b-a3b-reasoning
@@ -482,7 +482,7 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28 },
   "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87 },
   "poolside/laguna-s-2.1": { input: 0.09, output: 0.18 },
-  "mistral/mistral-large-4": { input: 0.68, output: 2.09 },
+  "mistral/mistral-large-4": { input: 1.36, output: 4.18 },
 };
 
 /**
