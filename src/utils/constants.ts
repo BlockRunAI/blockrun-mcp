@@ -74,7 +74,10 @@ export const BASE_RPC_URLS = [
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
 //   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro, gemini-2.5-flash,
 //   gemini-2.5-flash-lite — all 1M context
-// DeepSeek (4): deepseek-v4-flash-vision-exp ($0.3/$1.2), deepseek-v4-pro ($1.32/$3.96, 1M, reasoning + coding;
+// DeepSeek (5): deepseek-v4.1-flash ($0.14/$0.28, 1M, reasoning + coding —
+//   listed on Base 2026-10-20, same price as deepseek-chat; NOT on Solana yet:
+//   sol.blockrun.ai answers 400 "Unknown model", which a routing tier just
+//   falls through before any payment), deepseek-v4-flash-vision-exp ($0.3/$1.2), deepseek-v4-pro ($1.32/$3.96, 1M, reasoning + coding;
 //   repriced by the gateway and re-probed 2026-09-02),
 //   deepseek-chat, deepseek-reasoner ($0.14/$0.28 on Base since DeepSeek's
 //   2026-08-07 cut; sol still quotes $0.2/$0.4 — see the drift note above)
@@ -134,10 +137,10 @@ export const BASE_RPC_URLS = [
 //   hidden-alive since July). They stay routed at the tail of free[] until a
 //   realistic-prompt POST probe reads their response `model` field.
 export const MODEL_TIERS = {
-  fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "google/gemini-3-flash-preview"],
+  fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
-  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "openai/gpt-5.4-nano"],
+  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
   reasoning: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-reasoner"],
   // 2026-08-12 sweep (both chains, realistic prompt). Order matters: free[0]
   // is what every mode:"free" call tries first, and a slow primary stalls the
@@ -432,6 +435,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "zai/glm-5": { input: 1, output: 3.2 },
   "deepseek/deepseek-v4-pro": { input: 1.32, output: 3.96 },
   "deepseek/deepseek-chat": { input: 0.14, output: 0.28 },
+  // Base GET /v1/models + account sheet, 2026-10-20 (not yet on Solana).
+  "deepseek/deepseek-v4.1-flash": { input: 0.14, output: 0.28 },
   "deepseek/deepseek-reasoner": { input: 0.14, output: 0.28 },
   "minimax/minimax-m3": { input: 0.3, output: 1.2 },
   // Every other live, available, paid chat id in GET /v1/models (2026-10-20;

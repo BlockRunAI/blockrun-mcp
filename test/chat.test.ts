@@ -560,3 +560,20 @@ test("free[] is the self-serving set from the 2026-10-20 probe, fastest first", 
     assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(aliased), `${aliased} answers as another model on both chains — not a fallback rung`);
   }
 });
+
+// deepseek/deepseek-v4.1-flash, listed on Base 2026-10-20 at deepseek-chat's
+// $0.14/$0.28. It sits beside deepseek-chat (never in place of it) because
+// Solana does not serve it yet — sol answers 400 "Unknown model" before any
+// payment, so the tier simply falls through to the next member there.
+test("deepseek-v4.1-flash is priced like deepseek-chat and follows it in fast and cheap", () => {
+  assert.deepEqual(CHAT_PRICE_PER_MTOKEN["deepseek/deepseek-v4.1-flash"], { input: 0.14, output: 0.28 });
+  assert.deepEqual(CHAT_PRICE_PER_MTOKEN["deepseek/deepseek-v4.1-flash"], CHAT_PRICE_PER_MTOKEN["deepseek/deepseek-chat"]);
+  for (const tier of ["fast", "cheap"] as const) {
+    const ids = MODEL_TIERS[tier] as readonly string[];
+    assert.equal(ids.indexOf("deepseek/deepseek-v4.1-flash"), ids.indexOf("deepseek/deepseek-chat") + 1, tier);
+  }
+  assert.equal(
+    estimateChatCost(1024, undefined, "deepseek-v4.1-flash", undefined, 100_000),
+    estimateChatCost(1024, undefined, "deepseek/deepseek-chat", undefined, 100_000),
+  );
+});
