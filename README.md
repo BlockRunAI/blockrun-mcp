@@ -7,7 +7,7 @@
 <p>Agents can pay like agents: sign transactions from a wallet.<br>
 Teams can pay like teams: get a BlockRun API key at <a href="https://user.blockrun.ai">user.blockrun.ai</a>, add credit by card or wire, and let the MCP call <code>api.blockrun.ai</code>.<br><br>
 <strong>BlockRun MCP gives your agent <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools — markets, research, web search, images, video, on-chain data, and live Polymarket trading — paid per call.</strong><br><br>
-<strong>Two ways to pay, same tools:</strong> a self-custody <strong>wallet</strong> (USDC on Solana or Base, no account needed) — or a <strong>BlockRun API key</strong> backed by account credit. <a href="https://user.blockrun.ai">Sign up at user.blockrun.ai →</a><br><br>
+<strong>Two ways to pay, same tools:</strong> a self-custody <strong>wallet</strong> (USDC on Solana, Base or Arc, no account needed) — or a <strong>BlockRun API key</strong> backed by account credit. <a href="https://user.blockrun.ai">Sign up at user.blockrun.ai →</a><br><br>
 <em>Read the odds <strong>and</strong> place the bet, from one self-custody wallet.</em></p>
 
 <br>
@@ -54,7 +54,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 > **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
 
-You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana or Base. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai), routes service calls through [api.blockrun.ai](https://api.blockrun.ai), and draws down card- or wire-funded account credit at exact usage. Same <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools either way. MIT licensed.
+You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana, Base or Arc. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai), routes service calls through [api.blockrun.ai](https://api.blockrun.ai), and draws down card- or wire-funded account credit at exact usage. Same <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools either way. MIT licensed.
 
 ## 🏆 First of its kind — the signal → trade loop in Claude Code
 
@@ -119,7 +119,7 @@ After BlockRun, it can. Each query costs fractions of a cent — billed from a l
 |  | **Wallet** *(default)* | **API key** |
 |---|---|---|
 | Setup | Nothing — a wallet is created on first run | Sign in at [user.blockrun.ai](https://user.blockrun.ai), mint a key, use it against [api.blockrun.ai](https://api.blockrun.ai) |
-| Funding | Send USDC (Solana or Base) | Credit card / wire → account credit |
+| Funding | Send USDC (Solana, Base or Arc) | Credit card / wire → account credit |
 | Billing | Per call, settled on-chain, + $0.001 network fee | Exact-usage account credit, no per-call network fee, no minimum |
 | Identity | A keypair on your machine | An account with members, credits, and a usage ledger |
 | Best for | Agents, solo devs, anything self-custody | Teams, companies, anyone who can't run a wallet |
@@ -252,11 +252,11 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,348 |
-| `trading` | 8 | 5,411 |
-| `media` | 7 | 7,144 |
-| `research` | 5 | 2,740 |
-| `chat` | 3 | 2,095 |
+| `full` *(default)* | 19 | 14,416 |
+| `trading` | 8 | 5,471 |
+| `media` | 7 | 7,212 |
+| `research` | 5 | 2,800 |
+| `chat` | 3 | 2,155 |
 
 Running `--profile trading` instead of the default costs **62% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
@@ -692,8 +692,8 @@ Yes — `BLOCKRUN_CONFIRM_SPEND=on`. Every paid tool pauses with the estimated c
 **Can it really place real bets?**
 Yes. `blockrun_polymarket` places real, USDC-settled orders on Polymarket's CLOB — confirm-gated and capped. Read the odds with `blockrun_markets`, place with `blockrun_polymarket`.
 
-**Base or Solana?**
-Both. Switch instantly with `blockrun_wallet action:"chain"`. Three things are Base-only, and each says so when you call them on Solana: `blockrun_defi` (DefiLlama) and `blockrun_modal`, which the Solana gateway does not serve, and `claude-*` chat with `thinking` (the native `/v1/messages` path pays on Base; a plain `claude-*` call takes the compat path on Solana). Media generation, markets, search and Polymarket all settle on either chain.
+**Base, Solana or Arc?**
+All three. Switch instantly with `blockrun_wallet action:"chain"`. Arc (Circle's chain) pays from the same address as Base, funded with USDC on Arc, and serves everything Base does. Three things are Base-only, and each says so when you call them on Solana: `blockrun_defi` (DefiLlama) and `blockrun_modal`, which the Solana gateway does not serve, and `claude-*` chat with `thinking` (the native `/v1/messages` path pays on Base; a plain `claude-*` call takes the compat path on Solana). Media generation, markets, search and Polymarket all settle on either chain.
 
 ---
 

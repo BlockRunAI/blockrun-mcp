@@ -11,7 +11,7 @@ import { fetchWithTimeout, isTimeoutError } from "../utils/http.js";
 import { JobFailedError, pollTimeoutFor } from "../utils/poll.js";
 import { sendPaid, settleGiveUp, trackPaidRequest } from "../utils/in-flight.js";
 import type { BudgetState } from "../types.js";
-import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl } from "../utils/wallet.js";
+import { getApiBase, getChain, getOrCreateWalletKey, resolveGatewayUrl, type PaymentChain } from "../utils/wallet.js";
 import { isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
@@ -407,14 +407,16 @@ export function assertVideoQuoteSane(
   quotedUsd: number | null,
   estimatedCost: number,
   model: string,
-  chain: "base" | "solana",
+  chain: PaymentChain,
   quotedFor?: string,
 ): void {
   const hint = chain === "solana"
     ? (model === "azure/sora-2"
       ? `The Solana gateway is a separate deployment and does not serve azure/sora-2 yet — it quotes Seedance 2.0 in its place. Switch to Base for Sora (blockrun_wallet action:"chain" chain:"base") or pick a Seedance model explicitly.`
       : `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`)
-    : `Retry on Solana (blockrun_wallet action:"chain" chain:"solana") or pick another model.`;
+    : chain === "arc"
+      ? `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`
+      : `Retry on Solana (blockrun_wallet action:"chain" chain:"solana") or pick another model.`;
   assertQuoteNearEstimate(quotedUsd, estimatedCost, { what: `${model} video`, quotedFor, hint });
 }
 
@@ -440,7 +442,7 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
   server.registerTool(
     "blockrun_video",
     {
-      description: `Generate short AI videos via BlockRun x402 on the active Base or Solana chain (async, client-polled).
+      description: `Generate short AI videos via BlockRun x402 on the active Base, Solana or Arc chain (async, client-polled).
 
 Turns a text prompt (and optional seed image) into a short video clip (MP4, or MOV on Seedance 2.5). The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). On the wallet rails payment settles only when upstream returns a finished video — if the job fails you are not charged; if this client gives up while a paid poll is still in flight the gateway may still settle, and the error text says so. On the account rail the job is billed when the gateway accepts it, so a job that fails or outlives the poll budget is still charged — the error names it.
 

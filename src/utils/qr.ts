@@ -4,6 +4,7 @@ import open from "open";
 import * as fs from "fs";
 import * as path from "path";
 import { WALLET_DIR, QR_FILE, USDC_ADDRESS, BASE_CHAIN_ID } from "./constants.js";
+import type { PaymentChain } from "./wallet.js";
 
 const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
@@ -29,9 +30,15 @@ async function loadSharp(): Promise<SharpFactory | null> {
   return sharpModule;
 }
 
-export function getEip681Uri(address: string, amountUsdc: number = 1.0): string {
+// Arc's USDC is the chain's gas token; 0x3600…0000 is its 6-decimal ERC-20
+// view, the one x402 settles through, so a transfer QR targets it like Base's.
+const ARC_CHAIN_ID = 5042;
+const ARC_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+
+export function getEip681Uri(address: string, amountUsdc: number = 1.0, chain: "base" | "arc" = "base"): string {
   const amountWei = Math.floor(amountUsdc * 1_000_000);
-  return `ethereum:${USDC_ADDRESS}@${BASE_CHAIN_ID}/transfer?address=${address}&uint256=${amountWei}`;
+  const [token, chainId] = chain === "arc" ? [ARC_USDC_ADDRESS, ARC_CHAIN_ID] : [USDC_ADDRESS, BASE_CHAIN_ID];
+  return `ethereum:${token}@${chainId}/transfer?address=${address}&uint256=${amountWei}`;
 }
 
 export function getSolanaPayUri(address: string, amountUsdc: number = 1.0): string {
@@ -55,7 +62,7 @@ function buildSolanaLogoSvg(size: number): string {
 </svg>`;
 }
 
-async function overlayLogo(qrBuf: Buffer, chain: "base" | "solana", qrSize: number): Promise<Buffer> {
+async function overlayLogo(qrBuf: Buffer, chain: PaymentChain, qrSize: number): Promise<Buffer> {
   if (chain !== "solana") return qrBuf;
 
   // No sharp (native binary missing) → return the plain QR without the overlay.
@@ -79,8 +86,8 @@ async function overlayLogo(qrBuf: Buffer, chain: "base" | "solana", qrSize: numb
     .toBuffer();
 }
 
-export async function generateQrPng(address: string, chain: "base" | "solana" = "base"): Promise<string> {
-  const uri = chain === "solana" ? getSolanaPayUri(address) : getEip681Uri(address);
+export async function generateQrPng(address: string, chain: PaymentChain = "base"): Promise<string> {
+  const uri = chain === "solana" ? getSolanaPayUri(address) : getEip681Uri(address, 1.0, chain);
   const qrSize = 400;
 
   if (!fs.existsSync(WALLET_DIR)) {

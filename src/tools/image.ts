@@ -356,7 +356,7 @@ export function registerImageTool(server: McpServer, budget: BudgetState): void 
   server.registerTool(
     "blockrun_image",
     {
-      description: `Generate or edit images via BlockRun. Pays with USDC on the ACTIVE chain — Base or Solana (see blockrun_wallet) — no separate API keys needed.
+      description: `Generate or edit images via BlockRun. Pays with USDC on the ACTIVE chain — Base, Solana or Arc (see blockrun_wallet) — no separate API keys needed.
 
 Actions:
 - generate (default): Create image from text prompt
