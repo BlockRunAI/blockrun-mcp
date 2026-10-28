@@ -175,8 +175,8 @@ A RealFace asset (ta_xxxx) lets Seedance 2.0 / 2.0-fast / 2.0-mini generate vide
 Actions:
 - init: FREE. Create an asset group + a phone H5 link. The tool renders the link as a QR code and opens it; the real person scans it on their phone and completes the ~1 min liveness check. Pass group_id to refresh an expired link.
 - status: FREE. Poll a group until status:"active" (ready_to_finalize:true). The H5 link is valid ~120s — re-init if it expires.
-- enroll: PAID ($0.01). Settles on Solana or Base from a wallet, or against your BlockRun account key. After the group is active, upload a clear front-facing photo (image_url) of the SAME person. Returns the ta_xxxx asset id.
-- portrait: PAID ($0.01). Settles on Solana or Base from a wallet, or against your BlockRun account key. Virtual Portrait — enroll an AI-GENERATED character from an image URL directly, NO liveness needed (one step: name + image_url → ta_xxxx). For fictional/AI characters only; for a real person use the init→status→enroll liveness flow.
+- enroll: PAID ($0.01). Settles on Solana, Base or Arc from a wallet, or against your BlockRun account key. After the group is active, upload a clear front-facing photo (image_url) of the SAME person. Returns the ta_xxxx asset id.
+- portrait: PAID ($0.01). Settles on Solana, Base or Arc from a wallet, or against your BlockRun account key. Virtual Portrait — enroll an AI-GENERATED character from an image URL directly, NO liveness needed (one step: name + image_url → ta_xxxx). For fictional/AI characters only; for a real person use the init→status→enroll liveness flow.
 - list: FREE, WALLET MODE ONLY (assets are indexed by wallet address). List the RealFace + Virtual Portrait assets enrolled by this wallet (their ta_xxxx ids + names) so you can pick one for blockrun_video.
 
 Typical flow:
@@ -346,7 +346,7 @@ Privacy: BlockRun does not store face/liveness data — only the asset id, name,
             address = privateKeyToAccount(getOrCreateWalletKey()).address;
           }
           const account = { address };
-          const chainLabel = chain === "solana" ? "Solana" : "Base";
+          const chainLabel = chain === "solana" ? "Solana" : chain === "arc" ? "Arc" : "Base";
           const [rfResp, vpResp] = await Promise.all([
             fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/realfaces`, { method: "GET" }, 30_000),
             fetchWithTimeout(`${getApiBase()}/v1/wallet/${account.address}/portraits`, { method: "GET" }, 30_000)

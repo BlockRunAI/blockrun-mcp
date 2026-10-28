@@ -134,6 +134,12 @@ export async function launchTopUp(): Promise<TopUpResult> {
     return { opened: false, note: `No wallet on this machine. Run blockrun_wallet action:"setup" to provision one.` };
   }
 
+  if (chain === "arc") {
+    return {
+      opened: false,
+      note: `Card top-up is Base-only. To fund on Arc, run blockrun_wallet action:"setup" for your address + QR and send USDC on Arc, or switch with action:"chain" chain:"base".`,
+    };
+  }
   if (chain !== "base") {
     return {
       opened: false,

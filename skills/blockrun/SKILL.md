@@ -2,7 +2,7 @@
 name: blockrun
 description: |
   Pay-per-call access to AI models, real-time data, media generation and multi-chain RPC over
-  x402 micropayments (USDC on Base or Solana), or a BlockRun account API key. No subscriptions.
+  x402 micropayments (USDC on Base, Solana or Arc), or a BlockRun account API key. No subscriptions.
   Start here when you have the BlockRun MCP installed and need to know WHICH tool answers a
   question, how the wallet works, or how to make a first call for free.
   TOOLS: blockrun_chat, blockrun_image, blockrun_video, blockrun_music, blockrun_speech,
@@ -84,7 +84,7 @@ something working, and it costs nothing if it turns out to be the wrong approach
 2. To fund with a card, `blockrun_wallet action: "deposit"` mints a one-time Coinbase Onramp
    link and opens it. The call itself is free. Base only — on Solana it returns address and QR
    guidance instead, so fund Solana by transfer.
-3. Or send USDC to the address on Base or Solana.
+3. Or send USDC to the address on Base, Solana or Arc (Arc uses the Base address).
 
 Do not fund a wallet inside an ephemeral sandbox (Claude Cowork / Desktop / Web). The key lives
 in `~/.blockrun/` on whatever filesystem you are on, and if that is a throwaway VM the USDC goes

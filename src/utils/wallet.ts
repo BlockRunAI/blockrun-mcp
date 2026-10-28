@@ -33,6 +33,21 @@ import { getApiKey, getApiKeyBase, isApiKeyMode, PORTAL_CREDITS_URL } from "./au
 
 export type ApiClient = LLMClient | SolanaLLMClient;
 
+/**
+ * The three wallet rails. Arc (Circle's L1, eip155:5042) is an EVM chain: it
+ * pays from the SAME key and address as Base, against arc.blockrun.ai, and the
+ * SDK picks Arc's USDC and EIP-712 domain from the 402's network. It is only
+ * ever chosen explicitly (action:"chain" chain:"arc" or ~/.blockrun/.chain) —
+ * no autodetect step below returns it, so no existing user moves.
+ */
+export type PaymentChain = "base" | "solana" | "arc";
+
+export const ARC_API_URL = "https://arc.blockrun.ai/api";
+
+export function isPaymentChain(value: unknown): value is PaymentChain {
+  return value === "base" || value === "solana" || value === "arc";
+}
+
 const BLOCKRUN_DIR = path.join(os.homedir(), ".blockrun");
 const CHAIN_PREFERENCE_FILES = [
   path.join(BLOCKRUN_DIR, ".chain"),
@@ -57,20 +72,20 @@ let _anthropicClient: AnthropicClient | null = null;
 // explicit choice is never shadowed by a stale automatic one.
 const CHAIN_AUTO_FILE = path.join(BLOCKRUN_DIR, ".chain-auto");
 
-function readOneChainFile(file: string): "base" | "solana" | null {
+function readOneChainFile(file: string): PaymentChain | null {
   try {
     if (!fs.existsSync(file)) return null;
     const value = fs.readFileSync(file, "utf-8").trim().toLowerCase();
-    if (value === "base" || value === "solana") return value;
+    if (isPaymentChain(value)) return value;
   } catch { /* ignore */ }
   return null;
 }
 
-function readAutoChain(): "base" | "solana" | null {
+function readAutoChain(): PaymentChain | null {
   return readOneChainFile(CHAIN_AUTO_FILE);
 }
 
-function writeAutoChain(chain: "base" | "solana"): void {
+function writeAutoChain(chain: PaymentChain): void {
   try {
     fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
     fs.writeFileSync(CHAIN_AUTO_FILE, chain, { mode: 0o600 });
@@ -78,12 +93,12 @@ function writeAutoChain(chain: "base" | "solana"): void {
   } catch { /* a pin we cannot write is not worth failing a wallet call over */ }
 }
 
-function readChainPreference(): "base" | "solana" | null {
+function readChainPreference(): PaymentChain | null {
   for (const file of CHAIN_PREFERENCE_FILES) {
     try {
       if (!fs.existsSync(file)) continue;
       const value = fs.readFileSync(file, "utf-8").trim().toLowerCase();
-      if (value === "base" || value === "solana") return value;
+      if (isPaymentChain(value)) return value;
     } catch { /* ignore */ }
   }
   return null;
@@ -256,7 +271,7 @@ export function resetKeychainProbeCache(): void {
   _keychainEvmKeyPresent = undefined;
 }
 
-export function getChain(): "base" | "solana" {
+export function getChain(): PaymentChain {
   // 1. Explicit user preference (~/.blockrun/.chain) wins over everything else.
   //    Without this, the mere existence of a stale .solana-session file pins
   //    the server to Solana even when the user has explicitly switched to Base.
@@ -339,7 +354,7 @@ function resetChainCaches(): void {
  * (which getChain() ranks above env vars and wallet-file autodetection) and
  * clears cached clients so the change takes effect on the very next call.
  */
-export function setChain(chain: "base" | "solana"): void {
+export function setChain(chain: PaymentChain): void {
   fs.mkdirSync(BLOCKRUN_DIR, { recursive: true });
   fs.writeFileSync(CHAIN_FILE, chain, { mode: 0o600 });
   // Drop any automatic pin: an explicit choice must not leave a machine-made
@@ -402,7 +417,7 @@ export async function ensureBothWallets(): Promise<{
   // and that fact is local, cache-free and true on both platforms.
   const solMinted = !solWasCached && sol.isNew;
   const evmMinted = !evmWasCached && evm.isNew;
-  if (chainBefore !== null && ((solMinted && chainBefore === "base") || (evmMinted && chainBefore === "solana"))) {
+  if (chainBefore !== null && ((solMinted && chainBefore !== "solana") || (evmMinted && chainBefore === "solana"))) {
     // writeAutoChain, NOT setChain: this is the machine preserving continuity,
     // not the user expressing a preference. The distinction is the whole fix —
     // see CHAIN_AUTO_FILE.
@@ -462,7 +477,9 @@ export function baseOnlyMessage(capability: string): string | null {
  */
 export function getApiBase(): string {
   if (isApiKeyMode()) return getApiKeyBase();
-  return getChain() === "solana" ? "https://sol.blockrun.ai/api" : "https://blockrun.ai/api";
+  const chain = getChain();
+  if (chain === "solana") return "https://sol.blockrun.ai/api";
+  return chain === "arc" ? ARC_API_URL : "https://blockrun.ai/api";
 }
 
 /**
@@ -924,12 +941,16 @@ export function resetSolanaKeyCache(): void {
  * keychain on the first paid call. Resolving credentials lazily, inside the
  * branch that needs them, is the whole point.
  */
-function evmClientOptions(timeout?: number): { apiKey: string } | { privateKey: `0x${string}` } {
+function evmClientOptions(timeout?: number): { apiKey: string } | { privateKey: `0x${string}`; apiUrl?: string } {
   const apiKey = getApiKey();
-  const base = apiKey ? { apiKey } : { privateKey: getOrCreateWalletKey() };
+  // The same EVM key pays on Base and Arc; only the gateway differs. getChain()
+  // is consulted on the wallet branch alone, so the account rail never probes.
+  const base = apiKey
+    ? { apiKey }
+    : { privateKey: getOrCreateWalletKey(), ...(getChain() === "arc" ? { apiUrl: ARC_API_URL } : {}) };
   return (timeout ? { ...base, timeout } : base) as
     | { apiKey: string }
-    | { privateKey: `0x${string}` };
+    | { privateKey: `0x${string}`; apiUrl?: string };
 }
 
 function buildSolanaClient(timeout?: number): SolanaLLMClient {
@@ -1055,7 +1076,7 @@ export function getPriceClient(requireWallet = true): PriceClient {
 
 export type AccountInfo = {
   address: string | null;
-  network: "Base" | "Solana" | "BlockRun account";
+  network: "Base" | "Solana" | "Arc" | "BlockRun account";
   chainId: number | null;
   currency: string;
   isNew: boolean;
@@ -1097,6 +1118,17 @@ export async function getWalletInfo(): Promise<AccountInfo> {
     };
   }
   const info = ensureEvmWallet();
+  if (getChain() === "arc") {
+    return {
+      address: info.address,
+      network: "Arc" as const,
+      chainId: ARC_CHAIN_ID as number | null,
+      currency: "USDC",
+      isNew: info.isNew,
+      explorerUrl: `https://arc-scan.org/address/${info.address}`,
+      fundingUrl: "https://arc.blockrun.ai",
+    };
+  }
   const links = getPaymentLinks(info.address);
   return {
     address: info.address,
@@ -1205,9 +1237,54 @@ async function getBaseUsdcBalance(address: string): Promise<number | null> {
   return null;
 }
 
-/** USDC balance for an explicit chain — used to show BOTH wallets at once. */
-export async function getChainBalance(chain: "base" | "solana", address: string): Promise<number | null> {
-  return chain === "solana" ? getSolanaUsdcBalance(address) : getBaseUsdcBalance(address);
+const ARC_CHAIN_ID = 5042;
+const ARC_USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+
+/**
+ * USDC on Arc for an explicit address. There is no public Arc RPC worth
+ * trusting (rpc.arc-scan.org was answering Cloudflare 1033 on 2026-10-28), and
+ * a keyed one cannot ship in a client, so the default is the Arc gateway's own
+ * balance read — the same pattern as the Solana default above, which reads
+ * through sol.blockrun.ai. ARC_RPC_URL, when set, is asked first with a plain
+ * balanceOf on the 6-decimal ERC-20 view of Arc's USDC.
+ */
+async function getArcUsdcBalance(address: string): Promise<number | null> {
+  const configured = (process.env.ARC_RPC_URL ?? "").trim();
+  if (configured) {
+    try {
+      const response = await fetch(configured, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [{ to: ARC_USDC_ADDRESS, data: `0x70a08231000000000000000000000000${address.slice(2)}` }, "latest"],
+          id: 1,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const result = await response.json() as { result?: string };
+      const usd = parseBaseUsdcCallResult(result.result);
+      if (usd !== null) return usd;
+    } catch { /* fall through to the gateway */ }
+  }
+  try {
+    const response = await fetch(`${ARC_API_URL}/v1/balance?address=${encodeURIComponent(address)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as { balance?: unknown; network?: unknown };
+    if (body.network !== "arc" || typeof body.balance !== "string" || !/^\d+$/.test(body.balance)) return null;
+    return Number(BigInt(body.balance)) / 1e6;
+  } catch {
+    return null;
+  }
+}
+
+/** USDC balance for an explicit chain — used to show every wallet at once. */
+export async function getChainBalance(chain: PaymentChain, address: string): Promise<number | null> {
+  if (chain === "solana") return getSolanaUsdcBalance(address);
+  return chain === "arc" ? getArcUsdcBalance(address) : getBaseUsdcBalance(address);
 }
 
 export async function getUsdcBalance(address: string): Promise<number | null> {

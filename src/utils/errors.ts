@@ -261,7 +261,7 @@ export function formatError(message: string, opts?: { altModels?: string; afterP
         `(the API key stays the same).`;
     } else {
       const chain = getChain();
-      const network = chain === "solana" ? "Solana" : "Base";
+      const network = chain === "solana" ? "Solana" : chain === "arc" ? "Arc" : "Base";
       errorText += `\n\nThis error usually means your wallet needs funding.\n` +
         `Run blockrun_wallet with action: "setup" to get funding instructions.\n\n` +
         `Quick fix: Send USDC to your wallet on ${network} network.`;
@@ -301,8 +301,11 @@ export const SDK_POST_PAYMENT_REJECTION = "Payment was rejected. Check your wall
  */
 export function basePaymentReplayHedge(message: string, upstream: string): string {
   if (message.trim() !== SDK_POST_PAYMENT_REJECTION) return "";
-  if (isApiKeyMode() || getChain() !== "base") return "";
-  return `\n\nOn Base this exact rejection is also what the gateway returns when ${upstream} itself failed (5xx) and the SDK ` +
+  // Arc runs the same gateway code and SDK retry as Base, so it shares the
+  // ambiguity; only Solana and the account rail are exempt.
+  const chain = isApiKeyMode() ? null : getChain();
+  if (chain === null || chain === "solana") return "";
+  return `\n\nOn ${chain === "arc" ? "Arc" : "Base"} this exact rejection is also what the gateway returns when ${upstream} itself failed (5xx) and the SDK ` +
     "re-sent the same payment header: in that case nothing was settled and the wallet was never the problem. " +
     "Check blockrun_wallet action:\"status\" — if it shows funds, retry the call once before topping up.";
 }
