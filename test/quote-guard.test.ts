@@ -56,6 +56,8 @@ test("the video wrapper adds the Sora/Solana explanation only where it applies",
     /does not serve azure\/sora-2 yet.*chain:"base"/);
   assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "solana"), /Retry on Base/);
   assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "base"), /Retry on Solana/);
+  // Arc never points at Solana: for azure/sora-2 that is the rail that substitutes another model.
+  assert.throws(() => assertVideoQuoteSane(1.13548, 0.422001, "azure/sora-2", "arc"), /Retry on Base/);
   assert.doesNotThrow(() => assertVideoQuoteSane(0.421001, 0.422001, "azure/sora-2", "base"));
 });
 

@@ -960,7 +960,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // within a cent (verify:prices), so a quote far above it is a reprice or
         // a substituted model — refuse it unsigned rather than re-reserve it.
         try {
-          assertVideoQuoteSane(settledUsd, estimatedCost, selectedModel, "base", details.resource?.description);
+          assertVideoQuoteSane(settledUsd, estimatedCost, selectedModel, getChain() === "arc" ? "arc" : "base", details.resource?.description);
         } catch (err) {
           return { content: [{ type: "text", text: formatError(err instanceof Error ? err.message : String(err)) }], isError: true };
         }
