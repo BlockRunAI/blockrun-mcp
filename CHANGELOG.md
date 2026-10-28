@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.55.0
+
+### Added — Arc as a third payment chain
+
+`blockrun_wallet action:"chain" chain:"arc"` pays on Circle's Arc
+(eip155:5042) through arc.blockrun.ai, from the same EVM key and address as
+Base, funded with USDC on Arc. Arc serves everything Base does. `status`
+shows the Base, Solana and Arc balances; the Arc balance is read from the Arc
+gateway, or from `ARC_RPC_URL` when set. Setup, the funding QR (EIP-681 on
+chain 5042), card top-up guidance and error text name Arc.
+
+Nothing selects Arc automatically: an install that never chose it stays on
+the chain it was on.
+
+Requires `@blockrun/llm` 3.25 (Arc's USDC signing domain landed in 3.16).
+
 ## 0.54.7
 
 ### Fixed — Mistral Large 4 reserves its list price
