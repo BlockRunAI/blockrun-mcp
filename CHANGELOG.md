@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.55.3
+
+### Fixed — native Claude calls are booked at what they settle
+
+`blockrun_chat` with `thinking` (the native `/v1/messages` path) books the
+gateway's x402 quote, which prices output at a fraction of `max_tokens` and
+settles it regardless of usage. The gateway raised that fraction from 0.1 to
+0.5 on 2026-10-30, and this server kept booking 0.1, so a default opus call
+was booked at about a quarter of what it paid and budget caps ran roughly 4x
+loose on that path. It now books 0.5, re-verified against live quotes.
+
+`npm run verify:prices` now probes `/v1/messages` too, and fails if the ledger
+books below the live quote, so the next move of that fraction is caught.
+
 ## 0.55.2
 
 ### Fixed — charges that may have settled are booked, never "try again"

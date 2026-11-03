@@ -536,7 +536,7 @@ Run blockrun_models to see all available models with pricing.`,
       // `thinking` is requested — the one thing the compat path cannot carry —
       // and a plain claude-* call on Solana takes the explicit-model path
       // below like any other id (D5). Its price there is the Solana quote:
-      // output at full max_tokens, not Base's 0.1x — see D52 in the audit —
+      // output at full max_tokens, not Base's 0.5x (0.1x before 2026-10-30) — see D52 —
       // which the reserve already covers.
       if (model && isAnthropicModel(model)) {
         // Non-null only on a Solana wallet (null in API-key mode and on Base).
