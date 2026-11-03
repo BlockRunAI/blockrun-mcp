@@ -663,7 +663,7 @@ export async function solanaPaidAsyncPost(
     return await pollUntilDone();
   } catch (err) {
     if (!(settledAtSubmit || settleOutcomeUnknown) || err instanceof BilledJobError) throw err;
-    const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No charge was made\.?/i, "");
+    const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No (?:charge was made|payment was taken)\.?/gi, "");
     throw giveUp(`${what} could not be collected: ${msg}`, "");
   }
 
