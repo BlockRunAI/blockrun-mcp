@@ -35,7 +35,7 @@ import type { BudgetState } from "../types.js";
  *
  *   1. The gateway resells opus at $5/$25, not $15/$75 — 3x over on the rate.
  *   2. Settlement collects the QUOTE, and the quote prices output at
- *      OUTPUT_QUOTE_FACTOR (0.5 since 2026-10-30) of max_tokens, not at tokens actually produced
+ *      OUTPUT_QUOTE_FACTOR (1, the full ceiling, since 2026-11-03) of max_tokens, not at tokens actually produced
  *      ("Settlement charges the full quoted amount regardless of actual usage"
  *      — the gateway's own comment on that constant).
  *   3. There is a $0.001 floor and a flat transaction fee on top, and neither
@@ -47,15 +47,17 @@ import type { BudgetState } from "../types.js";
  * allowance.
  *
  * The formula below is the gateway's, mirrored. Verified against live unpaid 402
- * quotes (exact scheme) on /v1/messages, 2026-11-03, factor 0.5 — accurate to
- * +0.2% across a 100x span of prompt sizes and both price tiers, erring high:
+ * quotes (exact scheme) on /v1/messages, 2026-11-03, factor 1 (blockrun#954) —
+ * accurate to +0.2% across a 100x span of prompt sizes and both price tiers,
+ * erring high (+0.6% on the smallest opus quote, where the fixed envelope
+ * overhead is a larger share):
  *
- *   opus-5  "hi"   max_tokens 1024 -> quoted 13885    reconstructed 13905
- *   opus-5  "hi"   max_tokens 4096 -> quoted 52285    reconstructed 52305
- *   opus-5  "hi"   max_tokens  100 -> quoted 2335     reconstructed 2355
- *   opus-5   10k   max_tokens 1024 -> quoted 37880    reconstructed 37940
- *   opus-5  100k   max_tokens 1024 -> quoted 253880   reconstructed 254285
- *   haiku   "hi"   max_tokens 1024 -> quoted 3577     reconstructed 3581
+ *   opus-5  "hi"   max_tokens 1024 -> quoted 26685    reconstructed 26705
+ *   opus-5  "hi"   max_tokens 4096 -> quoted 103485   reconstructed 103505
+ *   opus-5  "hi"   max_tokens  100 -> quoted 3585     reconstructed 3605
+ *   opus-5   10k   max_tokens 1024 -> quoted 50680    reconstructed 50740
+ *   opus-5  100k   max_tokens 1024 -> quoted 266680   reconstructed 267085
+ *   haiku   "hi"   max_tokens 1024 -> quoted 6137     reconstructed 6141
  *   haiku   "hi"   max_tokens  100 -> quoted 2000     reconstructed 2000  (floor)
  *
  * `usage` is deliberately NOT consulted: real output tokens do not move the
@@ -64,13 +66,16 @@ import type { BudgetState } from "../types.js";
  */
 // The gateway quotes output at this fraction of max_tokens and settles the quote
 // (OUTPUT_QUOTE_FACTOR in blockrun/src/lib/chat-quote.ts). It is the one number
-// here we do not own, and it moved under us: 0.1 until 2026-10-30, 0.5 since
-// (blockrun 03607c30), so for days this ledger booked about a quarter of what
-// the gateway settled and budget caps ran ~4x loose. Re-probed 2026-11-03
-// (quotes below). blockrun#944 moves it to 1 (the full ceiling): change this in
-// the same release that deploys, and re-probe. `npm run verify:prices` does not
-// cover /v1/messages, so nothing else will catch the next move.
-const OUTPUT_QUOTE_FACTOR = 0.5;
+// here we do not own, and it has moved under us twice: 0.1 until 2026-10-30,
+// 0.5 from then (blockrun 03607c30), 1 — the full max_tokens ceiling — since
+// 2026-11-03 (blockrun#954, Base rev 01251; sol#549, rev 00649). Each time this
+// ledger lagged it booked a fraction of what the gateway settled (a quarter at
+// 0.5, about half after the move to 1) and budget caps ran loose. Re-probed
+// 2026-11-03 at factor 1 (quotes above). If it moves again, change this in the
+// same release that deploys and re-probe. `npm run verify:prices` probes four
+// /v1/messages shapes against this formula and fails on an under-book; it is a
+// manual run, not CI, so run it on any gateway quote change.
+const OUTPUT_QUOTE_FACTOR = 1;
 // The gateway's own per-message envelope overhead, fitted from the probes above
 // (~20 tokens on a 2-character message). Keeps small calls from booking under.
 const MESSAGE_TOKEN_OVERHEAD = 20;

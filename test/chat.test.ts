@@ -271,19 +271,21 @@ test("omitting promptChars keeps the previous reserve (no silent inflation)", ()
 // while the gateway resells opus at $5/$25 and settles the QUOTE — which prices
 // output at OUTPUT_QUOTE_FACTOR of max_tokens, floors at $0.001, and adds the
 // transaction fee. The factor is the gateway's and it MOVES: 0.1 until
-// 2026-10-30, 0.5 since, and this file still pinned the 0.1 quotes, so the
-// ledger booked ~1/4 of the settled amount and nothing failed.
+// 2026-10-30, 0.5 until 2026-11-03, 1 (the full ceiling) since. When it went to
+// 0.5 this file still pinned the 0.1 quotes, so the ledger booked ~1/4 of the
+// settled amount and nothing failed.
 //
-// Expected values are live unpaid 402 quotes (exact) on /v1/messages, 2026-11-03.
+// Expected values are live unpaid 402 quotes (exact) on /v1/messages,
+// 2026-11-03, factor 1 (blockrun#954).
 test("anthropicCallCost reconstructs the gateway's quote, not Anthropic's list price", () => {
   const CASES: Array<[string, number, number, number]> = [
     // [model, promptChars, maxTokens, quoted]
-    ["claude-opus-5", 2, 1024, 0.013885],
-    ["claude-opus-5", 2, 4096, 0.052285],
-    ["claude-opus-5", 2, 100, 0.002335],
-    ["claude-opus-5", 10_000, 1024, 0.037880],
-    ["claude-opus-5", 100_000, 1024, 0.253880],
-    ["claude-haiku-4.5", 2, 1024, 0.003577],
+    ["claude-opus-5", 2, 1024, 0.026685],
+    ["claude-opus-5", 2, 4096, 0.103485],
+    ["claude-opus-5", 2, 100, 0.003585],
+    ["claude-opus-5", 10_000, 1024, 0.050680],
+    ["claude-opus-5", 100_000, 1024, 0.266680],
+    ["claude-haiku-4.5", 2, 1024, 0.006137],
   ];
   for (const [model, chars, maxTokens, quoted] of CASES) {
     const booked = anthropicCallCost(model, chars, maxTokens);
@@ -525,12 +527,12 @@ test("anthropicCallCost normalises the gateway's echo to the catalogue key and n
 test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => {
   assert.deepEqual(CHAT_PRICE_PER_MTOKEN["anthropic/claude-sonnet-5"], { input: 2, output: 10 });
   // 100k chars -> ceil(100000/2.08)+20 = 48,097 input tokens at $2/M = $0.096194;
-  // 1024 max_tokens x 0.5 = 512 output tokens at $10/M = $0.00512;
-  // + the $0.001 observed fee, ceiled to a micro-USDC = $0.102314.
-  // (Live exact quote 2026-11-03: see the probe note in chat-anthropic.ts.)
-  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.102314);
-  // The old row booked $0.146827 for the same call.
-  assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.146827 * 0.7);
+  // 1024 max_tokens x 1 (the full ceiling, blockrun#954) = 1024 output tokens
+  // at $10/M = $0.01024; + the $0.001 observed fee, ceiled to a micro-USDC =
+  // $0.107434. Live exact quote 2026-11-03 at factor 1: $0.107272 (+0.15%).
+  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.107434);
+  // The old $3/$15 row would book $0.160651 for the same call.
+  assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.160651 * 0.7);
 });
 
 // ── free[] must route ids that answer for THEMSELVES on both chains ──

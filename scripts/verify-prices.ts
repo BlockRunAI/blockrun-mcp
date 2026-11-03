@@ -584,8 +584,9 @@ async function accountSheet(): Promise<CatalogueModel[] | string> {
 // reserve: what the server BOOKS after the call, mirrored from the gateway's
 // quote formula because the SDK pays inside fetch and only the status is
 // readable. The formula carries the gateway's OUTPUT_QUOTE_FACTOR, which moved
-// 0.1 -> 0.5 on 2026-10-30 with nothing here probing /v1/messages: the ledger
-// booked ~1/4 of each settlement for days and budget caps ran ~4x loose. Booked
+// 0.1 -> 0.5 on 2026-10-30 with nothing here probing /v1/messages (the ledger
+// booked ~1/4 of each settlement for days and budget caps ran ~4x loose), then
+// 0.5 -> 1 on 2026-11-03 (blockrun#954). Booked
 // below the quote is the same lie as an under-reserve, so it fails the gate the
 // same way. Base only: the native path is the Base VIP channel.
 console.log("\nNative /v1/messages ledger (Base): what anthropicCallCost books vs the live exact quote");
