@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.55.1
+
+### Security — the inline image preview no longer fetches private addresses
+
+With inline previews on (`inline: true` or `BLOCKRUN_INLINE_IMAGES`), the
+thumbnail fetch took the gateway's image URL verbatim and followed its
+redirects, so a malicious or compromised gateway could make your machine
+request localhost, cloud metadata (169.254.169.254) or the private network.
+It now goes through the same DNS-resolved, per-redirect-hop guard that
+`blockrun_image` already applied to your own reference-image URLs, now shared
+as `fetchPublicUrl`. Non-http(s) schemes are refused; `data:image` results
+from image2image routes still inline without a network request. Previews
+are off by default. Reported in #194.
+
+Both image downloads (your reference image, and the preview) now count bytes
+as the body streams and stop at the size cap. Before, the cap ran after the
+whole body was in memory, so a chunked response or a gzip/brotli bomb, whose
+Content-Length is the compressed size, could exhaust memory in the server.
+
 ## 0.55.0
 
 ### Added — Arc as a third payment chain

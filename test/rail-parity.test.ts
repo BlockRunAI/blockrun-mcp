@@ -123,7 +123,12 @@ mock.module("../src/utils/auth.js", {
   },
 });
 mock.module("../src/utils/ssrf.js", {
-  namedExports: { isBlockedFetchHostResolved: async () => false, isBlockedFetchHost: () => false },
+  namedExports: {
+    isBlockedFetchHostResolved: async () => false,
+    isBlockedFetchHost: () => false,
+    // No DNS, same as the stubs above: hand straight to the (mocked) fetch.
+    fetchPublicUrl: (url: string, init?: { signal?: AbortSignal }) => fetch(url, { signal: init?.signal }),
+  },
 });
 
 // The quote every 402 carries, in micro-USDC, set per tool so it sits inside

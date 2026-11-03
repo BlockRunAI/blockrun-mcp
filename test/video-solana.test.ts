@@ -39,7 +39,12 @@ mock.module("../src/utils/http.js", {
   namedExports: { fetchWithTimeout: async () => { throw new Error("Base HTTP route reached"); }, isTimeoutError: () => false },
 });
 mock.module("../src/utils/ssrf.js", {
-  namedExports: { isBlockedFetchHostResolved: async () => false, isBlockedFetchHost: () => false },
+  namedExports: {
+    isBlockedFetchHostResolved: async () => false,
+    isBlockedFetchHost: () => false,
+    // No DNS, same as the stubs above: hand straight to the (mocked) fetch.
+    fetchPublicUrl: (url: string, init?: { signal?: AbortSignal }) => fetch(url, { signal: init?.signal }),
+  },
 });
 mock.module("@blockrun/llm", {
   namedExports: {
