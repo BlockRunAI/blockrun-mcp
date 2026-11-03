@@ -68,6 +68,10 @@ const COLLATERAL_ONRAMP_ABI = [{
 }] as const;
 
 /** Approve-then-wrap calls for sweeping legacy USDC.e into pUSD. Exported for tests. */
+
+/** A withdrawal outcome read off the chain (not a maybe): rethrown as-is, never turned into "may still land". */
+class DefiniteWithdrawOutcome extends Error {}
+
 export function buildLegacyWrapCalls(owner: Hex, amount: bigint): Array<{ target: Hex; value: "0"; data: Hex }> {
   return [
     {
@@ -454,10 +458,32 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
         // to the failed tx and no isError, so the user waited for money that was
         // never sent and blamed the bridge. redeem.ts and setup.ts both assert
         // status; this path was the one that did not.
-        const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash as Hex });
+        //
+        // viem also does NOT throw when the watched tx is REPLACED: if another
+        // transaction from this key mines with our nonce (EOA mode shares the
+        // key with setup approvals, redeems, other apps), it resolves with
+        // THAT transaction's receipt. A successful replacer then printed ✅
+        // for a transfer that can never execute. Only "repriced" (same call,
+        // new gas) is still our transfer — under the replacer's hash.
+        let replaced: { reason: string; hash: string } | undefined;
+        const receipt = await getPublicClient().waitForTransactionReceipt({
+          hash: txHash as Hex,
+          onReplaced: (r) => { replaced = { reason: r.reason, hash: r.transaction.hash }; },
+        });
+        if (replaced && replaced.reason !== "repriced") {
+          // Our nonce is spent by a different transaction, so these signed
+          // bytes can never land: nothing was sent, and the guard is released.
+          saveState({ pendingWithdraw: undefined });
+          throw new DefiniteWithdrawOutcome(
+            `Withdraw: the pUSD transfer ${txHash} never executed — its nonce was used by a different transaction ` +
+            `(${replaced.hash}, ${replaced.reason}). No pUSD was sent. Check your Polymarket balance, then retry.`,
+          );
+        }
         saveState({ pendingWithdraw: undefined });
         assertTransactionSucceeded(receipt, "pUSD transfer", txHash);
+        if (replaced) txHash = replaced.hash; // repriced: the transfer landed under this hash
       } catch (err) {
+        if (err instanceof DefiniteWithdrawOutcome) throw err;
         if (err instanceof Error && /reverted/i.test(err.message)) throw err; // a receipt was read: definite
         throw eoaOutcomeUnknown(txHash, err instanceof Error ? err.message : String(err));
       }
