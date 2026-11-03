@@ -49,6 +49,7 @@ import { estimateSearchCost } from "../src/tools/search.js";
 import { estimateCost as estimateImageCost } from "../src/tools/image.js";
 import { estimateExaCost } from "../src/tools/exa.js";
 import { estimateChatCost, promptCharSize } from "../src/tools/chat.js";
+import { anthropicCallCost } from "../src/tools/chat-anthropic.js";
 import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
@@ -579,6 +580,42 @@ async function accountSheet(): Promise<CatalogueModel[] | string> {
   }
 }
 
+// The native Claude LEDGER (blockrun_chat with `thinking`, /v1/messages). Not a
+// reserve: what the server BOOKS after the call, mirrored from the gateway's
+// quote formula because the SDK pays inside fetch and only the status is
+// readable. The formula carries the gateway's OUTPUT_QUOTE_FACTOR, which moved
+// 0.1 -> 0.5 on 2026-10-30 with nothing here probing /v1/messages: the ledger
+// booked ~1/4 of each settlement for days and budget caps ran ~4x loose. Booked
+// below the quote is the same lie as an under-reserve, so it fails the gate the
+// same way. Base only: the native path is the Base VIP channel.
+console.log("\nNative /v1/messages ledger (Base): what anthropicCallCost books vs the live exact quote");
+const LEDGER_PROBES: Array<[string, number, number]> = [
+  ["claude-opus-5", 2, 1024],
+  ["claude-opus-5", 100_000, 1024],
+  ["claude-sonnet-5", 100_000, 1024],
+  ["claude-haiku-4.5", 2, 1024],
+];
+for (const [model, chars, maxTokens] of LEDGER_PROBES) {
+  const content = chars <= 2 ? "hi" : "word ".repeat(Math.ceil(chars / 5)).slice(0, chars);
+  const label = `messages ${model} ${chars >= 1000 ? `${chars / 1000}k` : `${chars}c`}/${maxTokens}`;
+  const live = await quote(BASE, "messages", { model: `anthropic/${model}`, max_tokens: maxTokens, messages: [{ role: "user", content }] });
+  const booked = anthropicCallCost(model, content.length, maxTokens);
+  if (typeof live === "string" || booked === null) {
+    console.log(`  ?  ${label.padEnd(26)} ${typeof live === "string" ? live : "anthropicCallCost has no row"}`);
+    unreachable++;
+    continue;
+  }
+  if (booked < live.usd - EPSILON) {
+    console.log(`  ✗  ${label.padEnd(26)} books $${booked} < settles $${live.usd}  UNDER-BOOKS by $${(live.usd - booked).toFixed(6)} — has the gateway's OUTPUT_QUOTE_FACTOR moved? (chat-anthropic.ts)`);
+    short++;
+  } else if (booked > live.usd * 1.01) {
+    console.log(`  !  ${label.padEnd(26)} books $${booked} > settles $${live.usd}  over-books by ${(((booked / live.usd) - 1) * 100).toFixed(1)}% — caps trip early`);
+    over++;
+  } else {
+    console.log(`  ✓  ${label.padEnd(26)} $${live.usd}  (books $${booked})`);
+  }
+}
+
 const catalogueGaps: string[] = []; // fail
 const catalogueNotes: string[] = []; // report only
 let catalogueUnreachable = 0;
@@ -690,7 +727,8 @@ for (const n of catalogueNotes) console.log(`  !  ${n}`);
 // a catalogue that would not read, exits 2. The decision lives in
 // verify-prices-verdict.ts so a test can pin it without the network.
 const result = verdict({
-  probes: PROBES.length,
+  // The ledger rows count toward the unreachable tolerance like any probe.
+  probes: PROBES.length + LEDGER_PROBES.length,
   short,
   solShort,
   unreachable,
