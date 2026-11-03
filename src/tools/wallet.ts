@@ -12,13 +12,19 @@ import { delegateAgent, listRevokedAgents, revokeAgent, sealOperatorCeiling } fr
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
 import { getKeychainMode } from "../utils/keychain.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /**
- * Where the key actually lives, worded from the real state. The setup text
- * used to say the Solana key was in ~/.blockrun/.solana-session even when
- * BLOCKRUN_KEYCHAIN=strict had deleted that file (the key is then ONLY in the
- * OS keychain) or SOLANA_WALLET_KEY supplied it, so a user backing up
- * ~/.blockrun on that advice backed up nothing.
+ * Where the key actually lives, worded from what is ON DISK, not from the mode
+ * that was asked for. The setup text used to say the Solana key was in
+ * ~/.blockrun/.solana-session even when strict keychain mode had deleted it,
+ * and a first fix said "keychain only" whenever BLOCKRUN_KEYCHAIN=strict, but
+ * persistKey keeps the file whenever it cannot prove the keychain copy (no
+ * keychain on Windows, no secret-tool, a store or read-back that fails) and
+ * never touches the legacy wallet.key. So: an env override, else every key
+ * file that still holds a key, else the keychain under strict mode.
  */
 export function keyStorageNote(kind: "evm" | "solana"): string {
   const envVar = kind === "solana"
@@ -26,11 +32,21 @@ export function keyStorageNote(kind: "evm" | "solana"): string {
     : process.env.BLOCKRUN_WALLET_KEY ? "BLOCKRUN_WALLET_KEY"
       : process.env.BASE_CHAIN_WALLET_KEY ? "BASE_CHAIN_WALLET_KEY" : null;
   if (envVar) return `Private key supplied by ${envVar}; this server does not store it (never leaves your machine)`;
+  const files = kind === "solana" ? [".solana-session"] : [".session", "wallet.key"];
+  const onDisk = files.filter((f) => {
+    try {
+      return fs.readFileSync(path.join(os.homedir(), ".blockrun", f), "utf-8").trim() !== "";
+    } catch {
+      return false;
+    }
+  });
+  if (onDisk.length) {
+    return `Private key stored at ${onDisk.map((f) => `~/.blockrun/${f}`).join(" and ")} (never leaves your machine)`;
+  }
   if (getKeychainMode() === "strict") {
     return "Private key kept in your OS keychain only (BLOCKRUN_KEYCHAIN=strict removed the plaintext file; never leaves your machine)";
   }
-  const file = kind === "solana" ? "~/.blockrun/.solana-session" : "~/.blockrun/.session";
-  return `Private key stored at ${file} (never leaves your machine)`;
+  return `Private key stored in your OS keychain (never leaves your machine)`;
 }
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
