@@ -262,7 +262,7 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  * promise "still free when it returns".
  *
  * What that check cannot cover, and does not pretend to: a member the catalogue
- * does not list at all. Twenty-three of these are in that state on both gateways today,
+ * does not list at all. Twenty-five of these are in that state on both gateways today,
  * and delisting is not death — gpt-oss-120b is the gateway's own free fallback
  * and answers for itself while absent from GET /v1/models. The sweep names each
  * one as UNVERIFIED rather than counting it as checked; the only way to settle
@@ -320,6 +320,12 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "nvidia/qwen3.5-122b-a10b",
   "nvidia/seed-oss-36b",
   "nvidia/mistral-small-4-119b",
+  // Two more NIM-direct ids the account sheet added at $0 (billingMode "free",
+  // hidden). Absent from GET /v1/models on both gateways, and both answered
+  // 200 with no payment header on Base AND Solana on 2026-11-02, serving
+  // themselves. Not routed, same as the seventeen above.
+  "nvidia/nemotron-3.5-lightning-nim",
+  "nvidia/nemotron-3-ultra-550b-nim",
 ]);
 
 /**

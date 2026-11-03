@@ -396,6 +396,8 @@ test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
     "nvidia/nemotron-3-nano-omni-nim", "nvidia/mistral-large-3-675b", "nvidia/qwen3-coder-480b",
     "nvidia/devstral-2-123b", "nvidia/glm-4.7", "nvidia/llama-4-maverick", "nvidia/qwen3-next-80b-a3b-instruct",
     "nvidia/qwen3.5-122b-a10b", "nvidia/seed-oss-36b", "nvidia/mistral-small-4-119b",
+    // Added to the account sheet later; unpaid 200 on both chains 2026-11-02.
+    "nvidia/nemotron-3.5-lightning-nim", "nvidia/nemotron-3-ultra-550b-nim",
   ];
   for (const id of ids) {
     assert.equal(estimateChatCost(1024, undefined, id, undefined, 100_000), 0, id);
