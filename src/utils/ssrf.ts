@@ -1,12 +1,13 @@
 // src/utils/ssrf.ts
 //
-// Guard for server-side fetches of caller/model-supplied URLs (blockrun_image's
-// reference image/mask). The MCP server runs on the user's machine, which can
-// reach localhost dev servers, cloud metadata endpoints (169.254.169.254), and
-// internal hosts — so a supplied (or prompt-injected) URL must not be allowed to
-// probe the private network. This is a literal-host deny-list applied to every
-// redirect hop; it is not full DNS-rebinding protection (a public name resolving
-// to a private IP would still pass), but it blocks the realistic vectors.
+// Guard for server-side fetches of URLs this process did not choose: the
+// caller's (or a prompt-injected) blockrun_image reference image/mask, and the
+// image URL a gateway hands back for the inline preview. The MCP server runs
+// on the user's machine, which can reach localhost dev servers, cloud metadata
+// endpoints (169.254.169.254), and internal hosts, so none of those URLs may
+// be allowed to probe the private network. fetchPublicUrl is the one entry
+// point: it resolves every hop's host (see isBlockedFetchHostResolved) and
+// follows redirects by hand so a 30x cannot bounce into a private address.
 
 function ipv4Blocked(host: string): boolean | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
@@ -110,5 +111,47 @@ export async function isBlockedFetchHostResolved(hostname: string): Promise<bool
     // NXDOMAIN or resolver failure: nothing to fetch anyway, so fail closed
     // rather than letting an unresolvable name through to fetch().
     return true;
+  }
+}
+
+/**
+ * fetch() for a URL this process did not choose, refusing any hop whose host
+ * is (or resolves to) a private, loopback, link-local or internal address.
+ *
+ * Redirects are followed by hand, up to `maxRedirects`, and each Location is
+ * re-checked before it is requested. A plain fetch() follows 30x on its own,
+ * so a public URL that redirects to 169.254.169.254 would sail past any check
+ * made only on the first URL. Only http(s) is accepted: fetch() also speaks
+ * data: and blob:, which have no host to check.
+ *
+ * Throws on a blocked host, a non-http(s) scheme, or too many redirects;
+ * otherwise returns the final Response, which may be non-2xx (callers decide).
+ * Resolve-then-connect leaves true DNS rebinding open; see
+ * isBlockedFetchHostResolved.
+ */
+export async function fetchPublicUrl(
+  url: string,
+  init: { signal?: AbortSignal; maxRedirects?: number } = {},
+): Promise<Response> {
+  const maxRedirects = init.maxRedirects ?? 5;
+  let current = url;
+  for (let hop = 0; ; hop++) {
+    const parsed = new URL(current);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`refusing to fetch a non-http(s) URL: ${parsed.protocol}`);
+    }
+    if (await isBlockedFetchHostResolved(parsed.hostname)) {
+      throw new Error(`refusing to fetch a private/loopback/link-local address: ${parsed.hostname}`);
+    }
+    const res = await fetch(current, { signal: init.signal, redirect: "manual" });
+    const location = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && location) {
+      // Release the redirect's socket before the next hop.
+      await res.body?.cancel().catch(() => {});
+      if (hop >= maxRedirects) throw new Error("too many redirects");
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return res;
   }
 }

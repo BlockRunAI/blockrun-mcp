@@ -14,7 +14,8 @@ import { isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { ledgerFallback } from "../utils/raw-call.js";
 import { solanaPaidAsyncPost } from "../utils/solana-402.js";
-import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
+import { fetchPublicUrl } from "../utils/ssrf.js";
+import { readCappedBody } from "../utils/read-capped.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
@@ -64,42 +65,20 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      // Follow redirects manually so each hop's host is re-validated against the
-      // SSRF deny-list — a supplied/prompt-injected URL must not reach (or 30x
-      // into) localhost, the cloud metadata endpoint, or the private network.
-      let url = ref;
-      let res: Response;
-      for (let hop = 0; ; hop++) {
-        const host = new URL(url).hostname;
-        // Resolved, not literal: wildcard-DNS names like 127.0.0.1.nip.io are
-        // public strings that map to private addresses, and were exploitable.
-        if (await isBlockedFetchHostResolved(host)) {
-          throw new Error(`refusing to fetch a private/loopback/link-local address: ${host}`);
-        }
-        res = await fetch(url, { signal: ctrl.signal, redirect: "manual" });
-        const location = res.headers.get("location");
-        if (res.status >= 300 && res.status < 400 && location) {
-          if (hop >= 5) throw new Error("too many redirects");
-          url = new URL(location, url).toString();
-          continue;
-        }
-        break;
-      }
+      // fetchPublicUrl re-checks every redirect hop, after DNS resolution,
+      // against the SSRF deny-list: a supplied/prompt-injected URL must not
+      // reach (or 30x into) localhost, the cloud metadata endpoint, or the
+      // private network. Resolved, not literal: wildcard-DNS names like
+      // 127.0.0.1.nip.io are public strings that map to private addresses.
+      const res = await fetchPublicUrl(ref, { signal: ctrl.signal });
       if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
       const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
       if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);
-      // Reject by advertised size BEFORE buffering, so an oversized remote image
-      // can't be fully read into memory (OOM risk in the long-lived stdio
-      // process) only to be rejected. The post-read check below still covers
-      // chunked responses with no Content-Length.
-      const advertised = Number(res.headers.get("content-length"));
-      if (Number.isFinite(advertised) && advertised > REFERENCE_IMAGE_MAX_BYTES) {
-        throw new Error(`image too large: ${(advertised / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
-      }
-      const buffer = Buffer.from(await res.arrayBuffer());
-      if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
-        throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
-      }
+      // Counted as it streams, not checked after a full buffer: neither a
+      // chunked body nor a gzip/br bomb (fetch decodes transparently, so
+      // Content-Length is the compressed size) can balloon the stdio process.
+      const buffer = await readCappedBody(res, REFERENCE_IMAGE_MAX_BYTES);
+      if (!buffer) throw new Error(`image too large: over the ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
       return { dataUri: `data:${mime};base64,${buffer.toString("base64")}` };
     } finally {
       clearTimeout(timeout);
