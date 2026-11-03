@@ -6,6 +6,12 @@
 // The full-resolution URL is always kept in the text block — the thumbnail is
 // a preview, not a replacement.
 //
+// The URL comes from the gateway response, not from this process, so it is
+// fetched through fetchPublicUrl like any other URL we did not choose: a
+// malicious or compromised gateway (or an upstream provider whose URL it
+// passes through) must not be able to point this fetch, or a redirect from
+// it, at localhost, cloud metadata, or the user's private network.
+//
 // Off by default to avoid context/token bloat. Enable globally with
 // BLOCKRUN_INLINE_IMAGES=1 (or true/yes/on), or per call with the tool's
 // `inline` param (which takes precedence over the env default).
@@ -22,6 +28,9 @@
 // URL-only (buildInlineImageBlock already returns null on failure), never a crash.
 // sharp ships as CJS `export = sharp`, so under Node's ESM interop the dynamic
 // import exposes the factory as `.default`.
+import { fetchPublicUrl } from "./ssrf.js";
+import { readCappedBody } from "./read-capped.js";
+
 type SharpFactory = typeof import("sharp");
 let sharpModule: SharpFactory | null | undefined;
 async function loadSharp(): Promise<SharpFactory | null> {
@@ -54,9 +63,8 @@ const JPEG_QUALITY = envInt("BLOCKRUN_INLINE_QUALITY", 70, 1, 100);
 // in the context window — base64 inflates the raw JPEG ~33%). Above this we
 // skip inlining entirely (URL-only) so a single image can't blow up context.
 const MAX_BYTES = envInt("BLOCKRUN_INLINE_MAX_BYTES", 900_000);
-// Defensive caps on the SOURCE download/decode. Upstream is the trusted
-// blockrun-hosted asset, but bounding the buffer + decode keeps a pathological
-// response from ballooning memory before the thumbnail step runs.
+// Defensive caps on the SOURCE download/decode, so a pathological response
+// can't balloon memory before the thumbnail step runs.
 const MAX_SOURCE_BYTES = 25_000_000;     // 25 MB ceiling on the fetched image
 const MAX_INPUT_PIXELS = 100_000_000;    // ~100 MP decode guard for sharp
 
@@ -93,14 +101,18 @@ export async function buildInlineImageBlock(url: string): Promise<InlineImageBlo
     const sharpFn = await loadSharp();
     if (!sharpFn) return null;
 
-    const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    // An image2image route can hand back a base64 data URI rather than a hosted
+    // URL (see materializeImageUrl). Decoding it touches no network, so it
+    // skips the SSRF guard; everything else must be a public http(s) URL.
+    const signal = AbortSignal.timeout(15_000);
+    const resp = url.startsWith("data:image/")
+      ? await fetch(url, { signal })
+      : await fetchPublicUrl(url, { signal });
     if (!resp.ok) return null;
-    // Cap the download: reject early on a too-large Content-Length, and guard
-    // again on the actual buffer in case the header lied or was absent.
-    const declared = Number(resp.headers.get("content-length") || 0);
-    if (declared > MAX_SOURCE_BYTES) return null;
-    const input = Buffer.from(await resp.arrayBuffer());
-    if (input.byteLength > MAX_SOURCE_BYTES) return null;
+    // Cap the download while it streams (see readCappedBody): a lying or
+    // absent Content-Length, or a compressed bomb, stops at the cap.
+    const input = await readCappedBody(resp, MAX_SOURCE_BYTES);
+    if (!input) return null;
 
     const thumb = await sharpFn(input, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
