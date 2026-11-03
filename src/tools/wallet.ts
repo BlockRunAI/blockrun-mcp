@@ -11,6 +11,27 @@ import { formatError } from "../utils/errors.js";
 import { delegateAgent, listRevokedAgents, revokeAgent, sealOperatorCeiling } from "../utils/budget.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
+import { getKeychainMode } from "../utils/keychain.js";
+
+/**
+ * Where the key actually lives, worded from the real state. The setup text
+ * used to say the Solana key was in ~/.blockrun/.solana-session even when
+ * BLOCKRUN_KEYCHAIN=strict had deleted that file (the key is then ONLY in the
+ * OS keychain) or SOLANA_WALLET_KEY supplied it, so a user backing up
+ * ~/.blockrun on that advice backed up nothing.
+ */
+export function keyStorageNote(kind: "evm" | "solana"): string {
+  const envVar = kind === "solana"
+    ? (process.env.SOLANA_WALLET_KEY ? "SOLANA_WALLET_KEY" : null)
+    : process.env.BLOCKRUN_WALLET_KEY ? "BLOCKRUN_WALLET_KEY"
+      : process.env.BASE_CHAIN_WALLET_KEY ? "BASE_CHAIN_WALLET_KEY" : null;
+  if (envVar) return `Private key supplied by ${envVar}; this server does not store it (never leaves your machine)`;
+  if (getKeychainMode() === "strict") {
+    return "Private key kept in your OS keychain only (BLOCKRUN_KEYCHAIN=strict removed the plaintext file; never leaves your machine)";
+  }
+  const file = kind === "solana" ? "~/.blockrun/.solana-session" : "~/.blockrun/.session";
+  return `Private key stored at ${file} (never leaves your machine)`;
+}
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
   // The limit this ledger was BORN with is the operator's BLOCKRUN_BUDGET_LIMIT
@@ -434,7 +455,7 @@ VERIFY BALANCE: https://arc-scan.org/address/${address}
 PRICING (pay per use, same as Base):
   - Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
+SECURITY: ${keyStorageNote("evm")}
 ================================================================================`
           : chain === "solana"
           ? `
@@ -468,7 +489,7 @@ PRICING (pay per use):
   - GPT-4o: ~$0.005/request | Claude Sonnet: ~$0.003/request
   - Gemini Flash: ~$0.0001/request | Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.solana-session (never leaves your machine)
+SECURITY: ${keyStorageNote("solana")}
 ================================================================================`
           : `
 ================================================================================
@@ -500,7 +521,7 @@ PRICING (pay per use):
   - GPT-4o: ~$0.005/request | Claude Sonnet: ~$0.003/request
   - Gemini Flash: ~$0.0001/request | Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
+SECURITY: ${keyStorageNote("evm")}
 ================================================================================`;
 
         return { content: [{ type: "text", text }] };
