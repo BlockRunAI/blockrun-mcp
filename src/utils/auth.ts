@@ -105,9 +105,17 @@ export function getApiKey(): string | undefined {
  */
 export function walletModeRemedy(): string {
   getApiKey();
-  return _apiKeyOrigin === "BLOCKRUN_API_KEY"
-    ? "unset BLOCKRUN_API_KEY and restart"
-    : `remove ${_apiKeyOrigin} (and leave BLOCKRUN_API_KEY unset), then restart`;
+  if (_apiKeyOrigin !== "BLOCKRUN_API_KEY") {
+    return `remove ${_apiKeyOrigin} (and leave BLOCKRUN_API_KEY unset), then restart`;
+  }
+  // The env var wins over the file, so with BOTH present, unsetting the env
+  // var alone hands control to the file key: name both or the user is
+  // refused again after the restart.
+  let fileToo = false;
+  try { fileToo = fs.existsSync(API_KEY_FILE) && fs.readFileSync(API_KEY_FILE, "utf-8").trim() !== ""; } catch { fileToo = true; }
+  return fileToo
+    ? `unset BLOCKRUN_API_KEY and remove ${API_KEY_FILE}, then restart`
+    : "unset BLOCKRUN_API_KEY and restart";
 }
 
 export function getAuthMode(): AuthMode {

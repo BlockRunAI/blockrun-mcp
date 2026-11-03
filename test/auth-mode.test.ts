@@ -141,6 +141,15 @@ test("the wallet-mode remedy names the key's actual source", () => {
   const fromEnv = auth.requireWalletMode("blockrun_wallet setup");
   assert.match(fromEnv ?? "", /unset BLOCKRUN_API_KEY and restart/);
   assert.doesNotMatch(fromEnv ?? "", /\.api-key/);
+
+  // Both present: the env var wins, so unsetting it alone hands over to the
+  // file key. The remedy must name both.
+  fs.writeFileSync(file, `${VALID_KEY}\n`);
+  auth.resetAuthCache();
+  const both = auth.requireWalletMode("blockrun_wallet setup") ?? "";
+  assert.match(both, /unset BLOCKRUN_API_KEY/);
+  assert.ok(both.includes(file), both);
+  fs.rmSync(file, { force: true });
   delete process.env.BLOCKRUN_API_KEY;
   auth.resetAuthCache();
 });
