@@ -15,6 +15,7 @@ import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { ledgerFallback } from "../utils/raw-call.js";
 import { solanaPaidAsyncPost } from "../utils/solana-402.js";
 import { fetchPublicUrl } from "../utils/ssrf.js";
+import { readCappedBody } from "../utils/read-capped.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
@@ -73,18 +74,11 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
       if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
       const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
       if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);
-      // Reject by advertised size BEFORE buffering, so an oversized remote image
-      // can't be fully read into memory (OOM risk in the long-lived stdio
-      // process) only to be rejected. The post-read check below still covers
-      // chunked responses with no Content-Length.
-      const advertised = Number(res.headers.get("content-length"));
-      if (Number.isFinite(advertised) && advertised > REFERENCE_IMAGE_MAX_BYTES) {
-        throw new Error(`image too large: ${(advertised / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
-      }
-      const buffer = Buffer.from(await res.arrayBuffer());
-      if (buffer.byteLength > REFERENCE_IMAGE_MAX_BYTES) {
-        throw new Error(`image too large: ${(buffer.byteLength / 1e6).toFixed(1)}MB > ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
-      }
+      // Counted as it streams, not checked after a full buffer: neither a
+      // chunked body nor a gzip/br bomb (fetch decodes transparently, so
+      // Content-Length is the compressed size) can balloon the stdio process.
+      const buffer = await readCappedBody(res, REFERENCE_IMAGE_MAX_BYTES);
+      if (!buffer) throw new Error(`image too large: over the ${REFERENCE_IMAGE_MAX_BYTES / 1e6}MB cap`);
       return { dataUri: `data:${mime};base64,${buffer.toString("base64")}` };
     } finally {
       clearTimeout(timeout);

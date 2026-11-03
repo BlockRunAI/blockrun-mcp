@@ -14,6 +14,11 @@ as `fetchPublicUrl`. Non-http(s) schemes are refused; `data:image` results
 from image2image routes still inline without a network request. Previews
 are off by default. Reported in #194.
 
+Both image downloads (your reference image, and the preview) now count bytes
+as the body streams and stop at the size cap. Before, the cap ran after the
+whole body was in memory, so a chunked response or a gzip/brotli bomb, whose
+Content-Length is the compressed size, could exhaust memory in the server.
+
 ## 0.54.7
 
 ### Fixed — Mistral Large 4 reserves its list price

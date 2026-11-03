@@ -29,6 +29,7 @@
 // sharp ships as CJS `export = sharp`, so under Node's ESM interop the dynamic
 // import exposes the factory as `.default`.
 import { fetchPublicUrl } from "./ssrf.js";
+import { readCappedBody } from "./read-capped.js";
 
 type SharpFactory = typeof import("sharp");
 let sharpModule: SharpFactory | null | undefined;
@@ -108,12 +109,10 @@ export async function buildInlineImageBlock(url: string): Promise<InlineImageBlo
       ? await fetch(url, { signal })
       : await fetchPublicUrl(url, { signal });
     if (!resp.ok) return null;
-    // Cap the download: reject early on a too-large Content-Length, and guard
-    // again on the actual buffer in case the header lied or was absent.
-    const declared = Number(resp.headers.get("content-length") || 0);
-    if (declared > MAX_SOURCE_BYTES) return null;
-    const input = Buffer.from(await resp.arrayBuffer());
-    if (input.byteLength > MAX_SOURCE_BYTES) return null;
+    // Cap the download while it streams (see readCappedBody): a lying or
+    // absent Content-Length, or a compressed bomb, stops at the cap.
+    const input = await readCappedBody(resp, MAX_SOURCE_BYTES);
+    if (!input) return null;
 
     const thumb = await sharpFn(input, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
