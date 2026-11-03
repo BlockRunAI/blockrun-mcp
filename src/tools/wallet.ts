@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
 import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase, type PaymentChain } from "../utils/wallet.js";
-import { isApiKeyMode, requireWalletMode, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
+import { isApiKeyMode, requireWalletMode, walletModeRemedy, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
 import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
@@ -291,8 +291,8 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
             `reports one. Chat settles after the response by design, so chat figures`,
             `stay estimates; the ledger above is always authoritative.`,
             ``,
-            `Wallet actions (setup, qr, deposit, chain) need wallet mode — unset`,
-            `BLOCKRUN_API_KEY and restart to use one.`,
+            `Wallet actions (setup, qr, deposit, chain) need wallet mode — ${walletModeRemedy()}`,
+            `to use one.`,
           ].join("\n");
           return {
             content: [{ type: "text", text }],

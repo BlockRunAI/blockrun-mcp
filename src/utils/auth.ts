@@ -41,6 +41,8 @@ export type AuthMode = "api-key" | "wallet";
 // Resolved once per process. getAuthMode() is consulted on every paid call and
 // on both hot display paths, and the validation below should not re-run per call.
 let _apiKey: string | null | undefined;
+// Where the active key came from, so a remedy names the thing to remove.
+let _apiKeyOrigin: string = "BLOCKRUN_API_KEY";
 
 /**
  * Where a key lives when it is not in the environment.
@@ -92,7 +94,20 @@ export function getApiKey(): string | undefined {
     );
   }
   _apiKey = raw;
+  _apiKeyOrigin = origin;
   return raw;
+}
+
+/**
+ * How to leave account billing, naming the key's ACTUAL source. "Unset
+ * BLOCKRUN_API_KEY" does nothing for a key read from ~/.blockrun/.api-key: the
+ * user unsets a variable they never set, restarts, and is refused again.
+ */
+export function walletModeRemedy(): string {
+  getApiKey();
+  return _apiKeyOrigin === "BLOCKRUN_API_KEY"
+    ? "unset BLOCKRUN_API_KEY and restart"
+    : `remove ${_apiKeyOrigin} (and leave BLOCKRUN_API_KEY unset), then restart`;
 }
 
 export function getAuthMode(): AuthMode {
@@ -141,7 +156,7 @@ export function requireWalletMode(capability: string): string | null {
   return (
     `${capability} needs wallet mode — it signs on-chain or reads a wallet address, ` +
     `and this server is on API-key account billing.\n\n` +
-    `To use it: unset BLOCKRUN_API_KEY and restart, then fund the wallet with USDC.\n` +
+    `To use it: ${walletModeRemedy()}, then fund the wallet with USDC.\n` +
     `Account credit and usage stay at ${PORTAL_CREDITS_URL}.`
   );
 }
@@ -149,4 +164,5 @@ export function requireWalletMode(capability: string): string | null {
 /** Test seam — clears the memoized key so a test can change the environment. */
 export function resetAuthCache(): void {
   _apiKey = undefined;
+  _apiKeyOrigin = "BLOCKRUN_API_KEY";
 }

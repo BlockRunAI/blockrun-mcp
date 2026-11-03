@@ -28,6 +28,7 @@ mock.module("../src/utils/auth.js", {
   namedExports: {
     isApiKeyMode: () => apiKeyMode,
     requireWalletMode: (c: string) => `${c} needs wallet mode`,
+    walletModeRemedy: () => "unset BLOCKRUN_API_KEY and restart",
     PORTAL_CREDITS_URL: "https://user.blockrun.ai/dashboard/credits",
     PORTAL_ACTIVITY_URL: "https://user.blockrun.ai/dashboard/activity",
   },
