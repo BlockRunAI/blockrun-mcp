@@ -87,27 +87,10 @@ export function buildLegacyWrapCalls(owner: Hex, amount: bigint): Array<{ target
   ];
 }
 
-/**
- * Parse a dollar amount into micro-pUSD without silently changing what the
- * caller asked for. The old `BigInt(Math.floor(usd * 1e6))` truncated float
- * noise downward — `19.99 * 1e6` is 19_989_999.999…, i.e. a cent less than
- * requested. Round to the nearest micro-dollar and reject anything that isn't
- * representable (over-precision, negatives, NaN). Exported for tests.
- */
-export function parseUsdAmount(amount: number): bigint | null {
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const scaled = amount * 10 ** PUSD_DECIMALS;
-  const rounded = Math.round(scaled);
-  // 0.01 micro-dollars separates the two populations cleanly: float noise on a
-  // representable amount is ≤ ~1e-4 micro even at $1M (ulp-scale), while a
-  // genuine 7th-decimal digit is ≥ 0.1 micro. An absolute 1e-7 bound (the
-  // first draft) sat BELOW the noise floor and rejected honest amounts like
-  // $1234.56 (noise 2.4e-7); a relative bound sat above real violations.
-  if (!Number.isSafeInteger(rounded) || rounded <= 0 || Math.abs(scaled - rounded) > 0.01) {
-    return null;
-  }
-  return BigInt(rounded);
-}
+// parseUsdAmount moved to ./amounts.ts so fund.ts shares it; re-exported here
+// for the callers and tests that import it from withdraw.
+import { parseUsdAmount } from "./amounts.js";
+export { parseUsdAmount };
 
 /** Re-read pUSD until it reaches `minimum` (post-wrap RPC lag), 3×750ms. */
 async function readPusdUntil(owner: Hex, minimum: bigint): Promise<bigint> {

@@ -125,6 +125,27 @@ test("confirm:true signs the deposit auth and calls the gateway with the right b
   assert.equal(call.body.depositAuthorization, "BASE64_DEPOSIT_PAYLOAD");
 });
 
+// Audit r5: fund signed Math.floor(usd * 1e6). 2.01 * 1e6 is
+// 2009999.9999999998, so "$2.01" signed $2.009999 while the text said $2.01.
+for (const [usd, micro] of [[2.01, "2010000"], [8.2, "8200000"], [19.99, "19990000"]] as const) {
+  test(`$${usd} signs exactly ${micro} micro-USDC`, async () => {
+    baseBalance = 50;
+    postCalls = [];
+    const res = await fundVault({ amount_usd: usd, confirm: true });
+    assert.equal(res.isError, undefined, res.text);
+    assert.equal((postCalls[0] as { body: Record<string, unknown> }).body.amountMicro, micro);
+  });
+}
+
+test("an amount with more than 6 decimals is refused before anything is signed", async () => {
+  baseBalance = 50;
+  postCalls = [];
+  const res = await fundVault({ amount_usd: 2.0000001, confirm: true });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /at most 6 decimal places/);
+  assert.equal(postCalls.length, 0);
+});
+
 // --- Optional per-call cap (audit cluster F) ---
 //
 // fund signs an EIP-3009 authorization for the FULL amount outside the x402
