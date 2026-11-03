@@ -29,6 +29,10 @@ mock.module("../src/utils/http.js", {
       if (!next) throw new Error("UNEXPECTED_NETWORK_CALL");
       return next();
     },
+    // in-flight.js (imported for real by the edge-status booking tests) needs
+    // this export. Those cases carry statusCode, so the verdict never reaches
+    // the timeout check; the stub only has to recognise an abort.
+    isTimeoutError: (err: unknown) => (err as { name?: string } | undefined)?.name === "AbortError",
   },
 });
 
