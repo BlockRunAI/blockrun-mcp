@@ -23,6 +23,16 @@ test("overrides SDK user-agent on BlockRun gateway requests", async () => {
   assert.equal(headers.get("x-test"), "kept");
 });
 
+test("marks Arc gateway requests as MCP", async () => {
+  const { calls, fetcher } = recorder();
+  const wrapped = withBlockrunMcpUserAgent(fetcher, "0.30.0");
+  await wrapped("https://arc.blockrun.ai/api/v1/chat/completions");
+  assert.equal(
+    new Headers(calls[0].init?.headers).get("user-agent"),
+    "blockrun-mcp/0.30.0",
+  );
+});
+
 test("marks Solana gateway requests as MCP", async () => {
   const { calls, fetcher } = recorder();
   const wrapped = withBlockrunMcpUserAgent(fetcher, "0.30.0");

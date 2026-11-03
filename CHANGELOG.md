@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.54.8
+## 0.55.1
 
 ### Security — the inline image preview no longer fetches private addresses
 
@@ -18,6 +18,22 @@ Both image downloads (your reference image, and the preview) now count bytes
 as the body streams and stop at the size cap. Before, the cap ran after the
 whole body was in memory, so a chunked response or a gzip/brotli bomb, whose
 Content-Length is the compressed size, could exhaust memory in the server.
+
+## 0.55.0
+
+### Added — Arc as a third payment chain
+
+`blockrun_wallet action:"chain" chain:"arc"` pays on Circle's Arc
+(eip155:5042) through arc.blockrun.ai, from the same EVM key and address as
+Base, funded with USDC on Arc. Arc serves everything Base does. `status`
+shows the Base, Solana and Arc balances; the Arc balance is read from the Arc
+gateway, or from `ARC_RPC_URL` when set. Setup, the funding QR (EIP-681 on
+chain 5042), card top-up guidance and error text name Arc.
+
+Nothing selects Arc automatically: an install that never chose it stays on
+the chain it was on.
+
+Requires `@blockrun/llm` 3.25 (Arc's USDC signing domain landed in 3.16).
 
 ## 0.54.7
 

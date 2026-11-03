@@ -1,4 +1,4 @@
-const BLOCKRUN_HOSTS = new Set(["blockrun.ai", "www.blockrun.ai", "sol.blockrun.ai"]);
+const BLOCKRUN_HOSTS = new Set(["blockrun.ai", "www.blockrun.ai", "sol.blockrun.ai", "arc.blockrun.ai"]);
 const INSTALL_MARKER = Symbol.for("blockrun.mcp.userAgentInstalled");
 
 type MarkedGlobal = typeof globalThis & { [INSTALL_MARKER]?: boolean };

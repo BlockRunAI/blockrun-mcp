@@ -56,7 +56,7 @@ blockrun_wallet(action="delegate", agent_id="data-poller", agent_limit=0.50)
 
 ```python
 blockrun_wallet(action="status")
-# → Two wallets: Base + Solana. Active chain shown. Check before expensive runs.
+# → Two wallets: Base (also pays on Arc) + Solana. Active chain shown. Check before expensive runs.
 ```
 
 ---

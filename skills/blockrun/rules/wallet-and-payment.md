@@ -11,10 +11,10 @@ diagnosing anything — `blockrun_wallet action: "status"` says which in its fir
 | | **Wallet** | **Account (API key)** |
 |---|---|---|
 | Selected by | nothing — the default | `BLOCKRUN_API_KEY=brk_live_…` |
-| Endpoint | `blockrun.ai` / `sol.blockrun.ai` | `api.blockrun.ai` |
+| Endpoint | `blockrun.ai` / `sol.blockrun.ai` / `arc.blockrun.ai` | `api.blockrun.ai` |
 | Auth | an EIP-3009 / SVM signature per call | `Authorization: Bearer brk_live_…` |
 | Price | quoted in a `402` before you sign | never quoted — metered after the fact |
-| Chain | Solana or Base | none |
+| Chain | Solana, Base or Arc | none |
 | Ledger | on-chain, plus the local session counter | <https://user.blockrun.ai/dashboard/activity> |
 
 On the account rail there is **no 402, no signature, no chain, and no wallet file**. Every
@@ -101,8 +101,9 @@ Solana ever becomes the dearer one, because then the same reserve would be short
    free and settles nothing — the x402 signature is used purely to prove you control the wallet,
    which is why the funding `address` must equal the address that signed the request. Returns a
    one-time Coinbase Onramp link. Base only, and rate-limited per IP and per wallet.
-2. **Direct transfer.** Send USDC to the address on Solana or Base. New installs default to
-   Solana; an install that already had a Base wallet stays on Base until it is switched.
+2. **Direct transfer.** Send USDC to the address on Solana, Base or Arc. New installs default to
+   Solana; an install that already had a Base wallet stays on Base until it is switched. Arc is
+   chosen only with `action:"chain" chain:"arc"` and pays from the Base address.
 3. **Neither.** The free chat tier needs no balance at all.
 4. **Not a wallet at all.** On the account rail, credit is added at
    <https://user.blockrun.ai/dashboard/credits> by card or wire, and billed post-hoc at exact

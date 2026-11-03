@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
-import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase } from "../utils/wallet.js";
+import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase, type PaymentChain } from "../utils/wallet.js";
 import { isApiKeyMode, requireWalletMode, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
 import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
@@ -49,12 +49,16 @@ Switch back with action:"chain" chain:"base". Almost everything now settles on
 either chain; only blockrun_defi (DefiLlama) and blockrun_modal are Base-only,
 plus native Anthropic (claude-*) in blockrun_chat.
 
+Arc (Circle's chain) is a third option: action:"chain" chain:"arc". It pays from
+the SAME address as Base (one EVM key), funded with USDC on Arc, and serves
+everything Base does.
+
 Actions:
 - status (default): Both wallet addresses + USDC balances, active chain, session spending
 - deposit: Buy USDC with a card — mints a one-time Coinbase Onramp link and opens it in the browser (Base only; funds settle into your own wallet). Paid tools auto-open this on an out-of-funds failure; call it directly to fund up front.
 - setup: Get funding instructions + QR code for the ACTIVE chain (call this when balance is 0)
 - qr: Open QR code (active chain) in system viewer
-- chain + chain:"base"|"solana": Switch the active payment chain (omit chain: to just see the current one)
+- chain + chain:"base"|"solana"|"arc": Switch the active payment chain (omit chain: to just see the current one)
 
 Budget controls:
 - budget + budget_action:"set" + budget_amount:1.00 → Set global spend cap
@@ -80,7 +84,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
       annotations: TOOL_ANNOTATIONS.walletManagement,
       inputSchema: {
         action: z.enum(["status", "deposit", "setup", "qr", "chain", "budget", "delegate", "revoke", "report"]).optional().default("status").describe("What to do"),
-        chain: z.enum(["base", "solana"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),
+        chain: z.enum(["base", "solana", "arc"]).optional().describe("Target chain for action='chain'. Omit to view the current active chain."),
         budget_action: z.enum(["set", "check", "clear"]).optional().describe("Budget action (for action='budget'). Defaults to 'check', which only reports."),
         budget_amount: z.number().optional().describe("Budget limit in USD (for budget_action='set')"),
         agent_id: z.string().optional().describe("Agent identifier for delegate/revoke/report actions"),
@@ -326,6 +330,7 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
           setChain(targetChain);
         }
         const active = getChain();
+        // Arc pays from the Base key: one EVM address, two chains.
         const activeWallet = active === "solana" ? both.solana : both.base;
         const activeBalance = await getChainBalance(active, activeWallet.address);
         const balStr = activeBalance !== null ? `$${activeBalance.toFixed(6)} USDC` : "balance unavailable";
@@ -336,15 +341,17 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
     Balance: ${balStr}${activeBalance !== null && activeBalance < 1 ? "  (low — fund this address)" : ""}
   Base:   ${both.base.address}
   Solana: ${both.solana.address}
+  Arc:    ${both.base.address}  (same key as Base)
 
-All blockrun_* calls now pay on ${active}. Still Base-only: blockrun_defi
-(DefiLlama) and blockrun_modal — switch back with chain:"base" for those.`;
+All blockrun_* calls now pay on ${active}.${active === "solana" ? ` Still Base-only: blockrun_defi
+(DefiLlama) and blockrun_modal — switch back with chain:"base" for those.` : ""}`;
         return {
           content: [{ type: "text", text }],
           structuredContent: {
             activeChain: active,
             base: both.base.address,
             solana: both.solana.address,
+            arc: both.base.address,
             activeBalance,
           },
         };
@@ -378,7 +385,9 @@ All blockrun_* calls now pay on ${active}. Still Base-only: blockrun_defi
           await openQrInViewer(qrPath);
           const scanNote = chain === "solana"
             ? "Scan with a Solana wallet (Phantom, Solflare) to send USDC on Solana."
-            : "Scan with MetaMask to send USDC on Base.";
+            : chain === "arc"
+              ? "Scan with an EVM wallet that supports Arc to send USDC on Arc."
+              : "Scan with MetaMask to send USDC on Base.";
           return {
             content: [{ type: "text", text: `QR code opened! ${scanNote}\n\nAddress: ${address}\nQR saved: ${qrPath}` }],
           };
@@ -401,7 +410,33 @@ All blockrun_* calls now pay on ${active}. Still Base-only: blockrun_defi
           qrMessage = "\n(QR generation failed - use address above)";
         }
 
-        const text = chain === "solana"
+        const text = chain === "arc"
+          ? `
+================================================================================
+                        BLOCKRUN WALLET SETUP (ARC)
+================================================================================
+
+Your Arc wallet address: ${address}
+(the same address as your Base wallet — one EVM key pays on both)
+${qrMessage}
+
+HOW TO FUND YOUR WALLET:
+------------------------
+
+Send USDC on the Arc network to the address above. On Arc, USDC is the
+network's own token, so there is nothing else to hold for gas.
+
+Make sure the sender is on Arc. USDC sent on Base lands in your Base balance
+instead (same address), which pays on chain:"base", not here.
+
+VERIFY BALANCE: https://arc-scan.org/address/${address}
+
+PRICING (pay per use, same as Base):
+  - Full pricing: https://blockrun.ai/pricing
+
+SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
+================================================================================`
+          : chain === "solana"
           ? `
 ================================================================================
                         BLOCKRUN WALLET SETUP (SOLANA)
@@ -473,14 +508,15 @@ SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves yo
 
       // Default: status action — show BOTH wallets, mark the active one.
       const both = await ensureBothWallets();
-      const [baseBal, solBal] = await Promise.all([
+      const [baseBal, solBal, arcBal] = await Promise.all([
         getChainBalance("base", both.base.address),
         getChainBalance("solana", both.solana.address),
+        getChainBalance("arc", both.base.address),
       ]);
-      const activeBalance = chain === "solana" ? solBal : baseBal;
+      const activeBalance = chain === "solana" ? solBal : chain === "arc" ? arcBal : baseBal;
       const fmt = (b: number | null) => (b !== null ? `$${b.toFixed(6)} USDC` : "unavailable");
-      const explorerLabel = chain === "solana" ? "Solscan" : "Basescan";
-      const mark = (c: "base" | "solana") => (c === chain ? "→" : " ");
+      const explorerLabel = chain === "solana" ? "Solscan" : chain === "arc" ? "ArcScan" : "Basescan";
+      const mark = (c: PaymentChain) => (c === chain ? "→" : " ");
       // A pre-0.40.1 install has an explicit ~/.blockrun/.chain that this server
       // wrote automatically on first run — and that file outranks
       // SOLANA_WALLET_KEY. 0.40.1 stopped creating it, but it cannot safely
@@ -498,12 +534,14 @@ SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves yo
       // is the question an agent on a $1 allotment is actually asking. Same
       // line and fields as the api-key branch, so a client renders one shape.
       const session = `$${budget.spent.toFixed(4)}${budget.limit ? ` / $${budget.limit.toFixed(2)} local cap` : ""} — ${budget.calls} calls`;
-      const text = `Active chain: ${chain.toUpperCase()}   (switch with action:"chain" chain:"base"|"solana")
+      const text = `Active chain: ${chain.toUpperCase()}   (switch with action:"chain" chain:"base"|"solana"|"arc")
 
 ${mark("base")} Base:   ${both.base.address}
             ${fmt(baseBal)}${baseBal !== null && baseBal < 1 ? "  (low)" : ""}
 ${mark("solana")} Solana: ${both.solana.address}
             ${fmt(solBal)}${solBal !== null && solBal < 1 ? "  (low)" : ""}
+${mark("arc")} Arc:    ${both.base.address}  (same key as Base)
+            ${fmt(arcBal)}${arcBal !== null && arcBal < 1 && chain === "arc" ? "  (low)" : ""}
 
 This session: ${session}
 Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLET on active chain — run action:'setup' for funding instructions" : ""}${envNote}`;
@@ -525,6 +563,7 @@ Paying on ${chain} | View active: ${info.explorerUrl}${info.isNew ? "\nNEW WALLE
           wallets: {
             base: { address: both.base.address, balance: baseBal },
             solana: { address: both.solana.address, balance: solBal },
+            arc: { address: both.base.address, balance: arcBal },
           },
         },
       };
