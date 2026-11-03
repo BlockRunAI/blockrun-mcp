@@ -140,7 +140,10 @@ export async function fetchPublicUrl(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       throw new Error(`refusing to fetch a non-http(s) URL: ${parsed.protocol}`);
     }
-    if (await isBlockedFetchHostResolved(parsed.hostname)) {
+    // The caller's deadline covers name resolution too. dns.lookup cannot be
+    // aborted, so it is raced against the signal: a hung resolver now ends at
+    // the caller's timeout, as it did when fetch() resolved the name itself.
+    if (await abortable(isBlockedFetchHostResolved(parsed.hostname), init.signal)) {
       throw new Error(`refusing to fetch a private/loopback/link-local address: ${parsed.hostname}`);
     }
     const res = await fetch(current, { signal: init.signal, redirect: "manual" });
@@ -154,4 +157,18 @@ export async function fetchPublicUrl(
     }
     return res;
   }
+}
+
+/** `p`, or a rejection with the signal's reason as soon as it aborts. */
+function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => { signal.removeEventListener("abort", onAbort); resolve(v); },
+      (e) => { signal.removeEventListener("abort", onAbort); reject(e); },
+    );
+  });
 }
