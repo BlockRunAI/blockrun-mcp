@@ -14,7 +14,7 @@ import { isApiKeyMode } from "../utils/auth.js";
 import { apiKeyAsyncPost, BilledJobError } from "../utils/api-key-call.js";
 import { ledgerFallback } from "../utils/raw-call.js";
 import { solanaPaidAsyncPost } from "../utils/solana-402.js";
-import { isBlockedFetchHostResolved } from "../utils/ssrf.js";
+import { fetchPublicUrl } from "../utils/ssrf.js";
 import { shouldInline, buildInlineImageBlock } from "../utils/inline-image.js";
 import { confirmSpend } from "../utils/confirm-spend.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
@@ -64,27 +64,12 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      // Follow redirects manually so each hop's host is re-validated against the
-      // SSRF deny-list — a supplied/prompt-injected URL must not reach (or 30x
-      // into) localhost, the cloud metadata endpoint, or the private network.
-      let url = ref;
-      let res: Response;
-      for (let hop = 0; ; hop++) {
-        const host = new URL(url).hostname;
-        // Resolved, not literal: wildcard-DNS names like 127.0.0.1.nip.io are
-        // public strings that map to private addresses, and were exploitable.
-        if (await isBlockedFetchHostResolved(host)) {
-          throw new Error(`refusing to fetch a private/loopback/link-local address: ${host}`);
-        }
-        res = await fetch(url, { signal: ctrl.signal, redirect: "manual" });
-        const location = res.headers.get("location");
-        if (res.status >= 300 && res.status < 400 && location) {
-          if (hop >= 5) throw new Error("too many redirects");
-          url = new URL(location, url).toString();
-          continue;
-        }
-        break;
-      }
+      // fetchPublicUrl re-checks every redirect hop, after DNS resolution,
+      // against the SSRF deny-list: a supplied/prompt-injected URL must not
+      // reach (or 30x into) localhost, the cloud metadata endpoint, or the
+      // private network. Resolved, not literal: wildcard-DNS names like
+      // 127.0.0.1.nip.io are public strings that map to private addresses.
+      const res = await fetchPublicUrl(ref, { signal: ctrl.signal });
       if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
       const mime = (res.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
       if (!mime.startsWith("image/")) throw new Error(`URL returned non-image content-type: ${mime || "(none)"}`);

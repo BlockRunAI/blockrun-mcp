@@ -155,7 +155,12 @@ mock.module("../src/utils/http.js", {
   namedExports: { fetchWithTimeout: async () => boom(), isTimeoutError: () => false },
 });
 mock.module("../src/utils/ssrf.js", {
-  namedExports: { isBlockedFetchHostResolved: async () => false, isBlockedFetchHost: () => false },
+  namedExports: {
+    isBlockedFetchHostResolved: async () => false,
+    isBlockedFetchHost: () => false,
+    // No DNS, same as the stubs above: hand straight to the (mocked) fetch.
+    fetchPublicUrl: (url: string, init?: { signal?: AbortSignal }) => fetch(url, { signal: init?.signal }),
+  },
 });
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
