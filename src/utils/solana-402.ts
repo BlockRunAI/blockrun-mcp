@@ -53,6 +53,7 @@ import {
   SOLANA_NETWORK,
 } from "@blockrun/llm";
 import { fetchWithTimeout } from "./http.js";
+import { ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
 import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { resolveSolanaKey } from "./wallet.js";
 import { amountToUsd } from "./budget.js";
@@ -530,8 +531,11 @@ export async function solanaPaidAsyncPost(
   // that already stands. A payment-on-completion route (video) is the
   // exception: its submit cannot move money, so an edge status there is a
   // plain failure and booking it would be a phantom spend. Every other
-  // status is a real answer.
-  const edgeAnswered = submitResp.status === 502 || submitResp.status === 503 || submitResp.status === 504;
+  // status is a real answer. The edge set is the shared ORIGIN_DID_NOT_ANSWER,
+  // not a local list: a status this helper leaves armed must be one that
+  // mayHaveSettled books, or the precaution is silently dropped (a local
+  // 502/503/504 list kept 503 armed, which in-flight then read as an answer).
+  const edgeAnswered = ORIGIN_DID_NOT_ANSWER.has(submitResp.status);
   if (!edgeAnswered || !submitMaySettle) opts.onPaidResponse?.();
   if (submitResp.status === 402) {
     await submitResp.json().catch(() => ({}));
@@ -553,7 +557,13 @@ export async function solanaPaidAsyncPost(
     };
   }
   if (submitResp.status !== 202 && submitResp.status !== 200) {
-    throw new Error(`API error ${submitResp.status}: ${JSON.stringify(submitData)}`);
+    // The status rides on the error, as in solanaPaidPost: in-flight reads the
+    // verdict off statusCode, never the prose, so a status-less throw turned
+    // an armed edge 504 (the origin may have settled) into "nothing booked".
+    throw Object.assign(
+      new Error(`API error ${submitResp.status}: ${JSON.stringify(submitData)}`),
+      { statusCode: submitResp.status },
+    );
   }
 
   if (!pollPath) throw new Error(`Submit response missing poll_url: ${JSON.stringify(submitData)}`);
