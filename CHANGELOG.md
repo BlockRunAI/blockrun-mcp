@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.55.4
+
+### Fixed — native Claude calls are booked at the full max_tokens ceiling
+
+The gateway's x402 quote for `blockrun_chat` with `thinking` (the native
+`/v1/messages` path) now prices output at the full `max_tokens`, not half of
+it (blockrun.ai and sol.blockrun.ai, 2026-11-03). This server still booked
+half, so each native call was booked at about half of what it settled and
+budget caps ran loose on that path. It now books the full ceiling,
+re-verified against live quotes (at or above the quote, within +0.6%).
+
+### Removed — `azure/sora-2` from `blockrun_video`
+
+Sora 2 was retired on 2026-11-02 and the gateways no longer serve it.
+`blockrun_video` no longer offers it as a model or suggests it as an
+alternative. A call that still names it is refused before any quote, with
+replacements named (`xai/grok-imagine-video-1.5`, `bytedance/seedance-2.0-fast`,
+`bytedance/seedance-2.0` for 4K); nothing is charged.
+
 ## 0.55.3
 
 ### Fixed — native Claude calls are booked at what they settle

@@ -128,15 +128,16 @@ test("a malformed completed Solana payload still books the settled charge", asyn
 });
 
 test("a Solana quote for a different product than requested is refused unsigned", async () => {
-  // sol.blockrun.ai does not know azure/sora-2 and quotes Seedance 2.0 Pro at
-  // $1.135480 in its place (live 2026-09-08). The 4s Sora estimate is $0.4220.
+  // Live 2026-09-08 shape: sol.blockrun.ai did not know azure/sora-2 (since
+  // retired) and quoted Seedance 2.0 Pro at $1.135480 in its place, against a
+  // $0.4220 estimate. Same ratio here on a live model: grok 8s is $0.402.
   quoteUsd = 1.13548;
   const { call, budget } = makeHarness(5);
-  const res = await call({ prompt: "a rainy alley", model: "azure/sora-2", duration_seconds: 4 });
+  const res = await call({ prompt: "a rainy alley", model: "xai/grok-imagine-video" });
   const text = res.content[0].text;
   assert.equal(res.isError, true, text);
-  assert.match(text, /quoted \$1\.1355 for azure\/sora-2 video/);
-  assert.match(text, /does not serve azure\/sora-2 yet/);
+  assert.match(text, /quoted \$1\.1355 for xai\/grok-imagine-video video/);
+  assert.match(text, /Retry on Base/);
   assert.match(text, /chain:"base"/);
   assert.match(text, /no charge was made/);
   assert.doesNotMatch(text, /needs funding/i);

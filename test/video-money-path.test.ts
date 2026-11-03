@@ -212,16 +212,17 @@ test("upstream failure before completion books nothing (no charge per gateway co
 });
 
 test("a 402 far above the published rate is refused BEFORE signing — nothing signed, nothing booked", async () => {
-  // Live 2026-09-08 shape: the Solana gateway quoted azure/sora-2 (4s, $0.4220
-  // expected) as Seedance 2.0 Pro at $1.135480. Same guard on the Base rail.
+  // Live 2026-09-08 shape: the Solana gateway quoted azure/sora-2 (since
+  // retired; $0.4220 expected) as Seedance 2.0 Pro at $1.135480. Same guard on
+  // the Base rail, here on grok's 8s default ($0.4020 expected).
   script = [resp402]; fetchCalls = 0; paymentsSigned = 0;
   quotedAmount = "1135480";
   const { call, budget } = makeHarness();
-  const res = await call({ prompt: "a cube", model: "azure/sora-2" });
+  const res = await call({ prompt: "a cube", model: "xai/grok-imagine-video" });
   const text = res.content.map((c: any) => c.text).join("\n");
   assert.equal(res.isError, true, text);
-  assert.match(text, /quoted \$1\.1355 for azure\/sora-2 video/);
-  assert.match(text, /expected about \$0\.4220/);
+  assert.match(text, /quoted \$1\.1355 for xai\/grok-imagine-video video/);
+  assert.match(text, /expected about \$0\.4020/);
   assert.match(text, /no charge was made/);
   assert.doesNotMatch(text, /needs funding/, "a bad quote is not a funding problem");
   assert.equal(paymentsSigned, 0, "must not sign a quote it refused");

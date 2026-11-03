@@ -147,8 +147,9 @@ test("wallet rail: success books the reconstructed quote, fee included", async (
   assert.equal(res.isError, undefined, res.content[0].text);
   assert.ok(near(budget.spent, anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024)!), `booked ${budget.spent}`);
   // The wallet quote formula carries the observed fee: haiku "hi" at 1024
-  // max_tokens quoted 3577 micro-USDC live on 2026-11-03 (output at 0.5x).
-  assert.equal(anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024), 0.003581);
+  // max_tokens quoted 6137 micro-USDC live on 2026-11-03 (output at the full
+  // max_tokens ceiling, blockrun#954).
+  assert.equal(anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024), 0.006141);
 });
 
 // The real SDK, no network: the fetch stub answers /v1/messages with a canned

@@ -62,9 +62,10 @@ export const SOLANA_VIDEO_TOTAL_BUDGET_MS = 900_000;
 // (blockrun/src/lib/models.ts). Two regimes:
 //
 //   Seedance (token360)   duration x tokens/sec x resolutionFactor x $/1M-tokens
-//   Sora / Grok           duration x $/sec
+//   Grok                  duration x $/sec (by resolution; see GROK_PRICE_PER_SECOND)
 //
-// both then x the 5% margin, plus the flat x402 transaction fee, once.
+// Seedance then x the 5% margin (Grok carries none since 2026-08-13), plus the
+// flat x402 transaction fee, once.
 //
 // The margin and the fee are the part this table used to omit — the estimate was
 // the BASE, so every video model under-reserved (verify:prices, 2026-08-07: 9/9
@@ -88,11 +89,17 @@ const SEEDANCE_PRICE_PER_MTOKENS: Record<string, number> = {
   "bytedance/seedance-2.0": 9.9715,
   "bytedance/seedance-2.5": 13.8565,
 };
-// Sora: duration x rate x margin. Grok is NOT in this table — it stopped
-// carrying the margin (see GROK_PRICE_PER_SECOND) and it now prices per
-// resolution, so it no longer shares a formula with Sora.
-const VIDEO_BASE_PRICE_PER_SECOND: Record<string, number> = {
-  "azure/sora-2": 0.10,
+// Retired video models: ids a caller may still send (an agent's cached schema,
+// a saved workflow) that no gateway serves any more. Both answer them with a
+// 400 model_retired, so they are refused HERE, before the budget is reserved or
+// a quote requested, with a message that names a replacement — rather than
+// priced at a stale rate. They are NOT in the schema enum: nothing offers them.
+//
+// azure/sora-2 (Sora 2 via Azure) was retired on 2026-11-02 on Base and Solana.
+// It was the only per-second, margin-carrying model; its pricing, duration and
+// Solana-substitution rows went with it.
+export const RETIRED_VIDEO_MODELS: Readonly<Record<string, string>> = {
+  "azure/sora-2": "azure/sora-2 (Sora 2) was retired on 2026-11-02 and is no longer served by BlockRun. For text- or image-to-video with synced audio use xai/grok-imagine-video-1.5 (up to 1080p) or bytedance/seedance-2.0-fast; bytedance/seedance-2.0 for 4K. No payment was taken.",
 };
 
 // xai/grok-imagine-video, probed live 2026-08-13 (unpaid 402s):
@@ -125,7 +132,7 @@ const GROK_PRICE_PER_SECOND: Record<string, Record<string, number>> = {
 // it they are NOT — upstream's published multipliers sit above true area (360p
 // is 0.3, not 0.25), and the live 402 agrees with the table, not the geometry.
 // So a new tier must be read off a real quote (`npm run verify:prices`), never
-// derived. Sora/Grok bill per second and ignore this entirely.
+// derived. Grok bills per second and ignores this entirely.
 // 360p/540p/1K trimmed 2026-08-07: token360's schema lists them for no model,
 // so they left the enum too; estimateVideoCost throws on anything missing here.
 const RESOLUTION_TOKEN_FACTOR: Record<string, number> = {
@@ -239,13 +246,12 @@ const VIDEO_DEFAULT_DURATION: Record<string, number> = {
   // quotes exactly the 5s price. This entry mirrors that so the local reserve
   // matches; the handler still omits duration_seconds when the caller does.
   "bytedance/seedance-2.5": 5,
-  "azure/sora-2": 4, // Sora 2 accepts only 4 / 8 / 12s
 };
 
 // Per-model duration windows. The gateway rejects out-of-range durations with a
 // 400 before quoting, so this costs nothing upstream — it just turns a round
-// trip into an immediate, specific message. Source: models.ts min/max/allowed.
-const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?: number[] }> = {
+// trip into an immediate, specific message. Source: models.ts min/max.
+const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number }> = {
   "xai/grok-imagine-video": { min: 1, max: 15 },
   "xai/grok-imagine-video-1.5": { min: 1, max: 15 },
   "bytedance/seedance-1.5-pro": { min: 4, max: 12 },
@@ -253,7 +259,6 @@ const VIDEO_DURATION_RANGE: Record<string, { min: number; max: number; allowed?:
   "bytedance/seedance-2.0-fast": { min: 4, max: 15 },
   "bytedance/seedance-2.0": { min: 4, max: 15 },
   "bytedance/seedance-2.5": { min: 4, max: 30 },
-  "azure/sora-2": { min: 4, max: 12, allowed: [4, 8, 12] },
 };
 
 // Which resolutions each Seedance SKU actually accepts — token360's OWN
@@ -330,9 +335,9 @@ const GROK_RESOLUTIONS: Record<string, { resolutions: Set<string>; note: string 
  */
 export function estimateVideoCost(model: string, durationSeconds?: number, resolution?: string, references: { videos?: number; audios?: number } = {}): number {
   // Validated BEFORE the model dispatch below, not inside the Seedance branch.
-  // Sitting inside it made the check fail OPEN for every other model: grok and
-  // sora fall through to their own tables, so a caller passing references there
-  // got them silently dropped — the same "priced as something it is not" shape
+  // Sitting inside it made the check fail OPEN for every other model: grok
+  // (and sora, before it was retired) fell through to its own table, so a
+  // caller passing references there got them silently dropped — the same "priced as something it is not" shape
   // the throw-never-default rule above exists to prevent.
   const videos = references.videos ?? 0;
   const audios = references.audios ?? 0;
@@ -390,18 +395,16 @@ export function estimateVideoCost(model: string, durationSeconds?: number, resol
     return withTxFee(rates[res] * seconds); // no margin, see above
   }
 
-  if (!Object.hasOwn(VIDEO_BASE_PRICE_PER_SECOND, model)) {
-    throw new Error(`No price for video model "${model}" — refusing to reserve a guessed rate.`);
-  }
-  return withTxFee(VIDEO_BASE_PRICE_PER_SECOND[model] * seconds * VIDEO_MARGIN);
+  if (Object.hasOwn(RETIRED_VIDEO_MODELS, model)) throw new Error(RETIRED_VIDEO_MODELS[model]);
+  throw new Error(`No price for video model "${model}" — refusing to reserve a guessed rate.`);
 }
 
 /**
  * Refuse a 402 whose price is far above what the estimator (and the description
  * the model read) said this call costs. See assertQuoteNearEstimate for the
- * rule; this adds the one hint that is video-specific today. Verified live
- * 2026-09-08: sol.blockrun.ai quotes azure/sora-2 as "Seedance 2.0 Pro video
- * generation (5s)" at $1.135480 against Base's $0.421001.
+ * rule; this adds the chain-switch hint. Found live 2026-09-08: sol.blockrun.ai
+ * quoted azure/sora-2 (since retired) as "Seedance 2.0 Pro video generation
+ * (5s)" at $1.135480 against Base's $0.421001.
  */
 export function assertVideoQuoteSane(
   quotedUsd: number | null,
@@ -411,9 +414,7 @@ export function assertVideoQuoteSane(
   quotedFor?: string,
 ): void {
   const hint = chain === "solana"
-    ? (model === "azure/sora-2"
-      ? `The Solana gateway is a separate deployment and does not serve azure/sora-2 yet — it quotes Seedance 2.0 in its place. Switch to Base for Sora (blockrun_wallet action:"chain" chain:"base") or pick a Seedance model explicitly.`
-      : `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`)
+    ? `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`
     : chain === "arc"
       ? `Retry on Base (blockrun_wallet action:"chain" chain:"base") or pick another model.`
       : `Retry on Solana (blockrun_wallet action:"chain" chain:"solana") or pick another model.`;
@@ -447,7 +448,6 @@ export function registerVideoTool(server: McpServer, budget: BudgetState): void 
 Turns a text prompt (and optional seed image) into a short video clip (MP4, or MOV on Seedance 2.5). The tool submits the job, then polls until the video is ready (typical total wall-time 60-180s; 9 min Base / 15 min Solana hard cap). On the wallet rails payment settles only when upstream returns a finished video — if the job fails you are not charged; if this client gives up while a paid poll is still in flight the gateway may still settle, and the error text says so. On the account rail the job is billed when the gateway accepts it, so a job that fails or outlives the poll budget is still charged — the error names it.
 
 Models. Every rate below is what you are CHARGED (margin and transaction fee included), at the 720p baseline Seedance renders by default with synced audio:
-- azure/sora-2 (~$0.105/sec, 720p + synced audio, text- or image-to-video) — OpenAI Sora 2 via Azure AI Foundry. duration_seconds must be 4, 8, or 12 (4s default -> ~$0.42/clip). image_url takes a NON-HUMAN reference image (faces are rejected upstream by moderation — use Seedance + RealFace for real people); same price as text-to-video. No RealFace, no last_frame_url. Base only for now: the Solana gateway quotes it as Seedance 2.0 at $1.135 and the tool refuses that quote unsigned.
 - xai/grok-imagine-video ($0.05/sec at 480p default, $0.07/sec at 720p; 8s default -> $0.401/clip, 1-15s) — stylized, fast. 480p/720p only.
 - xai/grok-imagine-video-1.5 ($0.08/sec at 480p default, $0.14/sec at 720p, $0.25/sec at 1080p; 8s default -> ~$0.64/clip, 1-15s) — xAI's flagship video model with native synced audio; text- or image-to-video. No 4K.
 - bytedance/seedance-1.5-pro (~$0.071/sec, 4-12s, 5s default -> ~$0.35/clip) — cheapest Seedance, token-priced upstream
@@ -468,12 +468,12 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         prompt: z.string().describe("Text description of the video to generate. E.g. 'a red apple slowly spinning on a wooden table', 'a hummingbird hovering near a red flower, ultra slow motion'"),
         image_url: z.string().url().optional().describe("Optional seed image URL for image-to-video generation"),
         real_face_asset_id: z.string().regex(/^ta_[A-Za-z0-9]+$/, "token360 asset id like 'ta_xxxx'").optional().describe("BytePlus RealFace asset id (from blockrun_realface enroll/list) to generate video of a specific real person. Seedance 2.0 / 2.0-fast / 2.0-mini only (NOT 2.5). Mutually exclusive with image_url."),
-        duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance, 4s Sora). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast / 2.0-mini 4-15s · seedance-2.5 4-30s · sora-2 exactly 4, 8 or 12 · grok-imagine-video / grok-imagine-video-1.5 1-15s."),
-        generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI/Sora."),
-        resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Output resolution. Seedance defaults to 720p and is token-priced (~2.25x at 1080p, ~9x at 4K); per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. grok-imagine-video honours 480p (default, $0.05/sec) and 720p ($0.07/sec) and rejects anything higher; grok-imagine-video-1.5 honours 480p ($0.08/sec, default), 720p ($0.14/sec) and 1080p ($0.25/sec), not 4K. Ignored by Sora only (dropped from the request)."),
-        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Sora uses it only to pick portrait vs landscape (9:16 / 3:4 -> portrait); Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
+        duration_seconds: z.number().int().min(1).max(60).optional().describe("Duration to bill for. Defaults to the model's own default (8s xAI, 5s Seedance). Per-model range: seedance-1.5-pro 4-12s · seedance-2.0 / 2.0-fast / 2.0-mini 4-15s · seedance-2.5 4-30s · grok-imagine-video / grok-imagine-video-1.5 1-15s."),
+        generate_audio: z.boolean().optional().describe("Seedance only: whether to generate a synced audio track. Defaults ON for text-to-video and OFF for image/RealFace-conditioned. The auto-generated audio is occasionally rejected by upstream moderation ('output audio may contain sensitive information') even for benign prompts — pass false to skip audio and avoid that failure. Ignored by xAI."),
+        resolution: z.enum(["480p", "720p", "1080p", "4K"]).optional().describe("Output resolution. Seedance defaults to 720p and is token-priced (~2.25x at 1080p, ~9x at 4K); per-model sets from token360's published schema: seedance-2.0 480p/720p/1080p/4K · 1.5-pro 480p/720p/1080p · 2.0-fast, 2.0-mini and 2.5 480p/720p only. grok-imagine-video honours 480p (default, $0.05/sec) and 720p ($0.07/sec) and rejects anything higher; grok-imagine-video-1.5 honours 480p ($0.08/sec, default), 720p ($0.14/sec) and 1080p ($0.25/sec), not 4K."),
+        aspect_ratio: z.enum(["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]).optional().describe("Output aspect ratio. Seedance honors the full set; Grok ignores it (the gateway never forwards it to xAI). Defaults to the model's own default. (9:21 removed 2026-08-07 — no Seedance model offers it; use 9:16 for vertical.)"),
         last_frame_url: z.string().url().optional().describe("Seedance 1.5-pro / 2.0 / 2.0-fast / 2.0-mini / 2.5 (2.5 not on the Solana wallet rail): first-and-last-frame interpolation. A second image URL that seeds the FINAL frame so the model tweens from image_url (first frame) → last_frame_url (last frame). Requires image_url; mutually exclusive with real_face_asset_id."),
-        model: z.enum(["azure/sora-2", "xai/grok-imagine-video", "xai/grok-imagine-video-1.5", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
+        model: z.enum(["xai/grok-imagine-video", "xai/grok-imagine-video-1.5", "bytedance/seedance-1.5-pro", "bytedance/seedance-2.0-mini", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "bytedance/seedance-2.5"]).optional().default("xai/grok-imagine-video").describe("Video model to use"),
         reference_image_urls: z.array(z.string().url().max(2048)).min(1).max(30).optional().describe("ACCOUNT RAIL ONLY (BLOCKRUN_API_KEY) — the Base and Solana gateways refuse reference media with a 400. Character/style reference images, cited as 'image 1', 'image 2' in the prompt: up to 9 on seedance-2.0 / 2.0-fast / 2.0-mini, 30 on 2.5. Mutually exclusive with image_url / last_frame_url / real_face_asset_id."),
         reference_videos: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Motion reference clips (1-3) on the seedance-2.0 family and 2.5. Each clip is BILLED AT ITS MODEL'S CEILING (15.2s on the 2.0 family, 30.2s on 2.5) whatever its real length, so one clip makes a 5s 720p render cost about 4x (seedance-2.0-mini ~$0.40 -> ~$1.61), ~7x on 2.5, more at 480p."),
         reference_audios: z.array(z.object({ url: z.string().url().max(2048) })).min(1).max(3).optional().describe("ACCOUNT RAIL ONLY. Audio reference clips (1-3), same models. Requires a reference image or video alongside. Billed at 0.3x the video-clip ceiling (15.2s on the 2.0 family, 30.2s on 2.5)."),
@@ -523,6 +523,11 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         const selectedModel = model || "xai/grok-imagine-video";
 
         const reject = (text: string) => ({ content: [{ type: "text" as const, text: formatError(text) }], isError: true });
+
+        // A retired id is answered first: no budget reserved, no quote asked.
+        // The schema enum no longer offers it, but a direct or stale-schema
+        // invocation must still get a named replacement, not a guessed price.
+        if (Object.hasOwn(RETIRED_VIDEO_MODELS, selectedModel)) return reject(RETIRED_VIDEO_MODELS[selectedModel]);
         const refs = Boolean(reference_image_urls?.length || reference_videos?.length || reference_audios?.length);
 
         // Answered BEFORE every other guard, because the rail fact dominates
@@ -648,11 +653,10 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         }
 
         // Resolution ceilings, per model. Seedance and Grok both honour the
-        // parameter and are checked against their own supported sets; only Sora
-        // truly ignores it (probed: `resolution:"720p"` quotes the same
-        // $0.421001 as the default), so for Sora alone it is DROPPED from the
-        // body below rather than rejected — forwarding it there earns a gateway
-        // 400, which is the opposite of "ignored".
+        // parameter and are checked against their own supported sets. A model
+        // with no resolution table (Sora was the last, retired 2026-11-02) has
+        // it DROPPED from the body below rather than rejected — forwarding it
+        // there earned a gateway 400, which is the opposite of "ignored".
         const seedanceRes = SEEDANCE_RESOLUTIONS[selectedModel] ?? GROK_RESOLUTIONS[selectedModel];
         if (resolution && seedanceRes && !seedanceRes.resolutions.has(resolution)) {
           return {
@@ -667,12 +671,6 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         // here just replaces a round trip with a specific message.
         const range = VIDEO_DURATION_RANGE[selectedModel];
         if (range) {
-          if (range.allowed && !range.allowed.includes(billedSeconds)) {
-            return {
-              content: [{ type: "text", text: formatError(`${selectedModel} accepts duration_seconds of exactly ${range.allowed.join(", ")} — got ${billedSeconds}.`) }],
-              isError: true,
-            };
-          }
           if (billedSeconds < range.min || billedSeconds > range.max) {
             return {
               content: [{ type: "text", text: formatError(`${selectedModel} supports ${range.min}-${range.max}s — got duration_seconds=${billedSeconds}.${range.max < 30 ? " For longer clips use bytedance/seedance-2.5 (up to 30s)." : ""}`) }],
@@ -754,10 +752,9 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         if (real_face_asset_id) body.real_face_asset_id = real_face_asset_id;
         if (duration_seconds !== undefined) body.duration_seconds = duration_seconds;
         if (generate_audio !== undefined) body.generate_audio = generate_audio;
-        // Sent for every model that has a resolution table (Seedance + Grok).
-        // Sora has none, and the gateway 400s a resolution it was sent there —
-        // so honour "ignored" by not sending it, instead of failing a call over
-        // a no-op parameter.
+        // Sent for every model that has a resolution table (Seedance + Grok —
+        // today, every offered model). A model without one is not sent it: the
+        // gateway 400'd a resolution sent to Sora, so "ignored" means omitted.
         if (resolution !== undefined && seedanceRes) body.resolution = resolution;
         if (aspect_ratio !== undefined) body.aspect_ratio = aspect_ratio;
         if (last_frame_url) body.last_frame_url = last_frame_url;
@@ -965,7 +962,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           return { content: [{ type: "text", text: formatError(err instanceof Error ? err.message : String(err)) }], isError: true };
         }
 
-        // The 402 carries the REAL price; Seedance/Sora are token-priced, so a
+        // The 402 carries the REAL price; Seedance is token-priced, so a
         // 1080p/4K render can far exceed the per-second estimate reserved at
         // the gate. Re-reserve against the cap BEFORE paying so a single high-res
         // call can't settle past the budget (and concurrent jobs hold the true
@@ -1265,7 +1262,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         //    C13). No reclaim note: there is no finished job.
         if (err instanceof JobFailedError) {
           return {
-            content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, azure/sora-2" }) }],
+            content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, xai/grok-imagine-video-1.5" }) }],
             isError: true,
           };
         }
@@ -1275,7 +1272,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
         //    would promise "no payment was taken" on a settled-at-submit route.
         if (hasLabelledServerStatus(errMsg)) {
           return {
-            content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, azure/sora-2", afterPayment: paidRequestSent }) + reclaim }],
+            content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, xai/grok-imagine-video-1.5", afterPayment: paidRequestSent }) + reclaim }],
             isError: true,
           };
         }
@@ -1292,7 +1289,7 @@ Returns a permanent blockrun-hosted video URL (the gateway mirrors the asset to 
           };
         }
         return {
-          content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, azure/sora-2", afterPayment: paidRequestSent }) }],
+          content: [{ type: "text", text: formatError(`Video generation failed: ${errMsg}`, { altModels: "bytedance/seedance-2.0, xai/grok-imagine-video-1.5", afterPayment: paidRequestSent }) }],
           isError: true,
         };
       } finally {

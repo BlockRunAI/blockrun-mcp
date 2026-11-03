@@ -51,14 +51,14 @@ test("the live Sora-on-Solana quote is refused, named, and says no charge was ma
   assert.equal(QUOTE_TOLERANCE_RATIO, 1.5);
 });
 
-test("the video wrapper adds the Sora/Solana explanation only where it applies", () => {
-  assert.throws(() => assertVideoQuoteSane(1.13548, 0.422001, "azure/sora-2", "solana", "Seedance 2.0 Pro video generation (5s)"),
-    /does not serve azure\/sora-2 yet.*chain:"base"/);
-  assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "solana"), /Retry on Base/);
+test("the video wrapper points each chain at the other rail", () => {
+  assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "solana", "Seedance 2.0 Pro video generation (5s)"),
+    /Retry on Base.*chain:"base"/);
   assert.throws(() => assertVideoQuoteSane(3, 1, "bytedance/seedance-2.0", "base"), /Retry on Solana/);
-  // Arc never points at Solana: for azure/sora-2 that is the rail that substitutes another model.
-  assert.throws(() => assertVideoQuoteSane(1.13548, 0.422001, "azure/sora-2", "arc"), /Retry on Base/);
-  assert.doesNotThrow(() => assertVideoQuoteSane(0.421001, 0.422001, "azure/sora-2", "base"));
+  // Arc never points at Solana: Solana is the rail that once substituted
+  // another model (azure/sora-2 quoted as Seedance, 2026-09-08).
+  assert.throws(() => assertVideoQuoteSane(3, 1, "xai/grok-imagine-video", "arc"), /Retry on Base/);
+  assert.doesNotThrow(() => assertVideoQuoteSane(0.401, 0.402, "xai/grok-imagine-video", "base"));
 });
 
 // --- blockrun_image's quote guard, which nothing exercised (round 2) ---
