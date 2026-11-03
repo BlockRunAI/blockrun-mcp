@@ -462,9 +462,12 @@ export async function withdrawFunds(input: WithdrawInput): Promise<ToolResult> {
             `(${replaced.hash}, ${replaced.reason}). No pUSD was sent. Check your Polymarket balance, then retry.`,
           );
         }
+        // Repriced: the transfer mined (or reverted) under the replacer's hash.
+        // Swapped BEFORE the assert, so a revert names the hash that mined,
+        // not ours, which Polygonscan shows only as dropped/replaced.
+        if (replaced) txHash = replaced.hash;
         saveState({ pendingWithdraw: undefined });
         assertTransactionSucceeded(receipt, "pUSD transfer", txHash);
-        if (replaced) txHash = replaced.hash; // repriced: the transfer landed under this hash
       } catch (err) {
         if (err instanceof DefiniteWithdrawOutcome) throw err;
         if (err instanceof Error && /reverted/i.test(err.message)) throw err; // a receipt was read: definite

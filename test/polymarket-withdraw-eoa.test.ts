@@ -240,6 +240,19 @@ test("a repriced transfer still succeeds, and links the hash it landed under", a
   assert.ok(res.text.includes(OTHER_HASH), res.text);
 });
 
+test("a repriced transfer that reverted names the hash that mined", async () => {
+  reset();
+  waitReceipt = async ({ onReplaced }) => {
+    onReplaced?.({ reason: "repriced", transaction: { hash: OTHER_HASH } });
+    return { status: "reverted" };
+  };
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(res.isError, true, res.text);
+  assert.match(res.text, /reverted/);
+  assert.ok(res.text.includes(OTHER_HASH), res.text);
+  assert.ok(!res.text.includes(SIGNED_HASH), "the dropped original hash is not the one to look up");
+});
+
 test("a receipt that never arrives keeps the guard", async () => {
   reset();
   waitReceipt = async () => { throw new Error("Timed out while waiting for transaction (test)"); };
