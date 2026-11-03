@@ -52,13 +52,15 @@ test("estimatePhoneCost prices the exact known tiers at the CHARGED price", () =
   assert.equal(estimatePhoneCost("phone/numbers/list", true), 0.003);
 });
 
-// An unlisted paid route must never reserve $0. /v1/phone/numbers/search is live
-// and charges $0.0120 (verified) yet appears in neither this table nor the
-// gateway's own PHONE_PRICES — the old catch-all reserved AND recorded $0 for it,
-// so the spend was invisible to the ledger and the gate waved it through.
+// An unlisted route must never reserve $0. /v1/phone/numbers/search quoted
+// $0.0120 yet appears in neither this table nor the gateway's PHONE_PRICES; the
+// old catch-all reserved AND recorded $0 for it. (The tool now refuses a
+// body-less call before the estimator, so the POST cases are the live ones;
+// the GET cases pin that the estimator itself still fails closed.)
 test("estimatePhoneCost fails closed on an unknown paid route", () => {
-  assert.ok(estimatePhoneCost("phone/numbers/search", false) >= 0.012,
-    "unknown GET must not reserve $0 — numbers/search charges $0.0120");
+  assert.ok(estimatePhoneCost("phone/numbers/search", true) >= 0.012,
+    "unknown POST must not reserve $0 — numbers/search quoted $0.0120");
+  assert.ok(estimatePhoneCost("phone/numbers/search", false) >= 0.012);
   assert.ok(estimatePhoneCost("phone/some/future/route", false) > 0);
   assert.ok(estimatePhoneCost("phone/some/future/route", true) > 0);
 });
