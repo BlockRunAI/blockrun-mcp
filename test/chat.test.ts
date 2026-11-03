@@ -269,19 +269,21 @@ test("omitting promptChars keeps the previous reserve (no silent inflation)", ()
 //
 // It used to book actual tokens x Anthropic's PUBLIC list rates ($15/$75 opus),
 // while the gateway resells opus at $5/$25 and settles the QUOTE — which prices
-// output at OUTPUT_QUOTE_FACTOR (0.1) of max_tokens, floors at $0.001, and adds
-// the transaction fee. A default claude-opus-5 call settles $0.003660 and was
-// booked as $0.03: the ledger over-counted 8x, so a budget cap tripped at an
-// eighth of its real allowance.
+// output at OUTPUT_QUOTE_FACTOR of max_tokens, floors at $0.001, and adds the
+// transaction fee. The factor is the gateway's and it MOVES: 0.1 until
+// 2026-10-30, 0.5 since, and this file still pinned the 0.1 quotes, so the
+// ledger booked ~1/4 of the settled amount and nothing failed.
 //
-// Expected values are live unpaid 402 quotes on /v1/messages, 2026-08-13.
+// Expected values are live unpaid 402 quotes (exact) on /v1/messages, 2026-11-03.
 test("anthropicCallCost reconstructs the gateway's quote, not Anthropic's list price", () => {
   const CASES: Array<[string, number, number, number]> = [
     // [model, promptChars, maxTokens, quoted]
-    ["claude-opus-5", 2, 1024, 0.003660],
-    ["claude-opus-5", 2, 4096, 0.011336],
-    ["claude-opus-5", 10_000, 1024, 0.027656],
-    ["claude-opus-5", 100_000, 1024, 0.243655],
+    ["claude-opus-5", 2, 1024, 0.013885],
+    ["claude-opus-5", 2, 4096, 0.052285],
+    ["claude-opus-5", 2, 100, 0.002335],
+    ["claude-opus-5", 10_000, 1024, 0.037880],
+    ["claude-opus-5", 100_000, 1024, 0.253880],
+    ["claude-haiku-4.5", 2, 1024, 0.003577],
   ];
   for (const [model, chars, maxTokens, quoted] of CASES) {
     const booked = anthropicCallCost(model, chars, maxTokens);
@@ -295,8 +297,8 @@ test("anthropicCallCost reconstructs the gateway's quote, not Anthropic's list p
 
 test("anthropicCallCost honours the $0.001 floor and the prefixed/bare id", () => {
   // Small calls floor at $0.001 base + the fee, whatever the token maths says.
-  assert.equal(anthropicCallCost("claude-opus-5", 2, 100), 0.002);
-  assert.equal(anthropicCallCost("claude-haiku-4.5", 2, 1024), 0.002);
+  assert.equal(anthropicCallCost("claude-haiku-4.5", 2, 100), 0.002);
+  assert.equal(anthropicCallCost("claude-haiku-4.5", 2, 50), 0.002);
   // The response echoes a bare id; the catalog keys on the prefixed one.
   assert.equal(
     anthropicCallCost("claude-opus-5", 10_000, 1024),
@@ -523,9 +525,10 @@ test("anthropicCallCost normalises the gateway's echo to the catalogue key and n
 test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => {
   assert.deepEqual(CHAT_PRICE_PER_MTOKEN["anthropic/claude-sonnet-5"], { input: 2, output: 10 });
   // 100k chars -> ceil(100000/2.08)+20 = 48,097 input tokens at $2/M = $0.096194;
-  // 1024 max_tokens x 0.1 = 102.4 output tokens at $10/M = $0.001024;
-  // + the $0.001 observed fee, ceiled to a micro-USDC = $0.098218.
-  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.098218);
+  // 1024 max_tokens x 0.5 = 512 output tokens at $10/M = $0.00512;
+  // + the $0.001 observed fee, ceiled to a micro-USDC = $0.102314.
+  // (Live exact quote 2026-11-03: see the probe note in chat-anthropic.ts.)
+  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.102314);
   // The old row booked $0.146827 for the same call.
   assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.146827 * 0.7);
 });

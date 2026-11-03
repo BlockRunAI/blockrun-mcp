@@ -35,35 +35,42 @@ import type { BudgetState } from "../types.js";
  *
  *   1. The gateway resells opus at $5/$25, not $15/$75 — 3x over on the rate.
  *   2. Settlement collects the QUOTE, and the quote prices output at
- *      OUTPUT_QUOTE_FACTOR (0.1) of max_tokens, not at tokens actually produced
+ *      OUTPUT_QUOTE_FACTOR (0.5 since 2026-10-30) of max_tokens, not at tokens actually produced
  *      ("Settlement charges the full quoted amount regardless of actual usage"
  *      — the gateway's own comment on that constant).
  *   3. There is a $0.001 floor and a flat transaction fee on top, and neither
  *      appeared at all.
  *
- * Net effect measured: a claude-opus-5 call with the default max_tokens settles
- * $0.003660, and the old path booked $0.03 for it — the ledger over-counted 8x,
- * so a budget cap tripped at an eighth of its real allowance.
+ * Net effect measured (2026-08-13, factor 0.1): a claude-opus-5 call with the
+ * default max_tokens settled $0.003660 and the old path booked $0.03 for it —
+ * the ledger over-counted 8x, so a budget cap tripped at an eighth of its real
+ * allowance.
  *
  * The formula below is the gateway's, mirrored. Verified against live unpaid 402
- * quotes on /v1/messages, 2026-08-13 — accurate to +0.16% across a 100x span of
- * prompt sizes and both price tiers, erring high:
+ * quotes (exact scheme) on /v1/messages, 2026-11-03, factor 0.5 — accurate to
+ * +0.2% across a 100x span of prompt sizes and both price tiers, erring high:
  *
- *   opus-5  "hi"   max_tokens 1024 -> quoted 3660     reconstructed 3665
- *   opus-5  "hi"   max_tokens 4096 -> quoted 11336    reconstructed 11345
- *   opus-5  "hi"   max_tokens  100 -> quoted 2000     reconstructed 2000  (floor)
- *   opus-5   10k   max_tokens 1024 -> quoted 27656    reconstructed 27700
- *   opus-5  100k   max_tokens 1024 -> quoted 243655   reconstructed 244045
- *   haiku   "hi"   max_tokens 1024 -> quoted 2000     reconstructed 2000  (floor)
+ *   opus-5  "hi"   max_tokens 1024 -> quoted 13885    reconstructed 13905
+ *   opus-5  "hi"   max_tokens 4096 -> quoted 52285    reconstructed 52305
+ *   opus-5  "hi"   max_tokens  100 -> quoted 2335     reconstructed 2355
+ *   opus-5   10k   max_tokens 1024 -> quoted 37880    reconstructed 37940
+ *   opus-5  100k   max_tokens 1024 -> quoted 253880   reconstructed 254285
+ *   haiku   "hi"   max_tokens 1024 -> quoted 3577     reconstructed 3581
+ *   haiku   "hi"   max_tokens  100 -> quoted 2000     reconstructed 2000  (floor)
  *
  * `usage` is deliberately NOT consulted: real output tokens do not move the
  * price. Returns null only when the model is unknown, so the caller falls back
  * to the pre-call estimate.
  */
 // The gateway quotes output at this fraction of max_tokens and settles the quote
-// (OUTPUT_QUOTE_FACTOR in blockrun/src/lib/models.ts). If that constant moves,
-// this books low — it is the one number here we do not own.
-const OUTPUT_QUOTE_FACTOR = 0.1;
+// (OUTPUT_QUOTE_FACTOR in blockrun/src/lib/chat-quote.ts). It is the one number
+// here we do not own, and it moved under us: 0.1 until 2026-10-30, 0.5 since
+// (blockrun 03607c30), so for days this ledger booked about a quarter of what
+// the gateway settled and budget caps ran ~4x loose. Re-probed 2026-11-03
+// (quotes below). blockrun#944 moves it to 1 (the full ceiling): change this in
+// the same release that deploys, and re-probe. `npm run verify:prices` does not
+// cover /v1/messages, so nothing else will catch the next move.
+const OUTPUT_QUOTE_FACTOR = 0.5;
 // The gateway's own per-message envelope overhead, fitted from the probes above
 // (~20 tokens on a 2-character message). Keeps small calls from booking under.
 const MESSAGE_TOKEN_OVERHEAD = 20;
@@ -127,7 +134,7 @@ export function anthropicCallCost(
  * no `x-blockrun-cost-usd` (chat settles after the response, so it never does).
  *
  * Not anthropicCallCost: that is the x402 QUOTE the wallet rails settle —
- * output at 0.1x max_tokens, a $0.001 floor, the observed transaction fee —
+ * output at OUTPUT_QUOTE_FACTOR x max_tokens, a $0.001 floor, the observed transaction fee —
  * and api.blockrun.ai settles none of it. It bills exact usage, base rate with
  * no fee and no floor (reconciled against the dashboard 2026-09-05). Booking
  * the quote formula here added $0.001 to every call on a rail that charges no
