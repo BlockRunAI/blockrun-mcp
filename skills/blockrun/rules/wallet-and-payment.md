@@ -146,6 +146,6 @@ nonce per attempt rather than replaying one.
 | Funded but balance still reads zero | Wait for confirmation and re-check. Also check `action: "chain"` — funds on Solana do not show against a Base balance. |
 | `401` from `api.blockrun.ai` | `BLOCKRUN_API_KEY` was rejected. Check it at <https://user.blockrun.ai/dashboard/keys>. Not a funding problem. |
 | `402` from `api.blockrun.ai` | The ACCOUNT is out of credit — there is nothing to sign. Top up at <https://user.blockrun.ai/dashboard/credits>. |
-| "needs wallet mode" | A keypair-only capability on the account rail. Unset `BLOCKRUN_API_KEY` and restart, or use a different tool. |
+| "needs wallet mode" | A keypair-only capability on the account rail. The refusal names where the key came from: unset `BLOCKRUN_API_KEY` and/or remove `~/.blockrun/.api-key`, then restart, or use a different tool. |
 | "Refusing to sign, per-call cap exceeded" | A client-side spending hook, not BlockRun. Raise the cap on the caller. |
 | Charged for something that failed | Should not happen — settlement is success-only. Capture the completion id and the receipt header before reporting it. |

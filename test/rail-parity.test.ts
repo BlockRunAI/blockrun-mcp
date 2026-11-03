@@ -426,6 +426,23 @@ for (const row of ROWS) {
   });
 }
 
+// Audit r5 (P1): the same edge 504 on the BASE rail. speech and music sign the
+// x402 payment themselves there and threw a status-less "API error 504", so
+// settleGiveUp could not see the status: nothing booked, "try again". The
+// matrix above had no Base cell, which is how the rail drifted.
+for (const row of ROWS) {
+  if (row.name !== "speech" && row.name !== "music") continue;
+  test(`${row.name} on Base: the signed request is answered 504 by the EDGE → booked as a precaution`, async () => {
+    rail = "base";
+    quotedAmount = micro(row.reserve);
+    // No timeout wording in the body: the verdict must come from the status.
+    script = [resp402, () => ({ status: 504, ok: false, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token <"); } })];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    assertBooked(res, budget, row.reserve, /MAY have (gone through|settled)/, `${row.name}/base/504`);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Cell 3: a Solana quote far above the estimate is refused BEFORE signing, on
 // every manual-402 tool — the 2026-09-08 shape (sol.blockrun.ai quoting a

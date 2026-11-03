@@ -123,6 +123,37 @@ test("a key in ~/.blockrun/.api-key is used when the env var is unset", () => {
   fs.rmSync(path.join(blockrunDir, ".api-key"), { force: true });
 });
 
+// Audit r5: the wallet-mode remedy said "unset BLOCKRUN_API_KEY" even when the
+// key came from ~/.blockrun/.api-key — unsetting a variable nobody set, then
+// being refused again with no mention of the file.
+test("the wallet-mode remedy names the key's actual source", () => {
+  delete process.env.BLOCKRUN_API_KEY;
+  const file = path.join(blockrunDir, ".api-key");
+  fs.writeFileSync(file, `${VALID_KEY}\n`);
+  auth.resetAuthCache();
+  const fromFile = auth.requireWalletMode("blockrun_wallet setup");
+  assert.ok(fromFile);
+  assert.ok(fromFile.includes(file), fromFile);
+  fs.rmSync(file, { force: true });
+
+  process.env.BLOCKRUN_API_KEY = VALID_KEY;
+  auth.resetAuthCache();
+  const fromEnv = auth.requireWalletMode("blockrun_wallet setup");
+  assert.match(fromEnv ?? "", /unset BLOCKRUN_API_KEY and restart/);
+  assert.doesNotMatch(fromEnv ?? "", /\.api-key/);
+
+  // Both present: the env var wins, so unsetting it alone hands over to the
+  // file key. The remedy must name both.
+  fs.writeFileSync(file, `${VALID_KEY}\n`);
+  auth.resetAuthCache();
+  const both = auth.requireWalletMode("blockrun_wallet setup") ?? "";
+  assert.match(both, /unset BLOCKRUN_API_KEY/);
+  assert.ok(both.includes(file), both);
+  fs.rmSync(file, { force: true });
+  delete process.env.BLOCKRUN_API_KEY;
+  auth.resetAuthCache();
+});
+
 // Mirrors the wallet precedence (BLOCKRUN_WALLET_KEY outranks .session): an
 // explicitly exported key is a deliberate override and must not be shadowed by
 // whatever happens to be on disk from an earlier account.

@@ -19,6 +19,7 @@ import { loadState, saveState } from "./creds.js";
 import { declinedResult, type SpendGate, type ToolResult } from "./transactions.js";
 import type { BudgetState } from "../../types.js";
 import { recordActualSpend, reserveBudget } from "../budget.js";
+import { parseUsdAmount } from "./amounts.js";
 
 const FUND_FEE_USD = 0.01;
 const USDC_DECIMALS = 6;
@@ -105,6 +106,13 @@ export async function fundVault(input: {
     };
   }
   const amountUsd = input.amount_usd;
+  // Parsed once, here, so the figure we show is the figure we sign: a bare
+  // Math.floor(usd * 1e6) signed $2.009999 for "$2.01", and silently
+  // truncated over-precise input instead of refusing it.
+  const amountRaw = parseUsdAmount(amountUsd);
+  if (amountRaw === null) {
+    return { text: `amount_usd must be a positive USD amount with at most ${USDC_DECIMALS} decimal places. Nothing moved.`, isError: true };
+  }
 
   let vault: Hex;
   try {
@@ -222,7 +230,7 @@ export async function fundVault(input: {
 
       // Sign the EIP-3009 deposit authorization: Base USDC → bridge address.
       const privateKey = getOrCreateWalletKey();
-      const amountMicro = String(Math.floor(amountUsd * 10 ** USDC_DECIMALS));
+      const amountMicro = amountRaw.toString();
       const deadline = Math.floor(Date.now() / 1000) + FUND_AUTH_VALIDITY_SECS;
       const depositAuthorization = await createPaymentPayload(
         privateKey, agent, bridge, amountMicro, `eip155:${BASE_CHAIN_ID}`,

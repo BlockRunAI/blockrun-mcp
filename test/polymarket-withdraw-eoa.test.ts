@@ -25,7 +25,8 @@ const OTHER_HASH = realViem.keccak256(OTHER_SIGNED);
 let stateFile: Record<string, unknown> = {};
 let saveStateThrows = false;
 let receipt: { status: "success" | "reverted" } | null = null;
-let waitReceipt: () => Promise<{ status: "success" | "reverted" }> = async () => ({ status: "success" });
+type WaitArgs = { hash: string; onReplaced?: (r: { reason: string; transaction: { hash: string } }) => void };
+let waitReceipt: (args: WaitArgs) => Promise<{ status: "success" | "reverted" }> = async () => ({ status: "success" });
 let txKnown: boolean | "error" = false;
 let pendingNonce = 7;
 let writeNonce = 9;
@@ -84,7 +85,7 @@ mock.module("../src/utils/polymarket/setup.js", {
         if (!receipt) throw new NotFound("TransactionReceiptNotFoundError");
         return receipt;
       },
-      waitForTransactionReceipt: async () => waitReceipt(),
+      waitForTransactionReceipt: async (args: WaitArgs) => waitReceipt(args),
       getTransaction: async () => {
         if (txKnown === "error") throw new Error("rpc 503 (test)");
         if (!txKnown) throw new NotFound("TransactionNotFoundError");
@@ -205,6 +206,51 @@ test("a definite rejection keeps the guard when the RPC knows the hash, or canno
     assert.doesNotMatch(res.text, /Nothing was sent/);
     assert.ok(stateFile.pendingWithdraw, `guard kept (txKnown=${known})`);
   }
+});
+
+// Audit r5 (P2): viem resolves waitForTransactionReceipt with the REPLACER's
+// receipt when another same-key tx takes our nonce. A successful replacer
+// printed "✅ Withdrawal submitted … the bridge delivers USDC" for a transfer
+// that can never execute.
+for (const reason of ["replaced", "cancelled"]) {
+  test(`a ${reason} transfer is reported as never executed, not ✅, and releases the guard`, async () => {
+    reset();
+    waitReceipt = async ({ onReplaced }) => {
+      onReplaced?.({ reason, transaction: { hash: OTHER_HASH } });
+      return { status: "success" };
+    };
+    const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+    assert.equal(res.isError, true, res.text);
+    assert.doesNotMatch(res.text, /Withdrawal submitted|may still land/);
+    assert.match(res.text, /never executed/);
+    assert.match(res.text, /No pUSD was sent/);
+    assert.equal(stateFile.pendingWithdraw, undefined);
+  });
+}
+
+test("a repriced transfer still succeeds, and links the hash it landed under", async () => {
+  reset();
+  waitReceipt = async ({ onReplaced }) => {
+    onReplaced?.({ reason: "repriced", transaction: { hash: OTHER_HASH } });
+    return { status: "success" };
+  };
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(res.isError, undefined, res.text);
+  assert.match(res.text, /Withdrawal submitted/);
+  assert.ok(res.text.includes(OTHER_HASH), res.text);
+});
+
+test("a repriced transfer that reverted names the hash that mined", async () => {
+  reset();
+  waitReceipt = async ({ onReplaced }) => {
+    onReplaced?.({ reason: "repriced", transaction: { hash: OTHER_HASH } });
+    return { status: "reverted" };
+  };
+  const res = await withdrawFunds({ amount_usd: 2, confirm: true });
+  assert.equal(res.isError, true, res.text);
+  assert.match(res.text, /reverted/);
+  assert.ok(res.text.includes(OTHER_HASH), res.text);
+  assert.ok(!res.text.includes(SIGNED_HASH), "the dropped original hash is not the one to look up");
 });
 
 test("a receipt that never arrives keeps the guard", async () => {

@@ -373,6 +373,23 @@ test("video: a deadline while the settle outcome is unknown is booked as MAY hav
   script = [];
 });
 
+// Audit r5: a "failed" poll answer after a held settle threw "… No payment was
+// taken.", and the give-up stripped only "No charge was made", so the user read
+// "No payment was taken" next to "it MAY have been charged".
+test("video: a failed answer after an unknown settle never says no payment was taken", async () => {
+  const { BilledJobError } = await import("../src/utils/api-key-call.js");
+  const failed = () => ({ status: 200, ok: true, headers: headers(), json: async () => ({ status: "failed", error: "upstream render error" }) });
+  script = [quote, videoSubmit, completion402, () => outcomeUnknown("0.02"), failed];
+  await assert.rejects(solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, { ...fast, pollIntervalMs: 5 }), (err: Error) => {
+    assert.ok(err instanceof BilledJobError, `got ${err.name}: ${err.message}`);
+    assert.equal((err as InstanceType<typeof BilledJobError>).billing, "unknown");
+    assert.doesNotMatch(err.message, /no payment was taken|no charge was made/i);
+    assert.match(err.message, /may/i);
+    return true;
+  });
+  script = [];
+});
+
 test("video: a completion 402 whose challenge cannot be read falls back to payment-signed polling, not an abort", async () => {
   // No payment-required header and no accepts in the body: the paid path
   // fetches and validates its own challenge, so the finished clip is still collected.

@@ -52,7 +52,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 
 ---
 
-> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web/X search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
+> **BlockRun MCP** is an open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives Claude — and any MCP-compatible agent — <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools for real-time data and real actions: <!-- br:models.chatVisible -->88<!-- /br:models.chatVisible --> LLMs, image & video generation, prediction-market data, live web + news search, on-chain queries across <!-- br:chains.rpc -->40<!-- /br:chains.rpc --> chains, and **the ability to place real, USDC-settled bets on Polymarket**.
 
 You pay per call, and you choose how. **Wallet mode** authenticates with a signature and settles each call in USDC via the [x402](https://x402.org) protocol — no account, no credit card, no subscription, on Solana, Base or Arc. **Account mode** authenticates with a BlockRun API key (`brk_live_…`) from [user.blockrun.ai](https://user.blockrun.ai), routes service calls through [api.blockrun.ai](https://api.blockrun.ai), and draws down card- or wire-funded account credit at exact usage. Same <!-- br:mcp.tools -->19<!-- /br:mcp.tools --> tools either way. MIT licensed.
 
@@ -389,7 +389,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 | `blockrun_models` | Live catalogue of every LLM/image/video/music model + pricing | free |
 | `blockrun_wallet` | Balance, spending, agent budgets, setup QR, chain switch | free |
 
-Flat data prices are the **base**. In wallet mode the gateway adds its flat network fee on top — $0.001 per call on Base today, and the Solana gateway quotes the base alone; the account rail charges no fee. The exact figure is in the `payment-required` header of any unpaid request, which is free to ask for. The server reserves $0.002 for the fee against the budget cap, so `blockrun_wallet action:"report"` and the spend-confirmation dialog run $0.001 high per call by design.
+Flat data prices are the **base**. In wallet mode the gateway adds its flat network fee on top — $0.001 per call on Base today, and the Solana gateway quotes the base alone; the account rail charges no fee. The exact figure is in the `payment-required` header of any unpaid request, which is free to ask for. The server reserves $0.002 for the fee against the budget cap, so the spend-confirmation dialog and the cap reservation run $0.001 high per call by design. The `blockrun_wallet action:"report"` ledger books the observed fee instead ($0.001 on Base, none on Solana or the account rail), or the settled amount when the account rail reports one.
 
 ---
 
