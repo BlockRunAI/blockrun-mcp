@@ -750,6 +750,24 @@ test("a 503 on the submit is an answer: the tracker is settled", async () => {
   assert.deepEqual(events, ["armed", "settled"]);
 });
 
+// Regression r5: giving every submit error its statusCode made a video
+// (payment-on-completion) edge 504 book a phantom maybe-charge, because
+// mayHaveSettled books any edge status on a request that carried a payment.
+for (const status of [502, 504]) {
+  test(`an edge ${status} on a payment-on-completion submit is NOT booked by the real tracker`, async () => {
+    const { trackPaidRequest } = await import("../src/utils/in-flight.js");
+    const paid = trackPaidRequest();
+    script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
+    const err = await solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, {
+      ...fast,
+      submitMaySettle: false,
+      onPaidRequest: () => paid.arm(0.5),
+      onPaidResponse: () => paid.settle(),
+    }).then(() => assert.fail("expected a throw"), (e: unknown) => e);
+    assert.equal(paid.mayHaveSettled(err), false, "a video submit cannot move money");
+  });
+}
+
 // Audit r5 (P1): the helper left an edge 504 armed so the tool would book it,
 // then threw a status-less "API error 504: {}". in-flight reads the verdict off
 // statusCode, never prose, so mayHaveSettled said false and nothing was booked
