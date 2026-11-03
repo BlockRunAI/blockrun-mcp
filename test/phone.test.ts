@@ -150,3 +150,29 @@ test("blockrun_phone still passes phone/* and voice/* through to the client", as
   ]);
   assert.equal(httpCalls, 0);
 });
+
+// Audit r5: every phone/* and voice/call GET except voice/call/{call_id} is the
+// gateway's discovery handler, which always answers 402 and ignores the
+// payment. A body-less call reserved (up to $5 for numbers/buy), asked the
+// user to approve it, signed, and then said "check your wallet balance".
+for (const path of ["phone/numbers/list", "phone/numbers/buy", "phone/lookup", "voice/call", "voice/call/"]) {
+  test(`blockrun_phone refuses a body-less '${path}' before reserving or signing`, async () => {
+    const { call, budget } = harness();
+    const res = await call({ path });
+    const text = res.content.map((p) => p.text ?? "").join("\n");
+    assert.equal(res.isError, true, text);
+    assert.match(text, /POST route/);
+    assert.match(text, /body: \{\}/);
+    assert.doesNotMatch(text, /wallet balance/i);
+    assert.equal(clientCalls.length, 0);
+    assert.equal(budget.spent, 0);
+    assert.equal(budget.calls, 0);
+  });
+}
+
+test("blockrun_phone still sends an empty-object body as a POST", async () => {
+  const { call } = harness();
+  const res = await call({ path: "phone/numbers/list", body: {} });
+  assert.notEqual(res.isError, true, res.content.map((p) => p.text).join());
+  assert.deepEqual(clientCalls, [{ method: "POST", endpoint: "/v1/phone/numbers/list" }]);
+});

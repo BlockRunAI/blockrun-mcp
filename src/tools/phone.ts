@@ -33,8 +33,9 @@ import type { BudgetState } from "../types.js";
 // PHONE_PRICES does not list numbers/search either, so this table cannot be
 // trusted to stay complete: fail CLOSED on the unknown.
 //
-// $0.0120 is the charge for the priciest known cheap-ish route (lookup and
-// numbers/search both settle there), so it covers today's unknowns without
+// $0.0120 is the charge for the priciest known cheap-ish route (lookup
+// settles there; the numbers/search figure was read off the discovery GET's
+// 402 header, which never settles), so it covers today's unknowns without
 // blocking a reasonable budget. Genuinely free reads stay $0 via explicit match.
 const PHONE_UNKNOWN_RESERVE_USD = 0.012;
 
@@ -104,6 +105,18 @@ Voice call flow + voice preset details + full body shapes in the \`phone\` skill
         if (!/^(phone|voice)\//.test(normalizeClassifyPath(cleanPath))) {
           return {
             content: [{ type: "text", text: formatError(`Invalid path '${path}': blockrun_phone only serves phone/* and voice/* routes.`) }],
+            isError: true,
+          };
+        }
+        // Only voice/call/{call_id} has a real GET (the free status poll).
+        // Every other phone/* and voice/call GET is the gateway's x402scan
+        // discovery handler: it always answers 402 and ignores the payment, so
+        // a body-less call asked the user to approve up to $5, signed, got
+        // refused, and said "check your wallet balance" to a funded wallet.
+        // Refused here, before any reserve or confirm, naming the fix.
+        if (body === undefined && !/^voice\/call\/[^/]+$/.test(normalizeClassifyPath(cleanPath))) {
+          return {
+            content: [{ type: "text", text: formatError(`'${cleanPath}' is a POST route: pass a JSON body (use body: {} when it takes no fields). Only voice/call/{call_id} is a GET. Nothing was charged.`) }],
             isError: true,
           };
         }
