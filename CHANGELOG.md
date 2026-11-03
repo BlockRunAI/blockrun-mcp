@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.55.2
+
+### Fixed — charges that may have settled are booked, never "try again"
+
+When the gateway's edge answers 502/504 (or a billed answer comes back
+unreadable), the origin may already have charged you. Three paths booked
+nothing and told you to retry, which could pay twice:
+
+- `blockrun_image` and `blockrun_music` on Solana: the async submit's error
+  lost its status, so the precaution was dropped. The edge set is now the
+  shared one (503 is the gateway's own answer on every rail).
+- `blockrun_speech` on the account rail: a billed 200 whose body would not
+  parse is now booked and reported as "the charge stands".
+- `blockrun_speech` and `blockrun_music` on Base: an edge 502/504 on the
+  signed request is now booked as a maybe, as on Solana and the account rail.
+
+A Solana video submit (paid on completion, so it cannot move money) is the
+exception and is never booked on an edge status.
+
+### Fixed — Polymarket
+
+- An EOA withdrawal whose nonce was taken by another transaction from the
+  same key no longer reports "✅ Withdrawal submitted": it says no pUSD was
+  sent and releases the guard. A repriced (sped-up) transfer still succeeds,
+  and success or revert both name the hash that actually mined.
+- `action:"fund"` signs exactly the amount it shows. `Math.floor(usd * 1e6)`
+  signed $2.009999 for "$2.01"; input with more than 6 decimals is refused.
+
+### Fixed — free models, messages, docs
+
+- `nvidia/nemotron-3.5-lightning-nim` and `nvidia/nemotron-3-ultra-550b-nim`
+  are free on every rail and now reserve $0 (#204).
+- `blockrun_phone` without a body on a POST route is refused before anything
+  is reserved, instead of approving up to $5, signing, and blaming the wallet
+  balance. Only `voice/call/{call_id}` is a GET.
+- "Needs wallet mode" names where the API key came from (`BLOCKRUN_API_KEY`,
+  `~/.blockrun/.api-key`, or both).
+- Wallet setup says where the key really is: the env var, every key file that
+  still holds it, or the OS keychain only when no plaintext copy is left.
+- A Solana job that fails after an unknown settle no longer says both "No
+  payment was taken" and "MAY have been charged".
+- The inline image preview's 15s deadline covers DNS resolution again.
+- README: search is web + news (the X source was removed); the `report`
+  ledger books the observed fee, not the $0.002 reserve.
+
+## 0.55.1
+
+### Security — the inline image preview no longer fetches private addresses
+
+With inline previews on (`inline: true` or `BLOCKRUN_INLINE_IMAGES`), the
+thumbnail fetch took the gateway's image URL verbatim and followed its
+redirects, so a malicious or compromised gateway could make your machine
+request localhost, cloud metadata (169.254.169.254) or the private network.
+It now goes through the same DNS-resolved, per-redirect-hop guard that
+`blockrun_image` already applied to your own reference-image URLs, now shared
+as `fetchPublicUrl`. Non-http(s) schemes are refused; `data:image` results
+from image2image routes still inline without a network request. Previews
+are off by default. Reported in #194.
+
+Both image downloads (your reference image, and the preview) now count bytes
+as the body streams and stop at the size cap. Before, the cap ran after the
+whole body was in memory, so a chunked response or a gzip/brotli bomb, whose
+Content-Length is the compressed size, could exhaust memory in the server.
+
 ## 0.55.0
 
 ### Added — Arc as a third payment chain

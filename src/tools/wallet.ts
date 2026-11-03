@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { BudgetState } from "../types.js";
 import { getWalletInfo, getUsdcBalance, getChain, setChain, ensureBothWallets, getChainBalance, getApiBase, type PaymentChain } from "../utils/wallet.js";
-import { isApiKeyMode, requireWalletMode, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
+import { isApiKeyMode, requireWalletMode, walletModeRemedy, PORTAL_CREDITS_URL, PORTAL_ACTIVITY_URL } from "../utils/auth.js";
 import { describeBlock, formatCredit, getAccountCredit } from "../utils/account.js";
 import { generateQrPng, openQrInViewer } from "../utils/qr.js";
 import { launchTopUp } from "../utils/onramp.js";
@@ -11,6 +11,43 @@ import { formatError } from "../utils/errors.js";
 import { delegateAgent, listRevokedAgents, revokeAgent, sealOperatorCeiling } from "../utils/budget.js";
 import { TOOL_ANNOTATIONS } from "../tool-annotations.js";
 import { appToolMeta } from "../apps.js";
+import { getKeychainMode } from "../utils/keychain.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+/**
+ * Where the key actually lives, worded from what is ON DISK, not from the mode
+ * that was asked for. The setup text used to say the Solana key was in
+ * ~/.blockrun/.solana-session even when strict keychain mode had deleted it,
+ * and a first fix said "keychain only" whenever BLOCKRUN_KEYCHAIN=strict, but
+ * persistKey keeps the file whenever it cannot prove the keychain copy (no
+ * keychain on Windows, no secret-tool, a store or read-back that fails) and
+ * never touches the legacy wallet.key. So: an env override, else every key
+ * file that still holds a key, else the keychain under strict mode.
+ */
+export function keyStorageNote(kind: "evm" | "solana"): string {
+  const envVar = kind === "solana"
+    ? (process.env.SOLANA_WALLET_KEY ? "SOLANA_WALLET_KEY" : null)
+    : process.env.BLOCKRUN_WALLET_KEY ? "BLOCKRUN_WALLET_KEY"
+      : process.env.BASE_CHAIN_WALLET_KEY ? "BASE_CHAIN_WALLET_KEY" : null;
+  if (envVar) return `Private key supplied by ${envVar}; this server does not store it (never leaves your machine)`;
+  const files = kind === "solana" ? [".solana-session"] : [".session", "wallet.key"];
+  const onDisk = files.filter((f) => {
+    try {
+      return fs.readFileSync(path.join(os.homedir(), ".blockrun", f), "utf-8").trim() !== "";
+    } catch {
+      return false;
+    }
+  });
+  if (onDisk.length) {
+    return `Private key stored at ${onDisk.map((f) => `~/.blockrun/${f}`).join(" and ")} (never leaves your machine)`;
+  }
+  if (getKeychainMode() === "strict") {
+    return "Private key kept in your OS keychain only (BLOCKRUN_KEYCHAIN=strict removed the plaintext file; never leaves your machine)";
+  }
+  return `Private key stored in your OS keychain (never leaves your machine)`;
+}
 
 export function registerWalletTool(server: McpServer, budget: BudgetState): void {
   // The limit this ledger was BORN with is the operator's BLOCKRUN_BUDGET_LIMIT
@@ -291,8 +328,8 @@ Do NOT call this for actual AI queries — use blockrun_chat for that.`,
             `reports one. Chat settles after the response by design, so chat figures`,
             `stay estimates; the ledger above is always authoritative.`,
             ``,
-            `Wallet actions (setup, qr, deposit, chain) need wallet mode — unset`,
-            `BLOCKRUN_API_KEY and restart to use one.`,
+            `Wallet actions (setup, qr, deposit, chain) need wallet mode — ${walletModeRemedy()}`,
+            `to use one.`,
           ].join("\n");
           return {
             content: [{ type: "text", text }],
@@ -434,7 +471,7 @@ VERIFY BALANCE: https://arc-scan.org/address/${address}
 PRICING (pay per use, same as Base):
   - Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
+SECURITY: ${keyStorageNote("evm")}
 ================================================================================`
           : chain === "solana"
           ? `
@@ -468,7 +505,7 @@ PRICING (pay per use):
   - GPT-4o: ~$0.005/request | Claude Sonnet: ~$0.003/request
   - Gemini Flash: ~$0.0001/request | Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.solana-session (never leaves your machine)
+SECURITY: ${keyStorageNote("solana")}
 ================================================================================`
           : `
 ================================================================================
@@ -500,7 +537,7 @@ PRICING (pay per use):
   - GPT-4o: ~$0.005/request | Claude Sonnet: ~$0.003/request
   - Gemini Flash: ~$0.0001/request | Full pricing: https://blockrun.ai/pricing
 
-SECURITY: Private key stored at ~/.blockrun/.session by default (never leaves your machine)
+SECURITY: ${keyStorageNote("evm")}
 ================================================================================`;
 
         return { content: [{ type: "text", text }] };

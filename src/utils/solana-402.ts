@@ -53,6 +53,7 @@ import {
   SOLANA_NETWORK,
 } from "@blockrun/llm";
 import { fetchWithTimeout } from "./http.js";
+import { ORIGIN_DID_NOT_ANSWER } from "./uncharged.js";
 import { JobFailedError, pollTimeoutFor } from "./poll.js";
 import { resolveSolanaKey } from "./wallet.js";
 import { amountToUsd } from "./budget.js";
@@ -258,7 +259,8 @@ export interface SolanaPaidAsyncPostOptions extends PaidRequestHooks {
    * Whether this route can settle the transfer carried by the SUBMIT. True
    * (the default) for image and music, which settle at POST; false only for
    * a payment-on-completion route (video), whose submit merely verifies and
-   * enqueues. Read when the submit gets an edge 502/503/504: with no origin
+   * enqueues. Read when the submit gets an edge status (ORIGIN_DID_NOT_ANSWER:
+   * 408/502/504/52x, not 503): with no origin
    * answer there is no settlement header to classify by, so the caller's
    * knowledge of the route is the only evidence. Defaulting to true keeps an
    * unknown route on the conservative side (booked, never reported free).
@@ -522,7 +524,7 @@ export async function solanaPaidAsyncPost(
     headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": paymentPayload },
     body: JSON.stringify(body),
   }, submitTimeout);
-  // An EDGE status is not the origin's verdict: 502/503/504 mean a proxy
+  // An EDGE status is not the origin's verdict: 502/504 (and 408/52x) mean a proxy
   // answered for an origin that may still be running — and on a route that
   // settles at submit, the origin may already have settled it. Leaving the
   // tracker armed is what makes the tool book it as a precaution; calling
@@ -530,8 +532,11 @@ export async function solanaPaidAsyncPost(
   // that already stands. A payment-on-completion route (video) is the
   // exception: its submit cannot move money, so an edge status there is a
   // plain failure and booking it would be a phantom spend. Every other
-  // status is a real answer.
-  const edgeAnswered = submitResp.status === 502 || submitResp.status === 503 || submitResp.status === 504;
+  // status is a real answer. The edge set is the shared ORIGIN_DID_NOT_ANSWER,
+  // not a local list: a status this helper leaves armed must be one that
+  // mayHaveSettled books, or the precaution is silently dropped (a local
+  // 502/503/504 list kept 503 armed, which in-flight then read as an answer).
+  const edgeAnswered = ORIGIN_DID_NOT_ANSWER.has(submitResp.status);
   if (!edgeAnswered || !submitMaySettle) opts.onPaidResponse?.();
   if (submitResp.status === 402) {
     await submitResp.json().catch(() => ({}));
@@ -553,7 +558,16 @@ export async function solanaPaidAsyncPost(
     };
   }
   if (submitResp.status !== 202 && submitResp.status !== 200) {
-    throw new Error(`API error ${submitResp.status}: ${JSON.stringify(submitData)}`);
+    // The status rides on the error, as in solanaPaidPost: in-flight reads the
+    // verdict off statusCode, never the prose, so a status-less throw turned
+    // an armed edge 504 (the origin may have settled) into "nothing booked".
+    // EXCEPT an edge status on a payment-on-completion submit (video): that
+    // submit cannot move money, and mayHaveSettled books any edge status on
+    // a request that carried a payment, so the status there would book a
+    // phantom maybe-charge. Base video throws status-less for the same case.
+    const err = new Error(`API error ${submitResp.status}: ${JSON.stringify(submitData)}`);
+    if (edgeAnswered && !submitMaySettle) throw err;
+    throw Object.assign(err, { statusCode: submitResp.status });
   }
 
   if (!pollPath) throw new Error(`Submit response missing poll_url: ${JSON.stringify(submitData)}`);
@@ -653,7 +667,7 @@ export async function solanaPaidAsyncPost(
     return await pollUntilDone();
   } catch (err) {
     if (!(settledAtSubmit || settleOutcomeUnknown) || err instanceof BilledJobError) throw err;
-    const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No charge was made\.?/i, "");
+    const msg = (err instanceof Error ? err.message : String(err)).replace(/\s*No (?:charge was made|payment was taken)\.?/gi, "");
     throw giveUp(`${what} could not be collected: ${msg}`, "");
   }
 

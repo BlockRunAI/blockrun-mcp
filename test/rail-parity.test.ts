@@ -123,7 +123,12 @@ mock.module("../src/utils/auth.js", {
   },
 });
 mock.module("../src/utils/ssrf.js", {
-  namedExports: { isBlockedFetchHostResolved: async () => false, isBlockedFetchHost: () => false },
+  namedExports: {
+    isBlockedFetchHostResolved: async () => false,
+    isBlockedFetchHost: () => false,
+    // No DNS, same as the stubs above: hand straight to the (mocked) fetch.
+    fetchPublicUrl: (url: string, init?: { signal?: AbortSignal }) => fetch(url, { signal: init?.signal }),
+  },
 });
 
 // The quote every 402 carries, in micro-USDC, set per tool so it sits inside
@@ -418,6 +423,23 @@ for (const row of ROWS) {
     const { call, budget } = harness(row.register);
     const res = await call(row.args);
     assertBooked(res, budget, row.reserve, /MAY have (gone through|settled|been accepted)/, `${row.name}/account/504`);
+  });
+}
+
+// Audit r5 (P1): the same edge 504 on the BASE rail. speech and music sign the
+// x402 payment themselves there and threw a status-less "API error 504", so
+// settleGiveUp could not see the status: nothing booked, "try again". The
+// matrix above had no Base cell, which is how the rail drifted.
+for (const row of ROWS) {
+  if (row.name !== "speech" && row.name !== "music") continue;
+  test(`${row.name} on Base: the signed request is answered 504 by the EDGE → booked as a precaution`, async () => {
+    rail = "base";
+    quotedAmount = micro(row.reserve);
+    // No timeout wording in the body: the verdict must come from the status.
+    script = [resp402, () => ({ status: 504, ok: false, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token <"); } })];
+    const { call, budget } = harness(row.register);
+    const res = await call(row.args);
+    assertBooked(res, budget, row.reserve, /MAY have (gone through|settled)/, `${row.name}/base/504`);
   });
 }
 

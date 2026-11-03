@@ -29,6 +29,10 @@ mock.module("../src/utils/http.js", {
       if (!next) throw new Error("UNEXPECTED_NETWORK_CALL");
       return next();
     },
+    // in-flight.js (imported for real by the edge-status booking tests) needs
+    // this export. Those cases carry statusCode, so the verdict never reaches
+    // the timeout check; the stub only has to recognise an abort.
+    isTimeoutError: (err: unknown) => (err as { name?: string } | undefined)?.name === "AbortError",
   },
 });
 
@@ -706,7 +710,7 @@ test("submitTimeoutMs is honoured on the paid submit", async () => {
 // (image, music — the default) leaves the tracker armed: the origin may have
 // settled. A payment-on-completion route (video) settles it: its submit
 // cannot move money, and booking it would be a phantom spend.
-for (const status of [502, 503, 504]) {
+for (const status of [502, 504]) {
   test(`an edge ${status} on the submit leaves the tracker armed by default`, async () => {
     const events: string[] = [];
     script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
@@ -728,5 +732,59 @@ for (const status of [502, 503, 504]) {
       onPaidResponse: () => events.push("settled"),
     }), new RegExp(String(status)));
     assert.deepEqual(events, ["armed", "settled"]);
+  });
+}
+
+// The edge set is the shared ORIGIN_DID_NOT_ANSWER. A 503 is the gateway's own
+// answer everywhere else (chat, path tools, the Base and account rails), so the
+// helper must not leave it armed: in-flight would read it as an answer and the
+// "precaution" would book nothing anyway, just less honestly.
+test("a 503 on the submit is an answer: the tracker is settled", async () => {
+  const events: string[] = [];
+  script = [quote, () => ({ status: 503, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
+  await assert.rejects(solanaPaidAsyncPost("/v1/images/generations", { prompt: "t" }, {
+    ...fast,
+    onPaidRequest: () => events.push("armed"),
+    onPaidResponse: () => events.push("settled"),
+  }), /503/);
+  assert.deepEqual(events, ["armed", "settled"]);
+});
+
+// Regression r5: giving every submit error its statusCode made a video
+// (payment-on-completion) edge 504 book a phantom maybe-charge, because
+// mayHaveSettled books any edge status on a request that carried a payment.
+for (const status of [502, 504]) {
+  test(`an edge ${status} on a payment-on-completion submit is NOT booked by the real tracker`, async () => {
+    const { trackPaidRequest } = await import("../src/utils/in-flight.js");
+    const paid = trackPaidRequest();
+    script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => ({ error: "upstream unavailable" }) })];
+    const err = await solanaPaidAsyncPost("/v1/videos/generations", { prompt: "t" }, {
+      ...fast,
+      submitMaySettle: false,
+      onPaidRequest: () => paid.arm(0.5),
+      onPaidResponse: () => paid.settle(),
+    }).then(() => assert.fail("expected a throw"), (e: unknown) => e);
+    assert.equal(paid.mayHaveSettled(err), false, "a video submit cannot move money");
+  });
+}
+
+// Audit r5 (P1): the helper left an edge 504 armed so the tool would book it,
+// then threw a status-less "API error 504: {}". in-flight reads the verdict off
+// statusCode, never prose, so mayHaveSettled said false and nothing was booked
+// for a submit the origin may have settled. The image test only passed because
+// its fake body happened to contain the word "timeout".
+for (const status of [502, 504]) {
+  test(`an edge ${status} on a settling submit is booked as a maybe by the real tracker`, async () => {
+    const { trackPaidRequest } = await import("../src/utils/in-flight.js");
+    const paid = trackPaidRequest();
+    // A body with no timeout/abort wording: the verdict must come from the status.
+    script = [quote, () => ({ status, ok: false, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token <"); } })];
+    const err = await solanaPaidAsyncPost("/v1/audio/generations", { prompt: "t" }, {
+      ...fast,
+      onPaidRequest: () => paid.arm(0.08),
+      onPaidResponse: () => paid.settle(),
+    }).then(() => assert.fail("expected a throw"), (e: unknown) => e);
+    assert.equal((err as { statusCode?: number }).statusCode, status);
+    assert.equal(paid.mayHaveSettled(err), true, "an armed edge status must be booked as a precaution");
   });
 }

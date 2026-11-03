@@ -345,7 +345,9 @@ Returns a permanent BlockRun-hosted URL.`,
         }
         if (!submitResp.ok && submitResp.status !== 202) {
           const errBody = await submitResp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
-          throw new Error(`API error ${submitResp.status}: ${JSON.stringify(errBody)}`);
+          // statusCode so settleGiveUp books an edge status as a maybe, the
+          // same verdict the Solana and account rails reach (see speech.ts).
+          throw Object.assign(new Error(`API error ${submitResp.status}: ${JSON.stringify(errBody)}`), { statusCode: submitResp.status });
         }
 
         let track: { url: string; duration_seconds?: number; lyrics?: string } | undefined;

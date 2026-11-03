@@ -148,6 +148,25 @@ test("Base: an API error that came back after the signature books nothing and is
   assert.equal(budget.spent, 0);
 });
 
+// Audit r5 (P1): an EDGE status on the signed Base request. The load balancer
+// gave up; the origin may have finished the clip and settled. Solana and the
+// account rail book that as a maybe; Base threw a status-less error, booked
+// nothing, and said "temporary API issue, try again". A real origin 500 (the
+// test above) stays an answer.
+for (const status of [502, 504]) {
+  test(`Base: an edge ${status} on the signed request is booked as a maybe, never "try again"`, async () => {
+    quotedAmount = "55000";
+    script = [resp402, () => ({ status, ok: false, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token <"); } })];
+    const { call, budget } = makeHarness();
+    const res = await call(SPEAK);
+    const t = text(res);
+    assert.equal(res.isError, true);
+    assert.match(t, /MAY have/, t);
+    assert.doesNotMatch(t, /try again in a few minutes/i, t);
+    assert.ok(near(budget.spent, 0.055), `spent=${budget.spent}`);
+  });
+}
+
 test("Solana: a quote inside the tolerance is re-reserved against the cap before signing", async () => {
   rail = "solana";
   quotedAmount = "70000"; // $0.07 vs $0.0545 estimate: 1.28x, honest markup
@@ -218,6 +237,10 @@ for (const [name, setup, expectUsd] of [
   ["Base", () => { rail = "base"; quotedAmount = "55000"; script = [resp402, () => ({ status: 200, ok: true, headers: headers({ "x-payment-receipt": "0xtx" }), json: async () => { throw new Error("aborted"); } })]; }, 0.055],
   ["Solana", () => { rail = "solana"; quotedAmount = "56000"; script = [resp402, () => ({ status: 200, ok: true, headers: headers({ "x-payment-receipt": "sol-tx" }), json: async () => ({ model: "elevenlabs/flash-v2.5", data: [{}] }) })]; }, 0.056],
   ["account", () => { rail = "account"; script = [() => ({ status: 200, ok: true, headers: headers({ "x-blockrun-cost-usd": "0.052500" }), json: async () => ({ data: [] }) })]; }, 0.0525],
+  // Audit r5 (P1): a billed 200 whose body will not PARSE. apiKeyPost throws
+  // RawCallSettledError before speech's book() ran, so the old catch read it
+  // as a plain failure: nothing booked, "try again". The other rails book.
+  ["account (unparseable body)", () => { rail = "account"; script = [() => ({ status: 200, ok: true, headers: headers({ "x-blockrun-cost-usd": "0.052500" }), json: async () => { throw new SyntaxError("Unexpected token <"); }, text: async () => "<html>" })]; }, 0.0525],
 ] as const) {
   test(`${name}: a settled 200 whose body is unusable says the charge stands, once, and does not invite a retry`, async () => {
     setup();
