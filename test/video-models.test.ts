@@ -120,9 +120,8 @@ async function reservedFor(args: Record<string, unknown>) {
 // subject of a separate sweep. Assert we never fall BELOW the live charge.
 const LIVE_CHARGE: Array<[string, number | undefined, string | undefined, number]> = [
   // grok lost its 5% margin between 08-07 and 08-13: 0.05 x 8 + 0.001 = $0.401
-  // exactly, where the margin would give $0.421001. Sora below still carries it.
+  // exactly, where the margin would give $0.421001.
   ["xai/grok-imagine-video", undefined, undefined, 0.401],
-  ["azure/sora-2", undefined, undefined, 0.421001],
   ["bytedance/seedance-1.5-pro", undefined, undefined, 0.354916],
   ["bytedance/seedance-1.5-pro", 12, undefined, 0.850398],
   ["bytedance/seedance-1.5-pro", undefined, "480p", 0.177958],
@@ -283,20 +282,26 @@ test("every schema-listed (model, resolution) pair is ACCEPTED — the whole tab
   }
 });
 
-test("only SORA ignores resolution now — grok validates it, Seedance gets it", async () => {
-  // This test used to cover both per-second models together, because both
-  // ignored the parameter. Grok no longer does: it renders and prices 480p vs
-  // 720p, and REJECTS 1080p/4K upstream (no 402 at all on a live probe), so
-  // "ignore it" would mean paying for a round trip that cannot succeed. Sora is
-  // the only one left that truly ignores it — probed 2026-08-13, sora with
-  // resolution:"720p" quotes the same $0.421001 as the default.
-  const { text } = await reservedFor({ prompt: "a cube", model: "azure/sora-2", resolution: "4K" });
-  assert.doesNotMatch(text, /4K/, "sora must ignore resolution, not reject it");
-  // "Ignored" has to mean not sent: forwarding it earned a gateway 400, so
-  // asserting only that we did not reject it would miss the actual bug.
-  const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "4K", duration_seconds: 4 });
-  assert.ok(!("resolution" in sora), `sora must not forward resolution: ${JSON.stringify(sora)}`);
-  // ...and Seedance still gets it.
+// azure/sora-2 was retired on 2026-11-02: both gateways answer it with a 400
+// model_retired. It must not be OFFERED (the schema enum is what an agent
+// picks from), and a caller still sending it — a cached schema, a saved
+// workflow, a direct invocation that skips the enum — must be refused before
+// any budget is reserved or quote requested, with a replacement named.
+test("retired azure/sora-2 is not offered, and is refused before any network with a replacement", async () => {
+  const { config } = makeHarness();
+  assert.equal(config.inputSchema.model.safeParse("azure/sora-2").success, false, "the enum must not offer sora");
+  assert.doesNotMatch(config.description, /sora/i, "the description must not offer sora");
+  sent.length = 0;
+  // errorText also asserts the mocked network was never reached.
+  const text = await errorText({ prompt: "a cube", model: "azure/sora-2", duration_seconds: 4 });
+  assert.match(text, /retired on 2026-11-02/);
+  assert.match(text, /xai\/grok-imagine-video-1\.5/);
+  assert.match(text, /No payment was taken/);
+  assert.equal(sent.length, 0, "a retired model must not send a request");
+  assert.throws(() => estimateVideoCost("azure/sora-2", 4), /retired on 2026-11-02/);
+});
+
+test("Seedance still gets resolution forwarded", async () => {
   const seedance = await bodySentFor({ prompt: "a cube", model: "bytedance/seedance-2.0", resolution: "1080p" });
   assert.equal(seedance.resolution, "1080p");
 });
@@ -406,14 +411,6 @@ test("durations outside each model's window are refused, both ends", async () =>
   assert.match(await errorText({ prompt: "a cube", model: "xai/grok-imagine-video", duration_seconds: 16 }), /supports 1-15s/);
 });
 
-test("sora-2 pins its 4/8/12 allowlist — refused off it, accepted on it", async () => {
-  assert.match(await errorText({ prompt: "a cube", model: "azure/sora-2", duration_seconds: 6 }), /exactly 4, 8, 12/);
-  for (const s of [4, 8, 12]) {
-    const { text } = await reservedFor({ prompt: "a cube", model: "azure/sora-2", duration_seconds: s });
-    assert.doesNotMatch(text, /accepts duration_seconds of exactly/, `${s}s must be accepted`);
-  }
-});
-
 // ── xai/grok-imagine-video honours `resolution`, and is NOT margin-priced ──
 //
 // The schema accepted resolution for every model but the handler forwarded it
@@ -429,9 +426,9 @@ test("sora-2 pins its 4/8/12 allowlist — refused off it, accepted on it", asyn
 //   grok 1080p / 4K                   -> no 402 (rejected upstream)
 //
 // Those numbers also show grok carries NO margin any more: 0.05 x 15 + 0.001 =
-// $0.751 exactly, where VIDEO_MARGIN would make it $0.7885. Sora still does
-// (0.10 x 4 x 1.05 + 0.001 = $0.421001, its pinned row above), so the two
-// per-second models no longer share a formula. Forwarding resolution WITHOUT
+// $0.751 exactly, where VIDEO_MARGIN would make it $0.7885. Sora (retired
+// 2026-11-02) still did, so the two per-second models stopped sharing a
+// formula. Forwarding resolution WITHOUT
 // this rate split would have under-reserved 720p by 1.33x.
 const GROK_LIVE: Array<[number | undefined, string | undefined, number]> = [
   [undefined, undefined, 0.401],
@@ -485,10 +482,6 @@ test("grok refuses the resolutions the gateway rejects, before paying", async ()
 test("grok's resolution reaches the request body — the whole point of accepting it", async () => {
   const body = await bodySentFor({ prompt: "a cube", model: "xai/grok-imagine-video", resolution: "720p" });
   assert.equal(body.resolution, "720p");
-  // Sora genuinely ignores it (probed: 720p quotes the same $0.421001 as the
-  // default), so it must still be dropped rather than forwarded.
-  const sora = await bodySentFor({ prompt: "a cube", model: "azure/sora-2", resolution: "720p" });
-  assert.equal(sora.resolution, undefined);
 });
 
 
@@ -537,7 +530,7 @@ test("first-and-last-frame names every model that supports it, 2.5 included", as
   // The rejection text is what steers the retry, and it was hand-maintained
   // separately from FIRST_LAST_FRAME_MODELS — so when 2.5 joined the set, the
   // message kept sending callers to the four older models.
-  for (const model of ["xai/grok-imagine-video", "azure/sora-2"]) {
+  for (const model of ["xai/grok-imagine-video"]) {
     const text = await errorText({ prompt: "a cube", model, image_url: "https://example.com/a.png", last_frame_url: "https://example.com/b.png" });
     assert.match(text, /does not support first-and-last-frame interpolation/);
     assert.match(text, /seedance-2\.5/, `${model}: the message must list 2.5 now that it is in the set`);

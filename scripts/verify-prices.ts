@@ -228,7 +228,6 @@ const PROBES: Probe[] = [
     ["xai/grok-imagine-video-1.5", undefined, "720p"],
     ["xai/grok-imagine-video-1.5", undefined, "1080p"],
     ["xai/grok-imagine-video-1.5", 15, "1080p"],
-    ["azure/sora-2", undefined, undefined],
     ["bytedance/seedance-1.5-pro", undefined, undefined],
     ["bytedance/seedance-1.5-pro", 12, undefined],
     ["bytedance/seedance-1.5-pro", undefined, "480p"],

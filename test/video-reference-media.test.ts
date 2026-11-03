@@ -179,7 +179,7 @@ test("the reference-clip ceiling is per model: 15.2s on the 2.0 family, 30.2s on
     assert.equal(referenceCeilingSeconds(m), 15.2, m);
   }
   assert.equal(referenceCeilingSeconds("bytedance/seedance-2.5"), 30.2);
-  for (const m of ["bytedance/seedance-1.5-pro", "xai/grok-imagine-video", "azure/sora-2", "constructor"]) {
+  for (const m of ["bytedance/seedance-1.5-pro", "xai/grok-imagine-video", "xai/grok-imagine-video-1.5", "constructor"]) {
     assert.equal(referenceCeilingSeconds(m), undefined, m);
   }
 });
@@ -250,11 +250,11 @@ test("an out-of-range or non-integer reference count throws rather than reservin
 });
 
 test("references against a model with no token price throw instead of being silently dropped", () => {
-  // The validation used to live INSIDE the Seedance branch, so grok and sora
-  // fell through to their own per-second tables and the references vanished
+  // The validation used to live INSIDE the Seedance branch, so grok (and sora,
+  // since retired) fell through to their own per-second tables and the references vanished
   // from the reserve without a word — the exact fail-open the estimator's
   // throw-never-default rule exists to prevent.
-  for (const model of ["xai/grok-imagine-video", "azure/sora-2"]) {
+  for (const model of ["xai/grok-imagine-video", "xai/grok-imagine-video-1.5"]) {
     assert.throws(() => estimateVideoCost(model, 8, undefined, { videos: 1 }), /not token-priced/, model);
   }
   // With no references those models still price normally.
@@ -375,13 +375,13 @@ test("every capability guard fires for its off-model input, and none reaches the
     // reference images: wrong model, and over the per-model count
     [{ model: "bytedance/seedance-1.5-pro", reference_image_urls: [IMG] }, /does not accept reference images/],
     [{ model: "xai/grok-imagine-video", reference_image_urls: [IMG] }, /does not accept reference images/],
-    [{ model: "azure/sora-2", reference_image_urls: [IMG] }, /does not accept reference images/],
+    [{ model: "xai/grok-imagine-video-1.5", reference_image_urls: [IMG] }, /does not accept reference images/],
     [{ model: "bytedance/seedance-2.0", reference_image_urls: Array(10).fill(IMG) }, /at most 9 reference images — got 10/],
     [{ model: "bytedance/seedance-2.0-fast", reference_image_urls: Array(10).fill(IMG) }, /at most 9 reference images/],
     // reference clips: 1.5-pro and the non-Seedance models take none
     [{ model: "bytedance/seedance-1.5-pro", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
     [{ model: "bytedance/seedance-1.5-pro", reference_audios: [{ url: AUD }], reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
-    [{ model: "azure/sora-2", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
+    [{ model: "xai/grok-imagine-video-1.5", reference_videos: [{ url: VID }] }, /does not accept reference video or audio/],
     // 2.5 still caps clips at 3 of each, and audio still needs visual conditioning
     [{ model: "bytedance/seedance-2.5", reference_audios: [{ url: AUD }] }, /requires a reference image or video/],
     [{ model: "bytedance/seedance-2.5", reference_videos: [{ url: VID }], image_url: IMG }, /cannot be combined with frame seeds/],
@@ -399,7 +399,7 @@ test("every capability guard fires for its off-model input, and none reaches the
     [{ model: "bytedance/seedance-2.0", seed: 1 }, /seed requires bytedance\/seedance-1\.5-pro/],
     [{ model: "bytedance/seedance-2.5", camera_fixed: true }, /camera_fixed requires bytedance\/seedance-1\.5-pro/],
     [{ model: "xai/grok-imagine-video", watermark: false }, /watermark requires a Seedance model/],
-    [{ model: "azure/sora-2", return_last_frame: true }, /return_last_frame requires a Seedance model/],
+    [{ model: "xai/grok-imagine-video-1.5", return_last_frame: true }, /return_last_frame requires a Seedance model/],
     [{ model: "xai/grok-imagine-video", safety_identifier: "x" }, /safety_identifier requires a Seedance model/],
   ];
   for (const [args, re] of cases) {
