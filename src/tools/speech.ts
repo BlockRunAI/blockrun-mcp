@@ -24,6 +24,7 @@ import type { BudgetState } from "../types.js";
 import { getApiBase, getChain, getOrCreateWalletKey } from "../utils/wallet.js";
 import { apiAuthHeaders, isApiKeyMode } from "../utils/auth.js";
 import { apiKeyPost } from "../utils/api-key-call.js";
+import { RawCallSettledError } from "../utils/settled-error.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
   createPaymentPayload,
@@ -243,7 +244,17 @@ Returns a hosted audio URL — download immediately if you need to keep the file
         if (isApiKeyMode()) {
           // The Bearer IS the payment on this rail: a POST that never answers
           // may still be billed, so it is armed like a signed one.
-          const r = await sendPaid(paid, () => apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT }));
+          let r: Awaited<ReturnType<typeof apiKeyPost>>;
+          try {
+            r = await sendPaid(paid, () => apiKeyPost(path, body, { timeoutMs: SPEECH_TIMEOUT }));
+          } catch (e) {
+            // A 2xx whose body would not parse: the account was billed (the
+            // cost header rides on the error), so book it before the catch
+            // below decides — that turns "failed, try again" into "the charge
+            // stands", the verdict the Base and Solana rails already give.
+            if (e instanceof RawCallSettledError) book(e.settledUsd, cost);
+            throw e;
+          }
           data = r.data as typeof data;
           // The settled figure when the rail reports one, the local estimate
           // otherwise — and `estimated` says which, so the two are never mixed up.
@@ -365,7 +376,11 @@ Returns a hosted audio URL — download immediately if you need to keep the file
 
         if (!resp.ok) {
           const errBody = await resp.json().catch(() => ({ error: "Request failed" })) as Record<string, unknown>;
-          throw new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`);
+          // statusCode, not just prose: settleGiveUp books an EDGE status on a
+          // signed request as a maybe (the origin may have finished and
+          // settled), exactly as the Solana and account rails do. Status-less,
+          // a Base 504 read "temporary issue, try again" — pay twice.
+          throw Object.assign(new Error(`API error ${resp.status}: ${JSON.stringify(errBody)}`), { statusCode: resp.status });
         }
 
         // A 200 means the call settled on-chain (X-Payment-Receipt is set). Book
