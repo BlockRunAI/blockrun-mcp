@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.55.2
+
+### Fixed — charges that may have settled are booked, never "try again"
+
+When the gateway's edge answers 502/504 (or a billed answer comes back
+unreadable), the origin may already have charged you. Three paths booked
+nothing and told you to retry, which could pay twice:
+
+- `blockrun_image` and `blockrun_music` on Solana: the async submit's error
+  lost its status, so the precaution was dropped. The edge set is now the
+  shared one (503 is the gateway's own answer on every rail).
+- `blockrun_speech` on the account rail: a billed 200 whose body would not
+  parse is now booked and reported as "the charge stands".
+- `blockrun_speech` and `blockrun_music` on Base: an edge 502/504 on the
+  signed request is now booked as a maybe, as on Solana and the account rail.
+
+A Solana video submit (paid on completion, so it cannot move money) is the
+exception and is never booked on an edge status.
+
+### Fixed — Polymarket
+
+- An EOA withdrawal whose nonce was taken by another transaction from the
+  same key no longer reports "✅ Withdrawal submitted": it says no pUSD was
+  sent and releases the guard. A repriced (sped-up) transfer still succeeds,
+  and success or revert both name the hash that actually mined.
+- `action:"fund"` signs exactly the amount it shows. `Math.floor(usd * 1e6)`
+  signed $2.009999 for "$2.01"; input with more than 6 decimals is refused.
+
+### Fixed — free models, messages, docs
+
+- `nvidia/nemotron-3.5-lightning-nim` and `nvidia/nemotron-3-ultra-550b-nim`
+  are free on every rail and now reserve $0 (#204).
+- `blockrun_phone` without a body on a POST route is refused before anything
+  is reserved, instead of approving up to $5, signing, and blaming the wallet
+  balance. Only `voice/call/{call_id}` is a GET.
+- "Needs wallet mode" names where the API key came from (`BLOCKRUN_API_KEY`,
+  `~/.blockrun/.api-key`, or both).
+- Wallet setup says where the key really is: the env var, every key file that
+  still holds it, or the OS keychain only when no plaintext copy is left.
+- A Solana job that fails after an unknown settle no longer says both "No
+  payment was taken" and "MAY have been charged".
+- The inline image preview's 15s deadline covers DNS resolution again.
+- README: search is web + news (the X source was removed); the `report`
+  ledger books the observed fee, not the $0.002 reserve.
+
 ## 0.55.1
 
 ### Security — the inline image preview no longer fetches private addresses
