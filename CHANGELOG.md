@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.55.5
+
+### Fixed — Grok Imagine Pro is reserved and booked at its new price
+
+The gateway repriced `xai/grok-imagine-image-pro` from $0.05 to $0.06 on
+2026-11-05, because xAI retired the model behind it and Pro now requests Grok
+Imagine 2.0 at medium quality. This server still reserved and booked the old
+price, so on Base each call was booked $0.0105 below the $0.064 it settled and
+budget caps ran loose on that model. The price table and the tool description
+now say $0.06.
+
 ## 0.55.4
 
 ### Fixed — native Claude calls are booked at the full max_tokens ceiling

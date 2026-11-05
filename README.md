@@ -252,9 +252,9 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,212 |
+| `full` *(default)* | 19 | 14,220 |
 | `trading` | 8 | 5,471 |
-| `media` | 7 | 7,008 |
+| `media` | 7 | 7,016 |
 | `research` | 5 | 2,800 |
 | `chat` | 3 | 2,155 |
 

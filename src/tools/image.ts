@@ -112,11 +112,14 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
 // over-reserved 40%). Added gpt-image-2.5-flare / -sunburst ($0.28, flat
 // across `quality`, which this tool does not send) and grok-imagine-image-2.0
 // ($0.04 — the gateway pins xAI's `quality: "low"`, the tier that price covers).
+//
+// 2026-11-05: grok-imagine-image-pro $0.05 -> $0.06. xAI retired the model behind
+// it on 2026-11-02, and the gateway now requests 2.0 at `quality: "medium"`.
 const GENERATE_MODEL_COST: Record<string, number> = {
   "zai/cogview-4": 0.015,
   "xai/grok-imagine-image": 0.02,
   "xai/grok-imagine-image-2.0": 0.04,
-  "xai/grok-imagine-image-pro": 0.05,
+  "xai/grok-imagine-image-pro": 0.06,
   "openai/gpt-image-1": 0.02,
   "openai/gpt-image-2": 0.06,
   "openai/gpt-image-2.5-flare": 0.28,
@@ -351,7 +354,7 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - google/nano-banana-pro ($0.10; $0.15 at 4096px) — up to 4K, strongest photorealism
 - xai/grok-imagine-image ($0.02) — stylized, fast
 - xai/grok-imagine-image-2.0 ($0.04) — Grok Imagine 2.0, between Grok Imagine and Pro on price
-- xai/grok-imagine-image-pro ($0.05) — higher quality Grok Imagine
+- xai/grok-imagine-image-pro ($0.06) — Grok Imagine 2.0 at medium quality, finer detail
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 - bytedance/seedream-5-pro ($0.045; $0.09 when both dimensions exceed 1024) — Seedream 5.0 Pro; cheap widescreen at 1280x720 / 2048x1024, large formats up to 2848x1600
 
