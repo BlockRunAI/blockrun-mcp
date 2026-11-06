@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.55.7
+
+### Fixed — `blockrun_modal` reserves the gateway's new sandbox prices
+
+The gateways now price a create by size as well as lifetime. The flat rate needs
+300 seconds or less, at most 1 CPU and at most 1024 MB. Anything else pays the new
+hourly rates (CPU $0.25, T4 $4, L4 $4.50, A10G $5, A100 $7, H100 $9), never below
+the flat rate. The estimator, budget cap, confirm dialog, tool text and skill now
+use the same rule, so `{ gpu: "T4", cpu: 8, memory: 32768, timeout: 300 }` reserves
+$0.335 instead of $0.052. The skill's GPU example also no longer sends a custom
+image and `setup_commands`, which the gateway refuses.
+
 ## 0.55.6
 
 ### Fixed — agents are no longer offered Exa's retired `tweet` category
