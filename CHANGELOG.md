@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.55.6
+
+### Fixed — agents are no longer offered Exa's retired `tweet` category
+
+Exa retired the `tweet` search category and answers 400 "no longer supported",
+but the `blockrun_exa` tool description and the `exa-research` skill still
+listed it, so agents kept picking it. Those calls fail without a charge. Both
+now drop it and say Exa does not serve X/Twitter content.
+
 ## 0.55.5
 
 ### Fixed — Grok Imagine Pro is reserved and booked at its new price
