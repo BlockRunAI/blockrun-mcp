@@ -67,7 +67,7 @@ mock.module("../src/utils/http.js", {
       accountBodies.push(JSON.parse(init.body ?? "{}"));
       return new Response(JSON.stringify({ sandbox_id: "sb-1" }), {
         status: 200,
-        headers: { "content-type": "application/json", "x-blockrun-cost-usd": "192.000000" },
+        headers: { "content-type": "application/json", "x-blockrun-cost-usd": "216.000000" },
       });
     },
     isTimeoutError: () => false,
@@ -95,11 +95,11 @@ const PADDED = [" H100", "H100 ", " H100 ", "H100\n", "\tH100", " H100", "H100\
 
 test("estimateModalCost prices a whitespace-padded gpu exactly like the bare tier (the gateway trims)", () => {
   // The bare figures are the gateway's own quotes (see modal-cost.test.ts):
-  // 24h H100 $192.002, 1h H100 $8.001 charged / $8.002 reserved, flat H100 $0.402.
-  assert.equal(estimateModalCost("sandbox/create", { timeout: 86400, gpu: "H100" }), 192.002);
+  // 24h H100 $216.002, 1h H100 $9.001 charged / $9.002 reserved, flat H100 $0.402.
+  assert.equal(estimateModalCost("sandbox/create", { timeout: 86400, gpu: "H100" }), 216.002);
   for (const timeout of [86400, 3600, 300]) {
     const bare = estimateModalCost("sandbox/create", { timeout, gpu: "H100" });
-    assert.ok(bare >= (timeout > 300 ? 8 * (timeout / 3600) : 0.4), `precondition: bare H100 at ${timeout}s reserves the H100 rate`);
+    assert.ok(bare >= (timeout > 300 ? 9 * (timeout / 3600) : 0.4), `precondition: bare H100 at ${timeout}s reserves the H100 rate`);
     for (const gpu of PADDED) {
       assert.equal(estimateModalCost("sandbox/create", { timeout, gpu }), bare, `${JSON.stringify(gpu)} at ${timeout}s`);
     }
@@ -130,8 +130,8 @@ test("the body that leaves this process carries the TRIMMED gpu on the Base rail
   assert.equal(walletBodies.length, 1);
   assert.deepEqual(walletBodies[0], { gpu: "H100", timeout: 86400, image: "python:3.11" });
   // Wallet rail reports no settled figure, so the ledger books the reserve's
-  // ledgerFallback — of the H100 price, not the CPU one. 192.002 - 0.002 + 0.001.
-  assert.ok(budget.spent > 190, `ledger booked $${budget.spent}, not the H100 figure`);
+  // ledgerFallback — of the H100 price, not the CPU one. 216.002 - 0.002 + 0.001.
+  assert.ok(budget.spent > 210, `ledger booked $${budget.spent}, not the H100 figure`);
 });
 
 test("the same on the account rail: trimmed body, and the reserve gate sees the H100 price", async () => {
@@ -147,7 +147,7 @@ test("the same on the account rail: trimmed body, and the reserve gate sees the 
   assert.equal(accountBodies.length, 1);
   assert.deepEqual(accountBodies[0], { gpu: "H100", timeout: 86400 });
   assert.equal(walletBodies.length, 0, "an account call must not touch the wallet client");
-  assert.equal(budget.spent, 192, "account rail books the settled x-blockrun-cost-usd");
+  assert.equal(budget.spent, 216, "account rail books the settled x-blockrun-cost-usd");
 });
 
 // The gateway 400s every gpu outside its five tiers BEFORE payment — including

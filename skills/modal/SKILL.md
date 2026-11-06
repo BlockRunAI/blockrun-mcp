@@ -35,18 +35,19 @@ That makes `timeout` the single most expensive field in this MCP:
 |---|---|
 | `{ timeout: 300 }` | **$0.0110** |
 | `{ timeout: 300, gpu: "A100" }` | **$0.2010** |
-| `{ timeout: 600, gpu: "A100" }` | **$0.6677** |
-| `{ timeout: 86400, gpu: "H100" }` | **$192.0010** |
+| `{ timeout: 600, gpu: "A100" }` | **$1.1677** |
+| `{ timeout: 300, gpu: "T4", cpu: 8, memory: 32768 }` | **$0.3343** |
+| `{ timeout: 86400, gpu: "H100" }` | **$216.0010** |
 
-All four are live-verified quotes. A 24h H100 sandbox costs **$192 upfront, non-refundable**, even if your job finishes in a minute.
+A 24h H100 sandbox costs **$216 upfront, non-refundable**, even if your job finishes in a minute.
 
-**So: ask for the time you need, not a safe-looking ceiling.** Need 20 minutes of H100? `timeout: 1200` is $2.67, not $192. Keep `timeout ≤ 300` and you stay on the flat rate entirely.
+**So: ask for the time you need, not a safe-looking ceiling.** Need 20 minutes of H100? `timeout: 1200` is $3.00, not $216. Keep `timeout ≤ 300`, `cpu ≤ 1` and `memory ≤ 1024` and you stay on the flat rate.
 
 ## How to Call from MCP
 
 ```ts
 // 1. Create — timeout: 300 keeps you on the FLAT rate ($0.0110, or $0.2010 with A100).
-//    Anything above 300 bills hourly for the full requested lifetime, no refund.
+//    Anything above 300, or above 1 CPU or 1024 MB, bills hourly for the full requested lifetime, no refund.
 blockrun_modal({ path: "sandbox/create", body: {
   image: "python:3.11",
   gpu: "A100",
@@ -69,14 +70,14 @@ blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: "sb_abc..." } })
 
 | Path | Method | Body | Price |
 |---|---|---|---|
-| `sandbox/create` | POST | `{ image?, timeout?, cpu?, memory?, gpu?, setup_commands? }` | **depends on `timeout` + `gpu` — see below** |
+| `sandbox/create` | POST | `{ image?, timeout?, cpu?, memory?, gpu?, setup_commands? }` | **depends on `timeout`, `gpu`, `cpu` and `memory` — see below** |
 | `sandbox/exec` | POST | `{ sandbox_id, command: ["python","-c","..."], timeout? }` | $0.0020 |
 | `sandbox/status` | POST | `{ sandbox_id }` | $0.0020 |
 | `sandbox/terminate` | POST | `{ sandbox_id }` | $0.0020 |
 
 ### `sandbox/create` pricing is bimodal
 
-**`timeout ≤ 300s` — flat rate, charged once:**
+**`timeout ≤ 300s`, `cpu ≤ 1` and `memory ≤ 1024` — flat rate, charged once:**
 
 | gpu | price |
 |---|---|
@@ -87,20 +88,19 @@ blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: "sb_abc..." } })
 | `A100` | $0.2010 |
 | `H100` | $0.4010 |
 
-**`timeout > 300s` — per-hour × the full requested lifetime, upfront, no refund:**
+**Anything longer or larger — per-hour × the full requested lifetime, never below the flat rate, upfront, no refund:**
 
 | gpu | per hour | 1h | 24h (max) |
 |---|---|---|---|
-| *(none, CPU)* | $0.10 | $0.1010 | $2.4010 |
-| `T4` | $1.50 | $1.5010 | $36.0010 |
-| `L4` | $2.00 | $2.0010 | $48.0010 |
-| `A10G` | $2.50 | $2.5010 | $60.0010 |
-| `A100` | $4.00 | $4.0010 | $96.0010 |
-| `H100` | $8.00 | $8.0010 | **$192.0010** |
+| *(none, CPU)* | $0.25 | $0.2510 | $6.0010 |
+| `T4` | $4.00 | $4.0010 | $96.0010 |
+| `L4` | $4.50 | $4.5010 | $108.0010 |
+| `A10G` | $5.00 | $5.0010 | $120.0010 |
+| `A100` | $7.00 | $7.0010 | $168.0010 |
+| `H100` | $9.00 | $9.0010 | **$216.0010** |
 
-Hours are exact, not rounded up — `timeout: 1800` on `A100` is 0.5h = $2.0010. Every figure above includes the $0.001 flat transaction fee. Max `timeout` is 86400 (24h).
+Hours are exact, not rounded up — `timeout: 1800` on `A100` is 0.5h = $3.5010. Every figure above includes the $0.001 flat transaction fee. Max `timeout` is 86400 (24h).
 
-One quirk worth knowing: `timeout: 300` costs $0.0110 (flat) but `timeout: 301` costs $0.0094 (CPU-hourly) — just past the cliff is briefly *cheaper* on CPU. It stops being cheaper at 360s.
 
 ## Field Reference
 
@@ -109,7 +109,7 @@ One quirk worth knowing: `timeout: 300` costs $0.0110 (flat) but `timeout: 301` 
 | `image` | `python:3.11` | Any public Docker image. `nvidia/cuda:12-runtime` if you bring GPU code. |
 | `timeout` | 300 | **BILLED lifetime in seconds — charged upfront for the full amount, never refunded.** NOT idle eviction: you pay for what you ask for, not what you use. `≤300` = flat rate; `>300` switches to per-hour billing (see the tables above). Max 86400 (24h). This is the field that turns a $0.01 sandbox into a $192 one. |
 | `cpu` | 1 | CPU cores |
-| `memory` | 1024 | Memory in MB |
+| `memory` | 512 | Memory in MB |
 | `gpu` | none | `T4` / `L4` / `A10G` / `A100` / `H100` — those five only. Anything else is rejected: `{"gpu":"A100-80GB"}` returns HTTP 400 *"Unsupported GPU type. Allowed: T4, L4, A10G, A100, H100"*. Drives the price hard — see the tables above. |
 | `setup_commands` | `[]` | Shell commands run once during sandbox provisioning |
 | `command` (exec) | required | Array form: `["python","-c","print(2+2)"]` |
@@ -132,11 +132,9 @@ await blockrun_modal({ path: "sandbox/terminate", body: { sandbox_id: sb.sandbox
 
 ```ts
 blockrun_modal({ path: "sandbox/create", body: {
-  image: "pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
   gpu: "A100",
   timeout: 1200,
-  memory: 16384,
-  setup_commands: ["pip install --quiet transformers accelerate"]
+  memory: 16384
 }})
 ```
 Then `sandbox/exec` with your inference command.

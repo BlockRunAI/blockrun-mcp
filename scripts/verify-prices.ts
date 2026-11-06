@@ -147,7 +147,7 @@ const PROBES: Probe[] = [
   { label: "pm/markets/search", path: "pm/markets/search?q=election", expected: MARKETS_PRICE_USD },
 
   // Body-priced: modal bills off gpu + timeout, NOT the path. A 24h H100 is
-  // $192 upfront and non-refundable — the case that made this script exist.
+  // $216 upfront and non-refundable — the case that made this script exist.
   { label: "modal create {} (flat)", path: "modal/sandbox/create", body: {}, expected: estimateModalCost("sandbox/create", {}) },
   { label: "modal create T4 300s", path: "modal/sandbox/create", body: { timeout: 300, gpu: "T4" }, expected: estimateModalCost("sandbox/create", { timeout: 300, gpu: "T4" }) },
   { label: "modal create CPU 1h", path: "modal/sandbox/create", body: { timeout: 3600 }, expected: estimateModalCost("sandbox/create", { timeout: 3600 }) },
