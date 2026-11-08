@@ -12,8 +12,8 @@ import { estimateModalCost } from "../src/tools/modal.js";
 // Every figure below is the gateway's own quote, read from the live
 // payment-required header (free to request — no payment attached). It mirrors
 // getModalCreatePricing() in the gateway's src/lib/modal.ts:
-//   timeout <= 300s -> flat (CPU $0.01, GPU per tier)
-//   timeout >  300s -> hourly x (timeout/3600), EXACT, charged upfront, no refund
+//   timeout <= 300s, cpu <= 1, memory <= 1024 -> flat (CPU $0.01, GPU per tier)
+//   anything else -> hourly x (timeout/3600), EXACT, never below flat, upfront, no refund
 const CHARGED: Array<[string, unknown, number]> = [
   // path-only operations
   ["sandbox/exec", { sandbox_id: "sb", command: ["echo"] }, 0.003],
@@ -25,10 +25,17 @@ const CHARGED: Array<[string, unknown, number]> = [
   ["sandbox/create", { timeout: 300, gpu: "T4" }, 0.052001],
   ["sandbox/create", { timeout: 300, gpu: "H100" }, 0.402001],
   // hourly tier: timeout > 300, exact hours (not rounded up)
-  ["sandbox/create", { timeout: 3600, gpu: "A100" }, 4.002001],
-  ["sandbox/create", { timeout: 86400, gpu: "H100" }, 192.002],
-  ["sandbox/create", { timeout: 3600 }, 0.102001], // CPU hourly $0.10
-  ["sandbox/create", { timeout: 1801, gpu: "T4" }, 1.5 * (1801 / 3600) + 0.002],
+  ["sandbox/create", { timeout: 3600, gpu: "A100" }, 7.002001],
+  ["sandbox/create", { timeout: 86400, gpu: "H100" }, 216.002],
+  // size: one step over either line bills hourly at any timeout
+  ["sandbox/create", { timeout: 300, gpu: "T4", cpu: 1, memory: 1024 }, 0.052001],
+  ["sandbox/create", { timeout: 300, gpu: "T4", cpu: 1.5 }, 4 * (300 / 3600) + 0.002],
+  ["sandbox/create", { timeout: 300, gpu: "T4", memory: 1025 }, 4 * (300 / 3600) + 0.002],
+  ["sandbox/create", { timeout: 300, gpu: "T4", cpu: 8, memory: 32768 }, 4 * (300 / 3600) + 0.002],
+  // floor: large and short is never cheaper than the small flat rate
+  ["sandbox/create", { timeout: 10, gpu: "T4", cpu: 8, memory: 32768 }, 0.052001],
+  ["sandbox/create", { timeout: 3600 }, 0.252], // CPU hourly $0.25
+  ["sandbox/create", { timeout: 1801, gpu: "T4" }, 4 * (1801 / 3600) + 0.002],
 ];
 
 test("estimateModalCost reserves what the gateway actually charges", () => {
@@ -57,7 +64,7 @@ test("estimateModalCost never reserves the flat rate for an expensive sandbox", 
 // modal-gpu-trim.test.ts). The estimator merely has to stay total and finite.
 test("estimateModalCost falls back to the CPU rate for an unknown gpu (the handler refuses it first)", () => {
   assert.equal(estimateModalCost("sandbox/create", { timeout: 300, gpu: "NOPE" }), 0.012);
-  assert.equal(estimateModalCost("sandbox/create", { timeout: 3600, gpu: "NOPE" }), 0.102001);
+  assert.equal(estimateModalCost("sandbox/create", { timeout: 3600, gpu: "NOPE" }), 0.252);
 });
 
 // A plain object literal inherits from Object.prototype, so TABLE["toString"]
@@ -74,7 +81,7 @@ test("estimateModalCost is not fooled by Object.prototype keys as a gpu", () => 
       assert.equal(typeof got, "number", `gpu:"${key}" timeout:${timeout} returned a ${typeof got}, not a number`);
       assert.ok(Number.isFinite(got), `gpu:"${key}" timeout:${timeout} returned ${got}`);
       // must fall back to the CPU rate, exactly like any other unknown gpu
-      assert.equal(got, timeout > 300 ? 0.102001 : 0.012, `gpu:"${key}" must fall back to the CPU rate`);
+      assert.equal(got, timeout > 300 ? 0.252 : 0.012, `gpu:"${key}" must fall back to the CPU rate`);
     }
   }
 });
@@ -100,16 +107,16 @@ test("estimateModalCost prices tab/LF/CR-obfuscated sandbox/create as a create, 
   const BASE = "https://blockrun.ai/api/v1/modal/";
   for (const raw of ["sandbox/cre\tate", "sandbox/cr\neate", "sandbox\r/create"]) {
     assert.equal(new URL(BASE + raw).pathname, "/api/v1/modal/sandbox/create", raw);
-    assert.equal(estimateModalCost(raw, { timeout: 86400, gpu: "H100" }), 192.002, raw);
+    assert.equal(estimateModalCost(raw, { timeout: 86400, gpu: "H100" }), 216.002, raw);
   }
 });
 
 test("estimateModalCost decodes percent-escapes, which the gateway router resolves", () => {
   // fetch() forwards %63 untouched; the gateway decodes it when routing, so
   // this reaches the same create handler.
-  assert.equal(estimateModalCost("sandbox/%63reate", { timeout: 86400, gpu: "H100" }), 192.002);
-  assert.equal(estimateModalCost("modal/sandbox/create/", { timeout: 86400, gpu: "H100" }), 192.002);
-  assert.equal(estimateModalCost("SANDBOX/CREATE", { timeout: 86400, gpu: "H100" }), 192.002);
+  assert.equal(estimateModalCost("sandbox/%63reate", { timeout: 86400, gpu: "H100" }), 216.002);
+  assert.equal(estimateModalCost("modal/sandbox/create/", { timeout: 86400, gpu: "H100" }), 216.002);
+  assert.equal(estimateModalCost("SANDBOX/CREATE", { timeout: 86400, gpu: "H100" }), 216.002);
   // One decode only — %2563reate is not %63reate is not create.
   assert.equal(estimateModalCost("sandbox/%2563reate", { timeout: 86400, gpu: "H100" }), 0.003);
 });

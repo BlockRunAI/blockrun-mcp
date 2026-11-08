@@ -50,7 +50,7 @@ already included (it applies once per call, not per result).
 one call each: 3 URLs together cost $0.0070, but three separate calls cost
 $0.0090 — you pay the flat fee three times instead of once.
 
-Valid `category` values for `search`: `"news"`, `"research paper"`, `"company"`, `"tweet"`, `"github"`, `"pdf"`.
+Valid `category` values for `search`: `"news"`, `"research paper"`, `"company"`, `"github"`, `"pdf"`. Exa does not serve X/Twitter content.
 
 ## Python SDK Instructions
 
@@ -94,7 +94,7 @@ result = client._request_with_payment_raw("/v1/exa/search", {
 })
 ```
 
-**Categories:** `"news"`, `"research paper"`, `"company"`, `"tweet"`, `"github"`, `"pdf"`
+**Categories:** `"news"`, `"research paper"`, `"company"`, `"github"`, `"pdf"`
 
 ### 3. Answer — Cited, Grounded Response
 

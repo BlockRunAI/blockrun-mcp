@@ -51,7 +51,7 @@ Common paths (all POST, body shapes documented in the exa-research skill):
 - find-similar — body: { url, numResults? }                                                   ($0.010 base + tx fee)
 Tx fee = the gateway's flat network fee, $0.001 today (we reserve $0.002); the 402 header carries the exact charge.
 
-Categories for search: "news", "research paper", "company", "tweet", "github", "pdf".
+Categories for search: "news", "research paper", "company", "github", "pdf". Exa does not serve X/Twitter content.
 
 Full request/response shapes + worked research workflows in the \`exa-research\` skill.`,
       annotations: TOOL_ANNOTATIONS.readOnlyOpenWorld,

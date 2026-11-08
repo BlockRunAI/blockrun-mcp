@@ -23,16 +23,18 @@ import type { BudgetState } from "../types.js";
 // sandbox/create is priced off the BODY, not the path. Mirrors
 // getModalCreatePricing() in the gateway's src/lib/modal.ts:
 //
-//   timeout <= 300s  -> flat rate: CPU $0.01, or the GPU tier below
-//   timeout >  300s  -> hourly:    rate x (timeout/3600), EXACT (not rounded up),
-//                                  charged upfront for the full requested lifetime
-//                                  with NO refund on early terminate
+//   timeout <= 300s, cpu <= 1 and memory <= 1024 MB
+//                    -> flat rate: CPU $0.01, or the GPU tier below
+//   anything else    -> hourly:    rate x (timeout/3600), EXACT (not rounded up),
+//                                  never below the flat rate, charged upfront for
+//                                  the full requested lifetime with NO refund on
+//                                  early terminate
 //
 // Estimating on the path alone reserved a flat $0.01 for every create. Verified
 // live against the payment-required header:
 //
-//   { timeout: 86400, gpu: "H100" } -> charged $192.0020   (reserved $0.012 — 16,000x short)
-//   { timeout: 3600,  gpu: "A100" } -> charged   $4.0020
+//   { timeout: 86400, gpu: "H100" } -> charged $192.0020   (reserved $0.012 — 16,000x short; old rates)
+//   { timeout: 3600,  gpu: "A100" } -> charged   $4.0020   (old rates)
 //   { timeout: 300 }                -> charged   $0.0120
 //
 // A $1 agent cap could settle $192 of non-refundable spend. Keep these tables in
@@ -54,9 +56,11 @@ const MODAL_OPERATION_PRICE_USD = 0.001;
 const MODAL_GPU_CREATE_PRICE_USD = new Map<string, number>([
   ["T4", 0.05], ["L4", 0.08], ["A10G", 0.1], ["A100", 0.2], ["H100", 0.4],
 ]);
-const MODAL_CPU_HOURLY_PRICE_USD = 0.1;
+const MODAL_FLAT_RATE_MAX_CPU = 1;
+const MODAL_FLAT_RATE_MAX_MEMORY_MB = 1024;
+const MODAL_CPU_HOURLY_PRICE_USD = 0.25;
 const MODAL_GPU_HOURLY_PRICE_USD = new Map<string, number>([
-  ["T4", 1.5], ["L4", 2.0], ["A10G", 2.5], ["A100", 4.0], ["H100", 8.0],
+  ["T4", 4.0], ["L4", 4.5], ["A10G", 5.0], ["A100", 7.0], ["H100", 9.0],
 ]);
 const MODAL_GPU_TIERS = [...MODAL_GPU_HOURLY_PRICE_USD.keys()];
 
@@ -107,13 +111,13 @@ export function estimateModalCost(path: string, body?: unknown): number {
   // a single invisible character moved the most expensive call this server can
   // make into the cheapest tier: `sandbox/cre<TAB>ate` reserved $0.003 (fetch
   // deletes the tab, so the gateway still routed and billed a real create — up
-  // to $192.00, non-refundable), and $0.003 clears every budget cap there is.
+  // to $216.00, non-refundable), and $0.003 clears every budget cap there is.
   // `%63reate` did the same via the router's own percent-decode. This is the
   // shared helper `hasPathTraversal` has always used; modal was the one price
   // table that never adopted it. See test/modal-cost.test.ts.
   if (!normalizeClassifyPath(path).includes("sandbox/create")) return withTxFee(MODAL_OPERATION_PRICE_USD);
 
-  const o = body && typeof body === "object" ? (body as { gpu?: unknown; timeout?: unknown }) : {};
+  const o = body && typeof body === "object" ? (body as { gpu?: unknown; timeout?: unknown; cpu?: unknown; memory?: unknown }) : {};
   // Trimmed, as the gateway prices it — see normalizeModalCreateBody. The
   // handler sends a body normalised the same way; this is belt-and-braces so
   // the estimator is right even for a caller that skipped the handler.
@@ -124,17 +128,23 @@ export function estimateModalCost(path: string, body?: unknown): number {
       ? o.timeout
       : MODAL_DEFAULT_CREATE_TIMEOUT_SECONDS;
 
-  if (seconds > MODAL_FLAT_RATE_MAX_SECONDS) {
+  // Size is priced too: absent means the gateway's small default. A non-number
+  // never reaches a charge, the gateway 400s it before payment.
+  const cpu = typeof o.cpu === "number" ? o.cpu : 1;
+  const memory = typeof o.memory === "number" ? o.memory : 512;
+  const flatPrice = (gpu !== undefined ? MODAL_GPU_CREATE_PRICE_USD.get(gpu) : undefined) ?? MODAL_CREATE_PRICE_USD;
+
+  if (seconds > MODAL_FLAT_RATE_MAX_SECONDS || cpu > MODAL_FLAT_RATE_MAX_CPU || memory > MODAL_FLAT_RATE_MAX_MEMORY_MB) {
     // An absent gpu is the CPU rate — same as the gateway's
     // `opts.gpu && opts.gpu in TABLE ? TABLE[gpu] : CPU_RATE`, which runs on
     // the trimmed value. An unknown gpu also falls back here, but only so the
     // estimator stays total: the handler refuses it before the reserve
     // (unsupportedModalGpu), and the gateway 400s it before payment.
     const hourly = gpu !== undefined ? MODAL_GPU_HOURLY_PRICE_USD.get(gpu) : undefined;
-    return withTxFee((hourly ?? MODAL_CPU_HOURLY_PRICE_USD) * (seconds / 3600));
+    // Floored at the flat rate, as the gateway does: large and short is not cheaper.
+    return withTxFee(Math.max(flatPrice, (hourly ?? MODAL_CPU_HOURLY_PRICE_USD) * (seconds / 3600)));
   }
-  const flat = gpu !== undefined ? MODAL_GPU_CREATE_PRICE_USD.get(gpu) : undefined;
-  return withTxFee(flat ?? MODAL_CREATE_PRICE_USD);
+  return withTxFee(flatPrice);
 }
 
 // Modal sandbox/exec is synchronous — the HTTP call stays open for the whole
@@ -162,12 +172,12 @@ export function registerModalTool(server: McpServer, budget: BudgetState): void 
 Use when you need: a clean ephemeral environment, GPU access (T4/L4/A10G/A100/H100 — those five only), or a safer place for untrusted code. Prefer local tools for normal repo work.
 
 ⚠️ \`timeout\` IS THE BILLED LIFETIME — charged upfront in full, NEVER refunded. It is not an idle timeout: you pay for the time you ASK for, not the time you use, and terminating early refunds nothing. Ask for what you need, not a safe-looking ceiling.
-- timeout ≤ 300s → flat: $0.0120 CPU · $0.0520 T4 · $0.0820 L4 · $0.1020 A10G · $0.2020 A100 · $0.4020 H100
-- timeout > 300s → PER-HOUR × the full requested lifetime: $0.10/h CPU · $1.50 T4 · $2.00 L4 · $2.50 A10G · $4.00 A100 · $8.00/h H100
-  e.g. { timeout: 600, gpu: "A100" } = $0.6687 · { timeout: 86400, gpu: "H100" } = $192.00
+- timeout ≤ 300s, cpu ≤ 1 and memory ≤ 1024 → flat: $0.0120 CPU · $0.0520 T4 · $0.0820 L4 · $0.1020 A10G · $0.2020 A100 · $0.4020 H100
+- anything longer or larger → PER-HOUR × the full requested lifetime, never below flat: $0.25/h CPU · $4.00 T4 · $4.50 L4 · $5.00 A10G · $7.00 A100 · $9.00/h H100
+  e.g. { timeout: 600, gpu: "A100" } = $1.1687 · { timeout: 300, gpu: "T4", cpu: 8 } = $0.3353 · { timeout: 86400, gpu: "H100" } = $216.00
 
 Common paths (all POST):
-- sandbox/create     — body: { image?, timeout?, cpu?, memory?, gpu?, setup_commands? }    (see above — $0.0120 to $192.00)
+- sandbox/create     — body: { image?, timeout?, cpu?, memory?, gpu?, setup_commands? }    (see above — $0.0120 to $216.00)
 - sandbox/exec       — body: { sandbox_id, command: ["python","-c","..."], timeout? }      ($0.0030)
 - sandbox/status     — body: { sandbox_id }                                                ($0.0030)
 - sandbox/terminate  — body: { sandbox_id }                                                ($0.0030)

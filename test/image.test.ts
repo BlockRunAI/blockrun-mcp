@@ -132,13 +132,14 @@ test("materializeImageUrl maps image/jpeg data URIs to a .jpg file", async () =>
 // reserve keeps the repo-wide $0.002 fee above the gateway's current $0.001,
 // so each sits one fee-gap above the charge — never below it. Pro was reserved
 // at $0.07 (0.0755) until this refresh: 41% over the live charge.
+// Pro re-probed 2026-11-05 after the gateway moved it to 2.0 at medium ($0.06).
 const IMAGE_LIVE: Array<[string, string, number]> = [
   ["openai/gpt-image-2.5-flare", "1024x1024", 0.295001],
   ["openai/gpt-image-2.5-flare", "1536x1024", 0.589001],
   ["openai/gpt-image-2.5-sunburst", "1024x1024", 0.295001],
   ["openai/gpt-image-2.5-sunburst", "1024x1536", 0.589001],
   ["xai/grok-imagine-image-2.0", "1024x1024", 0.043],
-  ["xai/grok-imagine-image-pro", "1024x1024", 0.053501],
+  ["xai/grok-imagine-image-pro", "1024x1024", 0.064],
 ];
 
 test("estimateCost covers the 2026-10-20 image rows without over-reserving", () => {

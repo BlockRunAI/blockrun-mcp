@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.55.7
+
+### Fixed — `blockrun_modal` reserves the gateway's new sandbox prices
+
+The gateways now price a create by size as well as lifetime. The flat rate needs
+300 seconds or less, at most 1 CPU and at most 1024 MB. Anything else pays the new
+hourly rates (CPU $0.25, T4 $4, L4 $4.50, A10G $5, A100 $7, H100 $9), never below
+the flat rate. The estimator, budget cap, confirm dialog, tool text and skill now
+use the same rule, so `{ gpu: "T4", cpu: 8, memory: 32768, timeout: 300 }` reserves
+$0.335 instead of $0.052. The skill's GPU example also no longer sends a custom
+image and `setup_commands`, which the gateway refuses.
+
+## 0.55.6
+
+### Fixed — agents are no longer offered Exa's retired `tweet` category
+
+Exa retired the `tweet` search category and answers 400 "no longer supported",
+but the `blockrun_exa` tool description and the `exa-research` skill still
+listed it, so agents kept picking it. Those calls fail without a charge. Both
+now drop it and say Exa does not serve X/Twitter content.
+
+## 0.55.5
+
+### Fixed — Grok Imagine Pro is reserved and booked at its new price
+
+The gateway repriced `xai/grok-imagine-image-pro` from $0.05 to $0.06 on
+2026-11-05, because xAI retired the model behind it and Pro now requests Grok
+Imagine 2.0 at medium quality. This server still reserved and booked the old
+price, so on Base each call was booked $0.0105 below the $0.064 it settled and
+budget caps ran loose on that model. The price table and the tool description
+now say $0.06.
+
 ## 0.55.4
 
 ### Fixed — native Claude calls are booked at the full max_tokens ceiling
