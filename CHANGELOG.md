@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.55.8
+
+### Fixed — Solana payments sign on the gateway's quoted blockhash
+
+Requires `@blockrun/llm` 3.26.5. When a Solana 402 quotes `extra.recentBlockhash`,
+the payment is now signed on that blockhash instead of one the SDK fetched itself.
+It is a `finalized` hash every facilitator verifier has already seen, and the Solana
+gateway applies its sandbox-create payment-window check only to payments signed on
+the hash it quoted. With no valid quote the payment is built exactly as before.
+
 ## 0.55.7
 
 ### Fixed — `blockrun_modal` reserves the gateway's new sandbox prices
