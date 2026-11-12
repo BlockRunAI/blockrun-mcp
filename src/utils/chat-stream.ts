@@ -55,6 +55,12 @@ export interface ChatUsage {
  * only this field tells you (D55). `finishReason` "length" means the reply was
  * cut at max_tokens (D57). `settledUsd` is `x-blockrun-cost-usd` when the rail
  * sent it — a settled zero included — and null when it did not.
+ *
+ * `settlementTx` is the wallet rails' PROOF of payment: the transaction the
+ * response named for this call's x402 settlement (settlementTxFromHeaders),
+ * null when it named none. The SDK's spend counter is not that proof — it
+ * counts the signed amount on any paid 2xx. On a stream it is always null:
+ * the gateway sends a stream's headers before it settles.
  */
 export interface ChatOutcome {
   text: string;
@@ -62,6 +68,7 @@ export interface ChatOutcome {
   finishReason: string | null;
   usage: ChatUsage | null;
   settledUsd: number | null;
+  settlementTx: string | null;
 }
 
 /**
@@ -78,10 +85,17 @@ export interface ChatOutcome {
  */
 export class AcceptedThenFailedError extends Error {
   readonly partialText: string;
-  constructor(message: string, partialText = "", options?: { cause?: unknown }) {
+  /**
+   * The settlement transaction the accepted response named, when it named one
+   * (see ChatOutcome.settlementTx). Accepted is not settled: without this, a
+   * wallet-rail caller books the charge as a maybe, not as certain.
+   */
+  settlementTx: string | null;
+  constructor(message: string, partialText = "", options?: { cause?: unknown; settlementTx?: string | null }) {
     super(message, options);
     this.name = "AcceptedThenFailedError";
     this.partialText = partialText;
+    this.settlementTx = options?.settlementTx ?? null;
   }
 }
 
@@ -105,6 +119,59 @@ export function supportsFrameStreaming(client: ApiClient): client is FrameStream
  */
 export function settledCostFromHeaders(headers: { get(name: string): string | null } | null | undefined): number | null {
   return parseCostHeader(headers?.get("x-blockrun-cost-usd"));
+}
+
+/**
+ * The settlement transaction a paid response PROVES, or null.
+ *
+ * Proof is a receipt naming a transaction: the x402 `PAYMENT-RESPONSE`
+ * (legacy `X-PAYMENT-RESPONSE`) header, base64 JSON, with a non-empty
+ * `transaction` and no `success: false`, or the gateway's `X-Payment-Receipt`.
+ * `X-Payment-Settled: false` overrides both. Nothing else is proof:
+ *
+ * - The gateway's non-streaming route writes `success: true` with an EMPTY
+ *   transaction when its settle failed and it served anyway, and says so in
+ *   `X-Payment-Settled: false` (blockrun route.ts). Reading `success` alone
+ *   would call that paid.
+ * - A stream carries no receipt at all: its headers leave before the gateway
+ *   settles (at the first token, or after the last). On the enterprise
+ *   local-trust path the settle runs after the stream and can fail with the
+ *   answer already delivered — 2026-11-12, four zai/glm-5.3 calls from a wallet
+ *   holding $0.001 were served, none settled, and this server booked $0.104 of
+ *   them as final (`cost_is_estimate: false`), because the SDK's counter adds
+ *   the signed amount on every paid 2xx.
+ */
+export function settlementTxFromHeaders(headers: { get(name: string): string | null } | null | undefined): string | null {
+  if (typeof headers?.get !== "function") return null;
+  if ((headers.get("x-payment-settled") ?? "").trim().toLowerCase() === "false") return null;
+  const raw = headers.get("payment-response") ?? headers.get("x-payment-response");
+  if (raw) {
+    try {
+      const receipt = JSON.parse(Buffer.from(raw, "base64").toString("utf8")) as { success?: unknown; transaction?: unknown } | null;
+      if (receipt?.success === false) return null;
+      if (typeof receipt?.transaction === "string" && receipt.transaction.trim()) return receipt.transaction.trim();
+    } catch {
+      // An unreadable receipt proves nothing; fall through to X-Payment-Receipt.
+    }
+  }
+  return headers.get("x-payment-receipt")?.trim() || null;
+}
+
+/**
+ * The gateway's in-band error frame (its sseError helper): an ordinary chat
+ * chunk with `model: "error"`, an `error-<ts>` id, and the message as delta
+ * content `"\n\n[Error: …]"`. The gateway writes it when an upstream fails
+ * after the 200 and when its settle gate refuses a stream. Read as content, it
+ * came back as a SUCCESSFUL reply: "[Error: …]" as the answer, `served_model:
+ * "error"`, booked as a final charge (2026-11-12). It is a failure.
+ */
+function gatewayErrorFrameMessage(ev: { id?: unknown; model?: unknown; choices?: Array<{ delta?: { content?: unknown } }> }): string | null {
+  const marked = ev?.model === "error" || (typeof ev?.id === "string" && ev.id.startsWith("error-"));
+  if (!marked) return null;
+  const content = ev.choices?.[0]?.delta?.content;
+  const text = typeof content === "string" ? content.trim() : "";
+  const m = /^\[Error: ([\s\S]*)\]$/.exec(text);
+  return (m ? m[1] : text) || "the gateway reported an error";
 }
 
 function stallError(ms: number): AcceptedThenFailedError {
@@ -143,6 +210,7 @@ class ChatAccumulator {
 
   fold(event: unknown): void {
     const ev = event as {
+      id?: unknown;
       error?: { message?: string } | string;
       model?: unknown;
       usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
@@ -155,6 +223,10 @@ class ChatAccumulator {
     if (ev?.error) {
       const msg = typeof ev.error === "string" ? ev.error : ev.error.message ?? JSON.stringify(ev.error);
       throw new AcceptedThenFailedError(`upstream error mid-stream: ${msg}`, this.result().text);
+    }
+    const frameError = gatewayErrorFrameMessage(ev);
+    if (frameError !== null) {
+      throw new AcceptedThenFailedError(`upstream error mid-stream: ${frameError}`, this.result().text);
     }
     if (typeof ev?.model === "string" && ev.model) this.servedModel = ev.model;
     const u = ev?.usage;
@@ -171,7 +243,7 @@ class ChatAccumulator {
     if (choice?.finish_reason) this.finishReason = choice.finish_reason;
   }
 
-  result(): Omit<ChatOutcome, "settledUsd"> {
+  result(): Omit<ChatOutcome, "settledUsd" | "settlementTx"> {
     return { text: this.text || this.reasoning, finishReason: this.finishReason, servedModel: this.servedModel, usage: this.usage };
   }
 }
@@ -187,7 +259,7 @@ class ChatAccumulator {
 export async function assembleSseChatStream(
   resp: { body: ReadableStream<Uint8Array> | null },
   idleTimeoutMs = 120_000,
-): Promise<Omit<ChatOutcome, "settledUsd">> {
+): Promise<Omit<ChatOutcome, "settledUsd" | "settlementTx">> {
   if (!resp.body) throw new AcceptedThenFailedError("streaming response had no body");
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
@@ -233,7 +305,7 @@ export async function assembleChatFrames(
   frames: AsyncIterator<unknown> | AsyncIterable<unknown>,
   idleTimeoutMs = 120_000,
   acc = new ChatAccumulator(),
-): Promise<Omit<ChatOutcome, "settledUsd">> {
+): Promise<Omit<ChatOutcome, "settledUsd" | "settlementTx">> {
   const it: AsyncIterator<unknown> = Symbol.asyncIterator in (frames as object)
     ? (frames as AsyncIterable<unknown>)[Symbol.asyncIterator]()
     : (frames as AsyncIterator<unknown>);
@@ -261,7 +333,7 @@ export async function assembleChatFrames(
  * 4000 max_tokens, 125s of keepalives, 0 chars). Returning "" would be
  * indistinguishable from success; say what happened and what to change.
  */
-function rejectEmptyLength(model: string, out: Omit<ChatOutcome, "settledUsd">): void {
+function rejectEmptyLength(model: string, out: Omit<ChatOutcome, "settledUsd" | "settlementTx">): void {
   if (!out.text && out.finishReason === "length") {
     throw new AcceptedThenFailedError(
       `${model} spent the entire max_tokens budget on internal reasoning and produced no visible answer. ` +
@@ -275,13 +347,16 @@ function rejectEmptyLength(model: string, out: Omit<ChatOutcome, "settledUsd">):
  * its type: a body-read error, a JSON parse error on a non-SSE answer, the
  * assembler's own throws. Wrap it so the caller can tell it from a refusal.
  */
-async function afterAccept<T>(run: () => Promise<T>): Promise<T> {
+async function afterAccept<T>(run: () => Promise<T>, settlementTx: string | null = null): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    if (err instanceof AcceptedThenFailedError) throw err;
+    if (err instanceof AcceptedThenFailedError) {
+      err.settlementTx ??= settlementTx;
+      throw err;
+    }
     const msg = err instanceof Error ? err.message : String(err);
-    throw new AcceptedThenFailedError(msg, "", { cause: err });
+    throw new AcceptedThenFailedError(msg, "", { cause: err, settlementTx });
   }
 }
 
@@ -301,6 +376,7 @@ export async function streamChatText(
   // IS the acceptance — money has moved (wallet) or will be billed (account).
   const resp = await client.chatCompletionStream(model, messages, options);
   const settledUsd = settledCostFromHeaders(resp.headers);
+  const settlementTx = settlementTxFromHeaders(resp.headers);
   return afterAccept(async () => {
     // A provider/route that ignores `stream:true` answers with a plain JSON
     // completion. Feeding that to the SSE parser would "succeed" with an empty
@@ -312,12 +388,12 @@ export async function streamChatText(
       acc.fold(data);
       const out = acc.result();
       rejectEmptyLength(model, out);
-      return { ...out, settledUsd };
+      return { ...out, settledUsd, settlementTx };
     }
     const out = await assembleSseChatStream(resp, idleTimeoutMs);
     rejectEmptyLength(model, out);
-    return { ...out, settledUsd };
-  });
+    return { ...out, settledUsd, settlementTx };
+  }, settlementTx);
 }
 
 /**
@@ -376,17 +452,26 @@ export async function completeChat(
       if (!out.text && !out.finishReason && !out.servedModel) {
         throw new AcceptedThenFailedError(`${model}: the paid stream ended with no frames — the route answered a streaming request with a body this client could not read`);
       }
-      return { ...out, settledUsd: null };
+      // SolanaLLMClient.stream() does not expose the response headers, so a
+      // frame stream never proves its settlement here.
+      return { ...out, settledUsd: null, settlementTx: null };
     });
   }
   const r = await client.chatCompletion(model, messages as unknown as Parameters<ApiClient["chatCompletion"]>[1], options);
+  // The SDK lifts the receipt off the non-streaming response into
+  // `settlement` (its readSettlement): `transaction` only when one was named,
+  // `success: false` when the receipt said so.
+  const settlement = (r as { settlement?: { transaction?: unknown; success?: unknown } }).settlement;
+  const settlementTx = settlement?.success !== false && typeof settlement?.transaction === "string" && settlement.transaction.trim()
+    ? settlement.transaction.trim()
+    : null;
   return afterAccept(async () => {
     const acc = new ChatAccumulator();
     acc.fold(r);
     const out = acc.result();
     rejectEmptyLength(model, out);
-    return { ...out, settledUsd: null };
-  });
+    return { ...out, settledUsd: null, settlementTx };
+  }, settlementTx);
 }
 
 // ---------------------------------------------------------------------------

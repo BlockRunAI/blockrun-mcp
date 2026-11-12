@@ -43,7 +43,7 @@ function message(over: Partial<Anthropic.Message> = {}): Anthropic.Message {
   } as Anthropic.Message;
 }
 
-type FakeScript = { connect: boolean; events?: number; result: Anthropic.Message | Error };
+type FakeScript = { connect: boolean; events?: number; result: Anthropic.Message | Error; headers?: Record<string, string> };
 let lastOptions: Record<string, unknown> | undefined;
 let lastParams: Record<string, unknown> | undefined;
 
@@ -61,7 +61,7 @@ function fakeClient(s: FakeScript) {
           on(ev: string, cb: (...a: unknown[]) => void) { (listeners[ev] ??= []).push(cb); return self; },
           off() { return self; },
           abort() {},
-          response: null,
+          response: s.headers ? new Response(null, { headers: s.headers }) : null,
           finalMessage: async () => {
             await Promise.resolve();
             if (s.connect) for (const cb of listeners.connect ?? []) cb();
@@ -121,14 +121,51 @@ test("a 5xx/524 with no stream connected MAY have settled — booked at the reco
   assert.doesNotMatch(res.content[0].text, /needs funding/, res.content[0].text);
 });
 
-test("a failure AFTER the stream connected is a settled call — booked, and said plainly", async () => {
+// Connected is not settled: the gateway settles a stream after its headers,
+// and its enterprise local-trust path can serve a payment that never settles
+// (2026-11-12). Without a receipt the quote is booked as a maybe.
+test("a failure AFTER the stream connected, with no settlement receipt, is booked as a maybe", async () => {
   const budget = newBudget();
   const client = fakeClient({ connect: true, events: 2, result: sdkError(undefined, "Connection error.", new Error("terminated")) });
   const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
   assert.equal(res.isError, true);
   assert.ok(budget.spent > 0, `booked ${budget.spent}`);
-  assert.match(res.content[0].text, /charge stands/, res.content[0].text);
+  assert.match(res.content[0].text, /cannot tell whether the gateway settled it/, res.content[0].text);
+  assert.doesNotMatch(res.content[0].text, /charge stands/, res.content[0].text);
   assert.match(res.content[0].text, /second charge/i, res.content[0].text);
+});
+
+test("a failure AFTER the stream connected, with a settlement receipt, says the charge stands", async () => {
+  const budget = newBudget();
+  const client = fakeClient({ connect: true, events: 2, headers: { "X-Payment-Receipt": "0xfeed" }, result: sdkError(undefined, "Connection error.", new Error("terminated")) });
+  const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
+  assert.equal(res.isError, true);
+  assert.ok(budget.spent > 0, `booked ${budget.spent}`);
+  assert.match(res.content[0].text, /charge stands/, res.content[0].text);
+});
+
+test("a native success with no settlement receipt is booked but labelled an estimate", async () => {
+  const budget = newBudget();
+  const client = fakeClient({ connect: true, events: 1, result: message() });
+  const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
+  assert.equal(res.isError, undefined, res.content[0].text);
+  const expected = anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024)!;
+  assert.ok(near(budget.spent, expected), `booked ${budget.spent}, expected ${expected}`);
+  const sc = res.structuredContent as Record<string, unknown>;
+  assert.equal(sc.cost_is_estimate, true, "no receipt, so the cost must not be called final");
+  assert.equal(sc.settlement_tx, undefined);
+  assert.match(res.content[0].text, /not confirmed as settled/, res.content[0].text);
+});
+
+test("a native success whose response names its settlement is final", async () => {
+  const budget = newBudget();
+  const receipt = Buffer.from(JSON.stringify({ success: true, transaction: "0xabc123", network: "eip155:8453" })).toString("base64");
+  const client = fakeClient({ connect: true, events: 1, headers: { "PAYMENT-RESPONSE": receipt }, result: message() });
+  const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
+  const sc = res.structuredContent as Record<string, unknown>;
+  assert.equal(sc.cost_is_estimate, false);
+  assert.equal(sc.settlement_tx, "0xabc123");
+  assert.doesNotMatch(res.content[0].text, /not confirmed as settled/, res.content[0].text);
 });
 
 test("a thinking budget above the SDK's non-streaming ceiling is sent, not refused in-process (D51)", async () => {
@@ -263,7 +300,7 @@ test("partial text streamed before a post-acceptance failure rides along on the 
   };
   const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
   assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /charge stands/);
+  assert.match(res.content[0].text, /cannot tell whether the gateway settled it/);
   assert.match(res.content[0].text, /Partial response received before the failure/);
   assert.match(res.content[0].text, /The first half of the ans/);
   assert.equal((res.structuredContent as { partial_response?: string } | undefined)?.partial_response, "The first half of the ans");

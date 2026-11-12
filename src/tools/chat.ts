@@ -324,15 +324,28 @@ async function withSettledCost<T extends ChatOutcome>(
     const d = client.getSpending().totalUsd - before;
     return Number.isFinite(d) && d >= 0 ? d : null;
   };
+  // THE COUNTER IS NOT A RECEIPT. The SDK adds the SIGNED amount the moment a
+  // paid request comes back 2xx (unless the gateway names a skipped
+  // settlement); it never learns whether the settle that follows landed. On a
+  // stream it cannot: the gateway sends the headers first and settles at the
+  // first token or after the last. Its enterprise local-trust path serves a
+  // wallet whose CDP verify failed and settles after the stream — on
+  // 2026-11-12 four zai/glm-5.3 calls from a wallet holding $0.001 were served,
+  // none settled, and every one was booked here as final. So the delta is
+  // still what the ledger books (the conservative side: a budget cap counts a
+  // maybe-charge), but it is called settled only when the response named its
+  // settlement transaction (ChatOutcome.settlementTx).
   try {
     const result = await run();
     // null = the counter could not be read: book the reserve rather than $0.
+    // A $0 delta moved nothing: a free model, or a settlement the gateway skipped.
     const d = delta();
-    return { result, settledUsd: d ?? estimateUsd, costIsEstimate: d === null };
+    return { result, settledUsd: d ?? estimateUsd, costIsEstimate: d === null || (d > 0 && result.settlementTx === null) };
   } catch (error) {
     const d = delta();
     if (d !== null && d > 0) {
-      onSettledThrow({ usd: d, certainty: "settled" });
+      const proven = error instanceof AcceptedThenFailedError && error.settlementTx !== null;
+      onSettledThrow({ usd: d, certainty: proven ? "settled" : "unknown" });
     } else if (settlementOnThrow(error, { rail: "wallet", estimateUsd }) === "unknown") {
       onSettledThrow({ usd: estimateUsd, certainty: "unknown" });
     }
@@ -378,7 +391,8 @@ function settledThenFailedText(error: unknown, booking: FailedBooking, tail: str
     what = booking.certainty === "settled"
       ? `Note: payment had already settled when this failed, so the charge stands (${usd}) and it has been recorded against your budget.`
       : `Note: the payment for this call had been signed and sent before it failed, and this process cannot tell whether the gateway settled it — ` +
-        `it may have settled after the connection dropped. The reserved ${usd} has been recorded against your budget as a precaution.`;
+        `no settlement receipt came back, and the gateway may settle after the response ends. ${usd} has been recorded against your budget as a precaution; ` +
+        `your wallet's on-chain history is the truth.`;
   }
   const partial = error instanceof AcceptedThenFailedError && error.partialText
     ? `\n\nPartial response received before the failure (${error.partialText.length.toLocaleString("en-US")} chars):\n${error.partialText}`
@@ -419,16 +433,27 @@ function servedNotes(requested: string, outcome: ChatOutcome, maxTokens: number 
   return { text, fields };
 }
 
-/** The cost line for a reply, and its structuredContent fields. */
-function costNotes(settledUsd: number, costIsEstimate: boolean): { text: string; fields: Record<string, unknown> } {
-  const fields = { cost_usd: settledUsd, cost_is_estimate: costIsEstimate };
-  // Only an ESTIMATE is worth a line in the reply: a settled wallet delta is
-  // already in action:"report", and the account rail's exact figure lives on
-  // the dashboard. Saying "~" is what keeps the CHANGELOG's promise that an
+/**
+ * The cost line for a reply, and its structuredContent fields.
+ *
+ * On the wallet rails an estimate is a SIGNED amount whose settlement the
+ * response did not prove — on a stream, every paid call (withSettledCost). It
+ * is booked against the budget all the same; the line says what it is.
+ * `settlement_tx` is the proof when there was one.
+ */
+function costNotes(settledUsd: number, costIsEstimate: boolean, settlementTx: string | null): { text: string; fields: Record<string, unknown> } {
+  const fields: Record<string, unknown> = { cost_usd: settledUsd, cost_is_estimate: costIsEstimate };
+  if (settlementTx && !costIsEstimate) fields.settlement_tx = settlementTx;
+  // Only an ESTIMATE is worth a line in the reply: a proven wallet settlement
+  // is already in action:"report", and the account rail's exact figure lives
+  // on the dashboard. Saying "~" is what keeps the CHANGELOG's promise that an
   // estimated figure never looks like a settlement.
   if (!costIsEstimate || !(settledUsd > 0)) return { text: "", fields };
   return {
-    text: `\n\n(Cost: ~$${settledUsd.toFixed(4)}, estimated${isApiKeyMode() ? " — billed to your BlockRun account at exact usage; https://user.blockrun.ai/dashboard/activity has the figure" : ""}.)`,
+    text: isApiKeyMode()
+      ? `\n\n(Cost: ~$${settledUsd.toFixed(4)}, estimated — billed to your BlockRun account at exact usage; https://user.blockrun.ai/dashboard/activity has the figure.)`
+      : `\n\n(Cost: ~$${settledUsd.toFixed(4)}, the amount signed for this call — not confirmed as settled: the response carried no settlement receipt. ` +
+        `It is counted against your budget; your wallet's on-chain history is the truth.)`,
     fields,
   };
 }
@@ -607,7 +632,7 @@ Run blockrun_models to see all available models with pricing.`,
         );
         recordActualSpend(budget, settledUsd, estimatedCost, agent_id);
         const served = servedNotes(targetModel, result, max_tokens);
-        const cost = costNotes(settledUsd, costIsEstimate);
+        const cost = costNotes(settledUsd, costIsEstimate, result.settlementTx);
         const prompt = freeTierTruncationNote(promptChars, result.servedModel ?? targetModel);
         return {
           reply: result.text,
