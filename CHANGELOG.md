@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.55.9
+
+### Changed — Seedance synced audio defaults on for every input
+
+`blockrun_video`'s `generate_audio` description: the gateway now turns synced audio
+on by default for every Seedance input (text, image, first/last frame, reference
+image, video or audio, RealFace), not only text-to-video. `false` gives a silent
+clip. The price does not depend on it.
+
 ## 0.55.8
 
 ### Fixed — Solana payments sign on the gateway's quoted blockhash
