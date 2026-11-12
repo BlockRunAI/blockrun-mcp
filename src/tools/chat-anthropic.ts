@@ -19,7 +19,7 @@ import { recordActualSpend } from "../utils/budget.js";
 import { isApiKeyMode } from "../utils/auth.js";
 import { OBSERVED_GATEWAY_TX_FEE_USD } from "../utils/tx-fee.js";
 import { CHAT_PRICE_PER_MTOKEN, GATEWAY_CHARS_PER_TOKEN_OBSERVED } from "../utils/constants.js";
-import { AcceptedThenFailedError, settlementOnThrow, settledCostFromHeaders } from "../utils/chat-stream.js";
+import { AcceptedThenFailedError, settlementOnThrow, settledCostFromHeaders, settlementTxFromHeaders } from "../utils/chat-stream.js";
 import type { BudgetState } from "../types.js";
 
 /**
@@ -216,7 +216,7 @@ async function streamNativeMessage(
   client: AnthropicLike,
   params: Anthropic.MessageStreamParams,
   idleTimeoutMs = NATIVE_IDLE_TIMEOUT_MS,
-): Promise<{ message: Anthropic.Message; costHeaderUsd: number | null }> {
+): Promise<{ message: Anthropic.Message; costHeaderUsd: number | null; settlementTx: string | null }> {
   // The @blockrun/llm proxy wraps every messages.* call in an async function,
   // so the MessageStream arrives behind a promise; the SDK returns it directly.
   const stream = await client.messages.stream(params, { maxRetries: 0 });
@@ -250,11 +250,21 @@ async function streamNativeMessage(
   armIdle();
   try {
     const message = await Promise.race([stream.finalMessage(), stall]);
-    return { message, costHeaderUsd: settledCostFromHeaders(stream.response?.headers) };
+    return {
+      message,
+      costHeaderUsd: settledCostFromHeaders(stream.response?.headers),
+      // Proof of settlement on the wallet rail, when the response carried one
+      // (see settlementTxFromHeaders); a stream's headers normally do not.
+      settlementTx: settlementTxFromHeaders(stream.response?.headers),
+    };
   } catch (error) {
-    if (error instanceof AcceptedThenFailedError) throw error;
+    const settlementTx = settlementTxFromHeaders(stream.response?.headers);
+    if (error instanceof AcceptedThenFailedError) {
+      error.settlementTx ??= settlementTx;
+      throw error;
+    }
     if (accepted) {
-      throw new AcceptedThenFailedError(error instanceof Error ? error.message : String(error), partialText, { cause: error });
+      throw new AcceptedThenFailedError(error instanceof Error ? error.message : String(error), partialText, { cause: error, settlementTx });
     }
     throw error;
   } finally {
@@ -278,7 +288,8 @@ function nativeFailedText(error: unknown, usd: number, certainty: "settled" | "u
     : certainty === "settled"
       ? `Note: payment had already settled when this failed, so the charge stands (~${amount}, the reconstructed quote) and it has been recorded against your budget.`
       : `Note: the payment for this call had been signed and sent before it failed, and this process cannot tell whether the gateway settled it — ` +
-        `it may have settled after the connection dropped. The reconstructed quote (${amount}) has been recorded against your budget as a precaution.`;
+        `no settlement receipt came back, and the gateway may settle after the response ends. The reconstructed quote (${amount}) has been recorded ` +
+        `against your budget as a precaution; your wallet's on-chain history is the truth.`;
   return `${formatError(extractErrorMessage(error))}\n\n${what} Retrying will incur a second charge — check blockrun_wallet action:"report" first.`;
 }
 
@@ -465,8 +476,9 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
 
   let native: Anthropic.Message;
   let costHeaderUsd: number | null;
+  let settlementTx: string | null;
   try {
-    ({ message: native, costHeaderUsd } = await streamNativeMessage(client, params, args.idleTimeoutMs));
+    ({ message: native, costHeaderUsd, settlementTx } = await streamNativeMessage(client, params, args.idleTimeoutMs));
   } catch (error) {
     // Until audit round 3 this returned formatError and booked nothing, on
     // both rails — the settled-then-failed machinery the OpenAI-compat paths
@@ -476,7 +488,14 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
     // stream connected (the gateway's own refusal, or the SDK's) and a
     // payment the wallet could not make are not money; a failure after the
     // 2xx is; an origin that never answered may be.
-    const verdict = settlementOnThrow(error, { rail: isApiKeyMode() ? "account" : "wallet", estimateUsd: estimatedCost, transparentPayment: true });
+    const classified = settlementOnThrow(error, { rail: isApiKeyMode() ? "account" : "wallet", estimateUsd: estimatedCost, transparentPayment: true });
+    // On the wallet rail, accepted is not settled: the gateway settles a
+    // stream after its headers, and its enterprise local-trust path can serve
+    // a payment that never settles. "The charge stands" needs a receipt.
+    const verdict = classified === "settled" && !isApiKeyMode() &&
+      !(error instanceof AcceptedThenFailedError && error.settlementTx !== null)
+      ? "unknown"
+      : classified;
     if (verdict === "none") {
       return { content: [{ type: "text", text: formatError(extractErrorMessage(error)) }], isError: true };
     }
@@ -500,10 +519,17 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
   const bookedUsd = isApiKeyMode()
     ? (costHeaderUsd ?? anthropicAccountLedgerUsd(native.model, anthropicPromptChars, effectiveMax, native.usage))
     : anthropicCallCost(native.model, anthropicPromptChars, effectiveMax);
-  const costIsEstimate = isApiKeyMode() && costHeaderUsd === null;
+  // The wallet rail's figure is the quote, booked whether or not it settled
+  // (the conservative side for a budget cap) — but called final only when the
+  // response named its settlement transaction. A stream's headers leave before
+  // the gateway settles, so on the wallet rail this is normally an estimate.
+  const costIsEstimate = isApiKeyMode() ? costHeaderUsd === null : settlementTx === null;
   recordActualSpend(budget, bookedUsd, estimatedCost, agentId);
   const costLine = costIsEstimate && bookedUsd !== null && bookedUsd > 0
-    ? `\n\n(Cost: ~$${bookedUsd.toFixed(4)}, estimated — billed to your BlockRun account at exact usage; https://user.blockrun.ai/dashboard/activity has the figure.)`
+    ? isApiKeyMode()
+      ? `\n\n(Cost: ~$${bookedUsd.toFixed(4)}, estimated — billed to your BlockRun account at exact usage; https://user.blockrun.ai/dashboard/activity has the figure.)`
+      : `\n\n(Cost: ~$${bookedUsd.toFixed(4)}, the reconstructed quote signed for this call — not confirmed as settled: the response carried no settlement receipt. ` +
+        `It is counted against your budget; your wallet's on-chain history is the truth.)`
     : "";
 
   const thinkingBlocks = native.content.filter(isThinkingBlock);
@@ -555,6 +581,7 @@ export async function handleAnthropicNative(args: AnthropicNativeArgs): Promise<
       usage: native.usage,
       cost_usd: bookedUsd ?? estimatedCost,
       cost_is_estimate: costIsEstimate || bookedUsd === null,
+      ...(!isApiKeyMode() && settlementTx ? { settlement_tx: settlementTx } : {}),
       native,
     },
   };

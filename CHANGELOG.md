@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.55.10
+
+### Fixed — chat costs are final only when the response proves a settlement
+
+`blockrun_chat` on a wallet reported every paid call as a final cost
+(`cost_is_estimate: false`). The figure came from the SDK's spend counter, which
+adds the signed amount whenever a paid request comes back 2xx. That is not proof
+the payment settled. The gateway settles a stream after its headers are sent,
+and on its enterprise local-trust path it can serve a call whose settlement then
+fails. On 2026-11-12 four `zai/glm-5.3` calls from a wallet holding $0.001 were
+served and none settled, yet this server reported $0.104 as final.
+
+- A paid call is now final only when the response names its settlement
+  transaction (`PAYMENT-RESPONSE` with a transaction, or `X-Payment-Receipt`,
+  and no `X-Payment-Settled: false`). That transaction is returned as
+  `settlement_tx`.
+- Without that proof, `cost_is_estimate` is `true` and the reply says the amount
+  was signed but not confirmed as settled. Streamed calls carry no receipt, so
+  this is the usual case for paid chat.
+- Budget caps and delegated agent limits still count the signed amount, so
+  enforcement stays conservative.
+- A paid call that fails without a receipt is booked as a possible charge
+  ("cannot tell whether the gateway settled it"), not "the charge stands".
+  Either way, no other model is tried and you are told not to retry.
+- The gateway's in-band error frame (`model: "error"`, `[Error: …]` content) is
+  now treated as a failure. Before, it came back as a successful reply with
+  `served_model: "error"` and a final cost.
+- The native Claude path (`thinking`) uses the same rule.
+
 ## 0.55.9
 
 ### Changed — Seedance synced audio defaults on for every input

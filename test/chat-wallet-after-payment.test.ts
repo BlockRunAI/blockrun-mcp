@@ -27,8 +27,10 @@ import assert from "node:assert/strict";
 import type { BudgetState } from "../src/types.js";
 import { MODEL_TIERS } from "../src/utils/constants.js";
 
-type Fail = false | "unpaid-400" | "after-payment-524" | "after-payment-400" | "abort" | "midstream";
-type Attempt = { settleUsd: number; fail: Fail; served?: string; finish?: string; text?: string };
+type Fail = false | "unpaid-400" | "after-payment-524" | "after-payment-400" | "abort" | "midstream" | "error-frame" | "error-frame-after-text";
+// `receipt`: headers the paid response carries (Base only — SolanaLLMClient's
+// frame stream exposes none). The real gateway sends none on a stream.
+type Attempt = { settleUsd: number; fail: Fail; served?: string; finish?: string; text?: string; receipt?: Record<string, string> };
 let script: Map<string, Attempt>;
 let attempts: string[];
 let chain: "base" | "solana" = "solana";
@@ -52,8 +54,14 @@ function paidRetry(model: string, total: { usd: number }): { a: Attempt; frames:
   // A 200: the SDK counts the settlement before the body is read.
   total.usd += a.settleUsd;
   const served = a.served ?? model;
+  // The gateway's sseError frame, verbatim in shape (blockrun src/lib/ai-stream.ts).
+  const errorFrame = { id: "error-1762905600000", object: "chat.completion.chunk", created: 1762905600, model: "error", choices: [{ index: 0, delta: { content: "\n\n[Error: The upstream provider failed before completing the response.]" }, finish_reason: "stop" }] };
   const frames: unknown[] = a.fail === "midstream"
     ? [{ model: served, choices: [{ delta: { content: "partial " } }] }, { error: { message: "upstream exploded" } }]
+    : a.fail === "error-frame"
+    ? [errorFrame]
+    : a.fail === "error-frame-after-text"
+    ? [{ model: served, choices: [{ delta: { content: "partial " } }] }, errorFrame]
     : [
         { model: served, choices: [{ delta: { content: a.text ?? `reply from ${model}` }, finish_reason: null }] },
         { model: served, choices: [{ delta: {}, finish_reason: a.finish ?? "stop" }] },
@@ -90,11 +98,11 @@ function makeBaseFake() {
       return { model: a.served ?? model, choices: [{ message: { content: a.text ?? `reply from ${model}` }, finish_reason: a.finish ?? "stop" }] };
     },
     chatCompletionStream: async (model: string) => {
-      const { frames } = paidRetry(model, total);
+      const { a, frames } = paidRetry(model, total);
       const lines = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).concat("data: [DONE]\n\n");
       return new Response(
         new ReadableStream<Uint8Array>({ start(c) { for (const l of lines) c.enqueue(enc.encode(l)); c.close(); } }),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
+        { status: 200, headers: { "content-type": "text/event-stream", ...(a.receipt ?? {}) } },
       );
     },
   };
@@ -216,7 +224,7 @@ for (const c of ["solana", "base"] as const) {
     assert.equal(budget.spent, 0);
   });
 
-  test(`${c}: a stream that settled and then died books the counter's delta and keeps the partial text`, async () => {
+  test(`${c}: a paid stream that died, with no settlement receipt, books the counter's delta as a maybe and keeps the partial text`, async () => {
     chain = c;
     script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0412, fail: "midstream" }]]);
     attempts = [];
@@ -226,9 +234,68 @@ for (const c of ["solana", "base"] as const) {
 
     assert.equal(res.isError, true);
     assert.ok(near(budget.spent, 0.0412), `booked ${budget.spent}`);
-    assert.match(res.content[0].text, /charge stands \(\$0\.041200\)/, res.content[0].text);
+    assert.match(res.content[0].text, /cannot tell whether the gateway settled it/, res.content[0].text);
+    assert.match(res.content[0].text, /\$0\.041200 has been recorded against your budget as a precaution/, res.content[0].text);
+    assert.doesNotMatch(res.content[0].text, /charge stands/, res.content[0].text);
     assert.match(res.content[0].text, /partial /, "the paid partial text must be surfaced");
     assert.equal(res.structuredContent?.partial_response, "partial ");
+  });
+
+  // 2026-11-12: a wallet holding $0.001 was served four zai/glm-5.3 calls on
+  // the gateway's enterprise local-trust path; none settled, and every one was
+  // reported cost_is_estimate:false. A paid stream carries no settlement
+  // receipt (the gateway settles after the headers), so its cost is booked —
+  // the budget counts a maybe-charge — but never called final.
+  test(`${c}: a paid stream with no settlement receipt is booked but labelled an estimate`, async () => {
+    chain = c;
+    script = new Map([["zai/glm-5.3", { settleUsd: 0.026, fail: false, text: "glm answer" }]]);
+    attempts = [];
+    const { budget, call } = makeHarness();
+
+    const res = await call({ message: "hi", model: "zai/glm-5.3", max_tokens: 1024, temperature: 1 });
+
+    assert.equal(res.isError, undefined, res.content[0].text);
+    assert.ok(near(budget.spent, 0.026), `the budget still counts it; booked ${budget.spent}`);
+    assert.equal(res.structuredContent?.cost_usd, 0.026);
+    assert.equal(res.structuredContent?.cost_is_estimate, true, "nothing proved a settlement");
+    assert.equal(res.structuredContent?.settlement_tx, undefined);
+    assert.match(res.content[0].text, /not confirmed as settled/, res.content[0].text);
+  });
+
+  // The gateway's in-band error frame (model:"error", "[Error: …]" content)
+  // used to be read as the answer: served_model "error", a success, a final cost.
+  test(`${c}: the gateway's error frame is a failure, booked as a maybe, never a final cost`, async () => {
+    chain = c;
+    script = new Map([
+      ["deepseek/deepseek-v4-pro", { settleUsd: 0.04443, fail: "error-frame" }],
+      ["qwen/qwen3.7-flash", { settleUsd: 0.0031, fail: false }],
+    ]);
+    attempts = [];
+    const { budget, call } = makeHarness();
+
+    const res = await call({ message: "hi", mode: "cheap", max_tokens: 1024, temperature: 1 });
+
+    assert.equal(res.isError, true, res.content[0].text);
+    assert.deepEqual(attempts, ["deepseek/deepseek-v4-pro"], "a payment that may have settled must not be followed by a second one");
+    assert.notEqual(res.structuredContent?.served_model, "error");
+    assert.equal(res.structuredContent?.cost_is_estimate, undefined, "a failure reports no final cost");
+    assert.ok(near(budget.spent, 0.04443), `booked as a precaution; got ${budget.spent}`);
+    assert.match(res.content[0].text, /upstream provider failed/, res.content[0].text);
+    assert.match(res.content[0].text, /cannot tell whether the gateway settled it/, res.content[0].text);
+    assert.doesNotMatch(res.content[0].text, /charge stands/, res.content[0].text);
+  });
+
+  test(`${c}: an error frame after some text keeps the partial text`, async () => {
+    chain = c;
+    script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0412, fail: "error-frame-after-text" }]]);
+    attempts = [];
+    const { call } = makeHarness();
+
+    const res = await call({ message: "hi", model: "openai/gpt-5.6-terra", max_tokens: 1024, temperature: 1 });
+
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent?.partial_response, "partial ");
+    assert.doesNotMatch(String(res.structuredContent?.partial_response), /\[Error:/);
   });
 
   test(`${c}: a paid call that streams to completion books the settled delta once and reports what served`, async () => {
@@ -248,6 +315,50 @@ for (const c of ["solana", "base"] as const) {
     assert.equal(res.structuredContent?.finish_reason, "stop");
   });
 }
+
+test("base: a paid stream whose response names its settlement transaction is final", async () => {
+  chain = "base";
+  const receipt = Buffer.from(JSON.stringify({ success: true, transaction: "0xabc123", network: "eip155:8453" })).toString("base64");
+  script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0217, fail: false, text: "done", receipt: { "PAYMENT-RESPONSE": receipt } }]]);
+  attempts = [];
+  const { budget, call } = makeHarness();
+
+  const res = await call({ message: "hi", model: "openai/gpt-5.6-terra", max_tokens: 1024, temperature: 1 });
+
+  assert.equal(res.isError, undefined, res.content[0].text);
+  assert.ok(near(budget.spent, 0.0217), `booked ${budget.spent}`);
+  assert.equal(res.structuredContent?.cost_is_estimate, false);
+  assert.equal(res.structuredContent?.settlement_tx, "0xabc123");
+  assert.doesNotMatch(res.content[0].text, /not confirmed as settled/, res.content[0].text);
+});
+
+test("base: a receipt the gateway marks unsettled is not proof", async () => {
+  // The gateway's non-streaming route writes success:true with an EMPTY
+  // transaction plus X-Payment-Settled: false when its settle failed and it
+  // served anyway.
+  chain = "base";
+  const receipt = Buffer.from(JSON.stringify({ success: true, transaction: "", network: "eip155:8453" })).toString("base64");
+  script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0217, fail: false, text: "done", receipt: { "PAYMENT-RESPONSE": receipt, "X-Payment-Settled": "false" } }]]);
+  attempts = [];
+  const { call } = makeHarness();
+
+  const res = await call({ message: "hi", model: "openai/gpt-5.6-terra", max_tokens: 1024, temperature: 1 });
+
+  assert.equal(res.structuredContent?.cost_is_estimate, true);
+});
+
+test("base: a paid stream that died with a settlement receipt says the charge stands", async () => {
+  chain = "base";
+  script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0412, fail: "midstream", receipt: { "X-Payment-Receipt": "0xfeed" } }]]);
+  attempts = [];
+  const { budget, call } = makeHarness();
+
+  const res = await call({ message: "hi", model: "openai/gpt-5.6-terra", max_tokens: 1024, temperature: 1 });
+
+  assert.equal(res.isError, true);
+  assert.ok(near(budget.spent, 0.0412), `booked ${budget.spent}`);
+  assert.match(res.content[0].text, /charge stands \(\$0\.041200\)/, res.content[0].text);
+});
 
 test("D55: an aliased id is reported under the id that actually answered", async () => {
   chain = "solana";

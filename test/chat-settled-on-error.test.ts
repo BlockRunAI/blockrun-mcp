@@ -73,6 +73,11 @@ function makeHarness(limit = 100) {
   return { budget, call: (args: Record<string, unknown>) => handler!(args) };
 }
 
+// Since 0.55.10 the counter is not proof of settlement: the SDK adds the
+// signed amount on any paid 2xx, and the gateway can serve a call it then
+// fails to settle (its enterprise local-trust path, 2026-11-12). A failure with
+// no settlement receipt is booked at the delta as a MAYBE — same ledger entry,
+// same "do not retry", but the text no longer says the charge stands.
 test("a settled-then-failed chat is BOOKED, not silently forgotten", async () => {
   script = new Map([["openai/gpt-5.6-terra", { settleUsd: 0.0412, fail: true }]]);
   attempts = [];
@@ -91,7 +96,9 @@ test("a settled-then-failed chat is BOOKED, not silently forgotten", async () =>
   // text on this path was a bare "Error: stream failed…" — indistinguishable from
   // a free failure, so the obvious next step (retry) settled a second payment.
   // The routing loop has said this since 0.40.1; the two direct paths never did.
-  assert.match(res.content[0].text, /charge stands \(\$0\.041200\)/, res.content[0].text);
+  assert.match(res.content[0].text, /cannot tell whether the gateway settled it/, res.content[0].text);
+  assert.match(res.content[0].text, /\$0\.041200 has been recorded against your budget as a precaution/, res.content[0].text);
+  assert.doesNotMatch(res.content[0].text, /charge stands/, "no receipt came back, so the charge is not certain");
   assert.match(res.content[0].text, /second charge/i, res.content[0].text);
   // The note says "payment". Fed to formatError's keyword classifier that reads
   // as an empty wallet — "needs funding" is the exact wrong advice for a call
@@ -113,7 +120,7 @@ test("a multi-turn chat that settled and then failed says so too", async () => {
   });
 
   assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /charge stands \(\$0\.030800\)/, res.content[0].text);
+  assert.match(res.content[0].text, /\$0\.030800 has been recorded against your budget as a precaution/, res.content[0].text);
   assert.doesNotMatch(res.content[0].text, /needs funding/, res.content[0].text);
   assert.ok(Math.abs(budget.spent - 0.0308) < 1e-9, `booked ${budget.spent}`);
 });
@@ -153,7 +160,7 @@ test("the routing loop stops after a payment settles — one reservation, one ch
     "once a payment has settled the loop must stop — retrying charges the caller twice for one tool call",
   );
   assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /charge stands \(\$0\.021700\)/, res.content[0].text);
+  assert.match(res.content[0].text, /\$0\.021700 has been recorded against your budget as a precaution/, res.content[0].text);
   assert.match(res.content[0].text, /No fallback model was tried/, res.content[0].text);
   // Same classifier trap as the direct paths: this note used to end in "your
   // wallet needs funding" because formatError saw the word "payment" in it.
