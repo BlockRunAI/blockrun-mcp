@@ -421,6 +421,9 @@ function servedNotes(requested: string, outcome: ChatOutcome, maxTokens: number 
   let text = "";
   const served = outcome.servedModel;
   if (served) fields.served_model = served;
+  // Which UPSTREAM answered (e.g. alpha.sh vs api.z.ai for zai/glm-5.3), from
+  // the gateway's x-blockrun-served-by. Only the Response paths carry headers.
+  if (outcome.servedBy) fields.served_by = outcome.servedBy;
   if (served && canonicalChatModel(served) !== canonicalChatModel(requested)) {
     text += `\n\n(Served by ${served} — the gateway answered the requested id ${requested} with this model instead: retired, aliased, or at capacity.)`;
   }
@@ -467,9 +470,9 @@ export function registerChatTool(server: McpServer, budget: BudgetState): void {
 Notable modes:
 - mode:"powerful" → Claude Opus 5, Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
 - mode:"reasoning" → Claude Opus 5, GPT-5.6-sol, Kimi K3, Grok 4.3, deepseek-v4-pro
-- mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
+- mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.3
 - mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Gemini 2.5 Flash, DeepSeek Chat / V4.1 Flash
-- mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
+- mode:"glm" → Zhipu GLM-5.3 (served via Alpha.sh), then GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
 - mode:"free" → free models (no cost)
 
 Pick directly: model:"anthropic/claude-opus-5.5", model:"openai/gpt-6-sol", model:"xai/grok-4.7", model:"moonshot/kimi-k3", model:"nvidia/gpt-oss-120b" (free).

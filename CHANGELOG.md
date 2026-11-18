@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.55.11
+
+### Fixed — GLM goes through Alpha.sh, and a reply cut off mid-reasoning is no longer passed off as the answer
+
+- `mode:"glm"` now starts at `zai/glm-5.3`, the GLM that every gateway serves
+  through Alpha.sh first (Z.ai direct is the rescue leg). The list used to be
+  glm-5 / 5.2 / 5.1 / 5-Turbo, none of which Alpha carries, so `mode:"glm"`
+  never reached Alpha. `mode:"coding"` uses glm-5.3 in place of glm-5.2. Same
+  $1.4/$4.4 price, so no budget reserve moves.
+- When a reasoning model spends the whole `max_tokens` budget thinking and emits
+  no content, `blockrun_chat` used to return that reasoning as the reply. A
+  half-finished analysis read as the model's verdict (seen with `zai/glm-5.3`,
+  twice), and the "spent the entire max_tokens budget on internal reasoning"
+  diagnosis never fired. It now fires. A reasoning-only reply that finished
+  normally still comes back as before.
+- Replies carry `served_by`, the upstream the gateway names in
+  `x-blockrun-served-by` (e.g. `alpha.sh`), on the paths where response headers
+  reach the client and the gateway sends it.
+
 ## 0.55.10
 
 ### Fixed — chat costs are final only when the response proves a settlement

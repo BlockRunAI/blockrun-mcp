@@ -305,3 +305,53 @@ test("Solana frame path: a stream that ends with no frames is a post-acceptance 
     (err: Error) => err instanceof AcceptedThenFailedError && /no frames/.test(err.message),
   );
 });
+
+// zai/glm-5.3, 2026-11-17: the model spent max_tokens reasoning and never
+// produced content. The reasoning fallback handed that unfinished analysis back
+// as the reply, so a caller read thinking as a verdict, and the max_tokens
+// diagnosis never fired because text was non-empty.
+test("reasoning cut off at max_tokens is not passed off as the answer", async () => {
+  const { streamChatText } = await import("../src/utils/chat-stream.js");
+  const sse = [
+    `data: ${JSON.stringify({ model: "zai/glm-5.3", choices: [{ delta: { reasoning_content: "Let me carefully analyze…" } }] })}\n\n`,
+    `data: ${JSON.stringify({ model: "zai/glm-5.3", choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`,
+    "data: [DONE]\n\n",
+  ];
+  const fakeClient = {
+    chatCompletionStream: async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        start(c) { for (const s of sse) c.enqueue(enc.encode(s)); c.close(); },
+      }), { headers: { "content-type": "text/event-stream" } }),
+  };
+  await assert.rejects(
+    streamChatText(fakeClient as never, "zai/glm-5.3", [{ role: "user", content: "review" }], {}),
+    /entire max_tokens budget on internal reasoning/,
+  );
+});
+
+test("reasoning-only reply that finished normally still comes back", async () => {
+  const out = await assembleSseChatStream(bodyFrom([
+    chunk({ choices: [{ delta: { reasoning_content: "the answer, in reasoning" } }] }),
+    chunk({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+  ]));
+  assert.equal(out.text, "the answer, in reasoning");
+});
+
+// Which upstream answered: the gateway names it in x-blockrun-served-by. For
+// zai/glm-5.3 that is how a caller tells Alpha.sh from the Z.ai rescue leg.
+test("x-blockrun-served-by is surfaced as servedBy", async () => {
+  const { streamChatText } = await import("../src/utils/chat-stream.js");
+  const mk = (headers: Record<string, string>) => ({
+    chatCompletionStream: async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(enc.encode(`data: ${JSON.stringify({ model: "zai/glm-5.3", choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })}\n\n`));
+          c.close();
+        },
+      }), { headers: { "content-type": "text/event-stream", ...headers } }),
+  });
+  const viaAlpha = await streamChatText(mk({ "x-blockrun-served-by": "alpha.sh" }) as never, "zai/glm-5.3", [{ role: "user", content: "hi" }], {});
+  assert.equal(viaAlpha.servedBy, "alpha.sh");
+  const none = await streamChatText(mk({}) as never, "zai/glm-5.3", [{ role: "user", content: "hi" }], {});
+  assert.equal(none.servedBy, null);
+});

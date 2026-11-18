@@ -584,3 +584,12 @@ test("deepseek-v4.1-flash is priced like deepseek-chat and follows it in fast an
     estimateChatCost(1024, undefined, "deepseek/deepseek-chat", undefined, 100_000),
   );
 });
+
+// GLM goes through Alpha.sh, and zai/glm-5.3 is the only SKU the gateway maps
+// there (blockrun ALPHA_MODEL_MAP). mode:"glm" used to start at glm-5 and never
+// listed 5.3, so it could not reach Alpha at all.
+test('mode:"glm" and mode:"coding" use zai/glm-5.3, the Alpha-served GLM', () => {
+  assert.equal(MODEL_TIERS.glm[0], "zai/glm-5.3");
+  assert.ok((MODEL_TIERS.coding as readonly string[]).includes("zai/glm-5.3"));
+  assert.ok(!(MODEL_TIERS.coding as readonly string[]).includes("zai/glm-5.2"));
+});

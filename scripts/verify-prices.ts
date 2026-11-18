@@ -316,7 +316,7 @@ const PROBES: Probe[] = [
     ["reasoning", "anthropic/claude-opus-5"], // gpt-5.6-sol cut to $4/$20 2026-08-21
     ["coding", "anthropic/claude-opus-5"],
     ["fast", "google/gemini-3.5-flash"],
-    ["glm", "zai/glm-5.2"],
+    ["glm", "zai/glm-5.3"], // Alpha-served primary; same $1.4/$4.4 as glm-5.2
     ["cheap", "deepseek/deepseek-v4-pro"],
   ] as Array<[string, string]>).map(([mode, worstMember]) => {
     const message = "word ".repeat(20_000); // 100k chars

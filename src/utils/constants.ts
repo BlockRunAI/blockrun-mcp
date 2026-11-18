@@ -236,8 +236,12 @@ export const MODEL_TIERS = {
     "nvidia/gpt-oss-20b", "nvidia/nemotron-3-super-120b", "nvidia/llama-3.2-11b-vision",
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   ],
-  coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
-  glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
+  // GLM goes through Alpha.sh: zai/glm-5.3 is the one SKU the gateway routes
+  // there (ALPHA_MODEL_MAP in blockrun model-maps.ts, Z.ai direct as rescue).
+  // So it leads the glm tier and is coding's GLM member; the rest of the glm
+  // tier is the Z.ai-direct fallback. Same $1.4/$4.4 as glm-5.2, so no reserve moves.
+  coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.3", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
+  glm: ["zai/glm-5.3", "zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
 } as const;
 
 export type RoutingMode = keyof typeof MODEL_TIERS;

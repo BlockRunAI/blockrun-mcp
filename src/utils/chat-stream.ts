@@ -65,6 +65,8 @@ export interface ChatUsage {
 export interface ChatOutcome {
   text: string;
   servedModel: string | null;
+  /** The upstream that answered, from `x-blockrun-served-by` (e.g. "alpha.sh"); null where no headers reach us. */
+  servedBy: string | null;
   finishReason: string | null;
   usage: ChatUsage | null;
   settledUsd: number | null;
@@ -141,6 +143,15 @@ export function settledCostFromHeaders(headers: { get(name: string): string | nu
  *   them as final (`cost_is_estimate: false`), because the SDK's counter adds
  *   the signed amount on every paid 2xx.
  */
+/**
+ * The gateway's `x-blockrun-served-by`: which upstream actually answered (for
+ * zai/glm-5.3, "alpha.sh" or the Z.ai rescue leg). A name, never an id.
+ */
+export function servedByFromHeaders(headers: { get(name: string): string | null } | null | undefined): string | null {
+  if (typeof headers?.get !== "function") return null;
+  return headers.get("x-blockrun-served-by")?.trim() || null;
+}
+
 export function settlementTxFromHeaders(headers: { get(name: string): string | null } | null | undefined): string | null {
   if (typeof headers?.get !== "function") return null;
   if ((headers.get("x-payment-settled") ?? "").trim().toLowerCase() === "false") return null;
@@ -244,7 +255,13 @@ class ChatAccumulator {
   }
 
   result(): Omit<ChatOutcome, "settledUsd" | "settlementTx"> {
-    return { text: this.text || this.reasoning, finishReason: this.finishReason, servedModel: this.servedModel, usage: this.usage };
+    // Reasoning stands in only for a reply that FINISHED without content. Cut
+    // at max_tokens with no content, it is thinking that never reached an
+    // answer: returning it as the reply passed a half-finished analysis off as
+    // the model's verdict (zai/glm-5.3, 2026-11-17, twice) and skipped the
+    // max_tokens diagnosis in rejectEmptyLength. Leave text empty so it fires.
+    const text = this.text || (this.finishReason === "length" ? "" : this.reasoning);
+    return { text, finishReason: this.finishReason, servedModel: this.servedModel, servedBy: null, usage: this.usage };
   }
 }
 
@@ -377,6 +394,7 @@ export async function streamChatText(
   const resp = await client.chatCompletionStream(model, messages, options);
   const settledUsd = settledCostFromHeaders(resp.headers);
   const settlementTx = settlementTxFromHeaders(resp.headers);
+  const servedBy = servedByFromHeaders(resp.headers);
   return afterAccept(async () => {
     // A provider/route that ignores `stream:true` answers with a plain JSON
     // completion. Feeding that to the SSE parser would "succeed" with an empty
@@ -388,11 +406,11 @@ export async function streamChatText(
       acc.fold(data);
       const out = acc.result();
       rejectEmptyLength(model, out);
-      return { ...out, settledUsd, settlementTx };
+      return { ...out, servedBy, settledUsd, settlementTx };
     }
     const out = await assembleSseChatStream(resp, idleTimeoutMs);
     rejectEmptyLength(model, out);
-    return { ...out, settledUsd, settlementTx };
+    return { ...out, servedBy, settledUsd, settlementTx };
   }, settlementTx);
 }
 
