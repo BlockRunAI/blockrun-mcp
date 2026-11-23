@@ -178,16 +178,33 @@ test("budget records the same amount that is reported to the user", async () => 
 });
 
 // The large-size tier was a single >1024 rule for every model, which is wrong for
-// nano-banana-pro: probed live, it charges $0.107001 at BOTH 1024x1024 and
-// 2048x2048 and only steps to $0.159500 at 4096x4096. A 2048 render therefore
-// reserved AND booked the 4096 price (49% over), and on the Base path the
+// nano-banana-pro: probed live, it charges the same at BOTH 1024x1024 and
+// 2048x2048 and only steps up at 4096x4096. A 2048 render therefore reserved
+// AND booked the 4096 price (49% over at the time), and on the Base path the
 // estimate is written to the ledger verbatim as settled spend.
 test("nano-banana-pro stays on the base price through 2048 and steps only at 4096", () => {
   const base = estimateCost("google/nano-banana-pro", "1024x1024");
   assert.equal(estimateCost("google/nano-banana-pro", "2048x2048"), base, "2048 must not be billed at the 4096 tier");
   assert.ok(estimateCost("google/nano-banana-pro", "4096x4096") > base, "4096 must step up");
-  assert.equal(estimateCost("google/nano-banana-pro", "4096x4096"), 0.1595); // live quote
-  assert.equal(base, 0.107001);                                             // live quote
+});
+
+// Repriced on the gateway: 4K $0.15 -> $0.30 (2026-11-16), 1K/2K $0.10 -> $0.17
+// (2026-11-19, blockrun fc1eef0b — Google's $120/M image output put both below
+// cost). The table kept $0.10/$0.15, so every Pro render reserved $0.107001
+// against a $0.1795 charge, and 4K $0.1595 against $0.316 (verify:prices,
+// 2026-11-23). Charges below are those live unpaid 402 quotes on Base; Solana
+// charges $0.001 less at 1K/2K and does not serve 4K. The reserve carries the
+// $0.002 reserved fee, so it sits exactly $0.001 above each (+1 micro of float
+// drift at 1K/2K, see estimateCost).
+test("nano-banana-pro reserves at least the live 1K/2K and 4K charge", () => {
+  const LIVE: Array<[string, number]> = [["1024x1024", 0.1795], ["2048x2048", 0.1795], ["4096x4096", 0.316]];
+  for (const [size, charged] of LIVE) {
+    const reserved = estimateCost("google/nano-banana-pro", size);
+    assert.ok(reserved >= charged, `${size}: reserved ${reserved} < charged ${charged}`);
+    assert.ok(reserved <= charged + 0.001 + 1e-6, `${size}: reserved ${reserved} is more than the reserved-fee cushion above ${charged}`);
+  }
+  assert.equal(estimateCost("google/nano-banana-pro", "1024x1024"), 0.180501);
+  assert.equal(estimateCost("google/nano-banana-pro", "4096x4096"), 0.317);
 });
 
 test("nano-banana-2 bills its flat 1024 price and is accepted for edits", async () => {

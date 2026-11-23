@@ -18,7 +18,7 @@ import { extractErrorMessage, formatError } from "../utils/errors.js";
 import { recordActualSpend } from "../utils/budget.js";
 import { isApiKeyMode } from "../utils/auth.js";
 import { OBSERVED_GATEWAY_TX_FEE_USD } from "../utils/tx-fee.js";
-import { CHAT_PRICE_PER_MTOKEN, GATEWAY_CHARS_PER_TOKEN_OBSERVED } from "../utils/constants.js";
+import { CHAT_PLATFORM_FEE_FACTOR, CHAT_PRICE_PER_MTOKEN, GATEWAY_CHARS_PER_TOKEN_OBSERVED } from "../utils/constants.js";
 import { AcceptedThenFailedError, settlementOnThrow, settledCostFromHeaders, settlementTxFromHeaders } from "../utils/chat-stream.js";
 import type { BudgetState } from "../types.js";
 
@@ -40,6 +40,10 @@ import type { BudgetState } from "../types.js";
  *      — the gateway's own comment on that constant).
  *   3. There is a $0.001 floor and a flat transaction fee on top, and neither
  *      appeared at all.
+ *   4. (Added 2026-11-23.) Since 2026-11-18 the token amount is multiplied by
+ *      the gateway's platform fee before the floor (CHAT_PLATFORM_FEE_PERCENT,
+ *      PF-3/PF-4 — /v1/messages included). Without it this booked ~4.5% under
+ *      every native settlement and verify:prices blamed OUTPUT_QUOTE_FACTOR.
  *
  * Net effect measured (2026-08-13, factor 0.1): a claude-opus-5 call with the
  * default max_tokens settled $0.003660 and the old path booked $0.03 for it —
@@ -47,17 +51,17 @@ import type { BudgetState } from "../types.js";
  * allowance.
  *
  * The formula below is the gateway's, mirrored. Verified against live unpaid 402
- * quotes (exact scheme) on /v1/messages, 2026-11-03, factor 1 (blockrun#954) —
- * accurate to +0.2% across a 100x span of prompt sizes and both price tiers,
- * erring high (+0.6% on the smallest opus quote, where the fixed envelope
- * overhead is a larger share):
+ * quotes (exact scheme) on /v1/messages, 2026-11-23, factor 1 (blockrun#954)
+ * with the 5% platform fee — accurate to +0.2% across a 100x span of prompt
+ * sizes and both price tiers, erring high (+0.6% on the smallest opus quote,
+ * where the fixed envelope overhead is a larger share):
  *
- *   opus-5  "hi"   max_tokens 1024 -> quoted 26685    reconstructed 26705
- *   opus-5  "hi"   max_tokens 4096 -> quoted 103485   reconstructed 103505
- *   opus-5  "hi"   max_tokens  100 -> quoted 3585     reconstructed 3605
- *   opus-5   10k   max_tokens 1024 -> quoted 50680    reconstructed 50740
- *   opus-5  100k   max_tokens 1024 -> quoted 266680   reconstructed 267085
- *   haiku   "hi"   max_tokens 1024 -> quoted 6137     reconstructed 6141
+ *   opus-5  "hi"   max_tokens 1024 -> quoted 27970    reconstructed 27991
+ *   opus-5  "hi"   max_tokens 4096 -> quoted 108610   reconstructed 108631
+ *   opus-5  "hi"   max_tokens  100 -> quoted 3715     reconstructed 3736
+ *   opus-5   10k   max_tokens 1024 -> quoted 53164    reconstructed 53227
+ *   opus-5  100k   max_tokens 1024 -> quoted 279964   reconstructed 280390
+ *   haiku   "hi"   max_tokens 1024 -> quoted 6394     reconstructed 6399
  *   haiku   "hi"   max_tokens  100 -> quoted 2000     reconstructed 2000  (floor)
  *
  * `usage` is deliberately NOT consulted: real output tokens do not move the
@@ -128,9 +132,11 @@ export function anthropicCallCost(
   const base =
     (inputTokens / 1_000_000) * rate.input +
     ((maxTokens * OUTPUT_QUOTE_FACTOR) / 1_000_000) * rate.output;
-  // The OBSERVED fee, not the reserved one: this figure is the ledger entry, and
-  // booking $0.001 that never left the wallet would trip budget caps early.
-  const charged = Math.max(base, MIN_BASE_USD) + OBSERVED_GATEWAY_TX_FEE_USD;
+  // Platform fee on the token amount, BEFORE the floor (the gateway's PF-3).
+  // Then the OBSERVED transaction fee, not the reserved one: this figure is the
+  // ledger entry, and booking $0.001 that never left the wallet would trip
+  // budget caps early.
+  const charged = Math.max(base * CHAT_PLATFORM_FEE_FACTOR, MIN_BASE_USD) + OBSERVED_GATEWAY_TX_FEE_USD;
   return Math.ceil(charged * 1e6) / 1e6; // the gateway settles in whole micro-USDC
 }
 
@@ -141,7 +147,8 @@ export function anthropicCallCost(
  * Not anthropicCallCost: that is the x402 QUOTE the wallet rails settle —
  * output at OUTPUT_QUOTE_FACTOR x max_tokens, a $0.001 floor, the observed transaction fee —
  * and api.blockrun.ai settles none of it. It bills exact usage, base rate with
- * no fee and no floor (reconciled against the dashboard 2026-09-05). Booking
+ * no fee and no floor (reconciled against the dashboard 2026-09-05) — and no
+ * platform fee: that rail publishes `platform_fee_percent: 0` (PF-9). Booking
  * the quote formula here added $0.001 to every call on a rail that charges no
  * fee — a $1 delegate cut off at 500 haiku calls that had cost $0.50 (D58).
  *

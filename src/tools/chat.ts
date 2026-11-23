@@ -26,7 +26,10 @@ import {
   GATEWAY_CHARS_PER_TOKEN,
   GATEWAY_CHARS_PER_TOKEN_OBSERVED,
   chatRateAt,
+  chatQuoteRateAt,
   tierWorstPriceAt,
+  CHAT_PLATFORM_FEE_FACTOR,
+  reasoningAllowanceTokens,
   type RoutingMode,
 } from "../utils/constants.js";
 import { reserveBudget, recordActualSpend } from "../utils/budget.js";
@@ -150,7 +153,16 @@ export function estimateChatCost(
   // Same classifier as the dispatch, run on the canonical id, so the two agree
   // for the prefixed and the bare claude-* spelling alike.
   const thinkingOut = canonical && isAnthropicModel(canonical) ? (thinkingBudget ?? 0) : 0;
-  const out = Math.max((maxTokens ?? 1024) + thinkingOut, 256);
+  // Reasoning the gateway quotes on top of max_tokens (grok-4.7, see
+  // REASONING_OUTPUT_ALLOWANCE_TOKENS). A tier reserves its largest member's
+  // allowance: any member can be the one that settles.
+  const effectiveMode = (mode ?? "balanced") as RoutingMode;
+  const allowance = canonical
+    ? reasoningAllowanceTokens(canonical)
+    : Object.hasOwn(MODEL_TIERS, effectiveMode)
+      ? Math.max(0, ...MODEL_TIERS[effectiveMode].map((id: string) => reasoningAllowanceTokens(id)))
+      : 0;
+  const out = Math.max((maxTokens ?? 1024) + thinkingOut, 256) + allowance;
 
   // Reserve at the REAL rate of what this call can settle at — the named model's
   // own price, or the most expensive member of the tier it will route through.
@@ -183,11 +195,12 @@ export function estimateChatCost(
   // above 272K, 2x on Grok from 200K, 2x/1.5x on Gemini Pro above 200K). The
   // step is picked from the same 2-chars/token count the input term uses, so
   // this stays a pure function of prompt size — and it rounds toward the step,
-  // the safe side. See LONG_CONTEXT_PRICE_PER_MTOKEN.
-  const effectiveMode = (mode ?? "balanced") as RoutingMode;
+  // the safe side. See LONG_CONTEXT_PRICE_PER_MTOKEN. chatQuoteRateAt also
+  // raises the input rate to the cache-write rate for the GPT-6.2 pair, whose
+  // quote prices every input token as written (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN).
   const inTokens = Math.ceil((promptChars ?? 0) / GATEWAY_CHARS_PER_TOKEN);
   const rate = canonical
-    ? chatRateAt(
+    ? chatQuoteRateAt(
         canonical,
         Object.hasOwn(CHAT_PRICE_PER_MTOKEN, canonical) ? CHAT_PRICE_PER_MTOKEN[canonical] : DEFAULT_CHAT_PRICE,
         inTokens,
@@ -200,10 +213,15 @@ export function estimateChatCost(
   const inputReserve = micro((inTokens / 1_000_000) * rate.input);
   const outputReserve = micro((out / 1_000_000) * rate.output);
 
+  // The platform fee multiplies the token amount BEFORE the floor, as the
+  // gateway's quoteChatPrice does (PF-3): the table holds list rates and both
+  // wallet gateways bill list x CHAT_PLATFORM_FEE_FACTOR. Leaving it out
+  // reserved ~5% under every paid charge (see CHAT_PLATFORM_FEE_PERCENT).
+  //
   // Floor: a tiny prompt still costs the flat transaction fee, and a $0 reserve
   // would make the gate a no-op for it. withTxFee adds the fee on top — the
   // reserve must cover the CHARGE, not the base (see src/utils/tx-fee.ts).
-  return withTxFee(Math.max(inputReserve + outputReserve, 0.001));
+  return withTxFee(Math.max((inputReserve + outputReserve) * CHAT_PLATFORM_FEE_FACTOR, 0.001));
 }
 
 /**
@@ -226,8 +244,10 @@ export function estimateChatCost(
  * the token counts the stream reported when it did, else the prompt at the
  * observed chars/token and the full max_tokens (the conservative side, for a
  * failure that reported nothing). No fee, no floor: reconciled 2026-09-05, the
- * account rail charges base × margin and nothing else. Still an estimate — the
- * caller labels it as one.
+ * account rail charges base × margin and nothing else — and no platform fee
+ * either: api.blockrun.ai publishes `platform_fee_percent: 0` (PF-9), so
+ * CHAT_PLATFORM_FEE_FACTOR, which the reserve carries, stays out of this. Still
+ * an estimate — the caller labels it as one.
  */
 export function accountLedgerUsd(
   requestedModel: string,

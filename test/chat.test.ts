@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost, freeTierTruncationNote } from "../src/tools/chat.js";
 import { handleAnthropicNative, anthropicCallCost } from "../src/tools/chat-anthropic.js";
-import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, FREE_SHADOWED_BY_PAID } from "../src/utils/constants.js";
+import { MODEL_TIERS, CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, FREE_SHADOWED_BY_PAID, CHAT_PLATFORM_FEE_FACTOR } from "../src/utils/constants.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 import type { BudgetState } from "../src/types.js";
 
@@ -39,44 +39,57 @@ test("estimateChatCost keeps genuinely-free paths at $0", () => {
 // loop can fall through to any of them — so coding ($5/$25) legitimately
 // reserves less than balanced ($5/$30).
 //
-// Amounts below are live unpaid 402 quotes, last refreshed 2026-09-02, 100k-char prompt,
-// max_tokens 1024. Re-probe with `npm run verify:prices` (which now carries one
-// row per tier) rather than adjusting them to match a failing build.
+// Amounts below are live unpaid 402 quotes on Base (the dearer chain), last
+// refreshed 2026-11-23, 100k-char prompt, max_tokens 1024. Re-probe with
+// `npm run verify:prices` (which carries one row per tier) rather than
+// adjusting them to match a failing build.
+//
+// The 2026-11-23 refresh is what the 2026-09-02 figures hid: since 2026-11-18
+// both wallet gateways add a 5% platform fee to every per-token quote
+// (CHAT_PLATFORM_FEE_PERCENT), and the reserve did not, so gpt-5.4-pro
+// reserved $1.68632 against $1.70704 and claude-opus-5 $0.2776 against
+// $0.279964. The same refresh found three more shortfalls a stale table could
+// not show: gpt-6.2-astra and claude-fable-5.2 had no row (the $5/$30 default),
+// gpt-6.2-astra/-sol quote every input token at the cache-write rate, and
+// grok-4.7 is quoted 2,000 reasoning tokens past max_tokens.
 const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> = [
   // [mode, model, charged]
-  [undefined, "openai/gpt-5.4-pro", 1.460020],
-  [undefined, "openai/gpt-5.5-pro", 1.460020],
-  [undefined, "openai/gpt-5.2-pro", 1.026640],
-  [undefined, "openai/o1", 0.727420],
-  [undefined, "anthropic/claude-fable-5", 0.486310],
-  [undefined, "openai/gpt-5.6-sol", 0.195125], // cut to $4/$20 2026-08-21; re-probed 2026-10-02
-  [undefined, "anthropic/claude-opus-5", 0.243655],
-  [undefined, "openai/gpt-5.6-terra", 0.098269],
-  [undefined, "google/gemini-3.5-flash", 0.073951],
-  [undefined, "zai/glm-5", 0.049346],
-  [undefined, "deepseek/deepseek-v4-pro", 0.064790],
-  // Added 2026-10-02 (live 402, same prompt).
-  [undefined, "openai/gpt-6-astra", 0.486310],
-  [undefined, "openai/gpt-6-sol", 0.098063],
-  [undefined, "openai/gpt-6-luna", 0.005854],
-  [undefined, "openai/gpt-5.1", 0.062051],
-  [undefined, "anthropic/claude-fable-5.1", 0.486310],
-  [undefined, "anthropic/claude-opus-5.5", 0.195125],
-  [undefined, "anthropic/claude-sonnet-5.5", 0.098063],
-  [undefined, "xai/grok-4.6", 0.097650],
-  [undefined, "xai/grok-4.7", 0.097650],
+  [undefined, "openai/gpt-5.4-pro", 1.707040],
+  [undefined, "openai/gpt-5.5-pro", 1.707040],
+  [undefined, "openai/gpt-5.2-pro", 1.240387],
+  [undefined, "openai/o1", 0.821764],
+  [undefined, "anthropic/claude-fable-5", 0.558928],
+  [undefined, "openai/gpt-5.6-sol", 0.224172],
+  [undefined, "anthropic/claude-opus-5", 0.279964],
+  [undefined, "openai/gpt-5.6-terra", 0.114736],
+  [undefined, "google/gemini-3.5-flash", 0.086302],
+  [undefined, "zai/glm-5", 0.054858],
+  [undefined, "deepseek/deepseek-v4-pro", 0.071808],
+  [undefined, "openai/gpt-6-astra", 0.558928],
+  [undefined, "openai/gpt-6-sol", 0.112586],
+  [undefined, "openai/gpt-6-luna", 0.006580],
+  [undefined, "openai/gpt-5.1", 0.074773],
+  [undefined, "anthropic/claude-fable-5.1", 0.558928],
+  [undefined, "anthropic/claude-opus-5.5", 0.224172],
+  [undefined, "anthropic/claude-sonnet-5.5", 0.112586],
+  [undefined, "xai/grok-4.6", 0.108285],
+  [undefined, "xai/grok-4.7", 0.120885],          // + 2,000 reasoning tokens (Base only)
+  // Added 2026-11-23.
+  [undefined, "openai/gpt-6.2-astra", 0.548176],  // input quoted at the $10 write rate
+  [undefined, "openai/gpt-6.2-sol", 0.137794],    // input quoted at the $2.50 write rate
+  [undefined, "anthropic/claude-fable-5.2", 0.447343],
   // Tier routing: the charge is that of the member the loop settles on, so each
   // tier is pinned against its most expensive member's live quote.
-  ["powerful", undefined, 1.460020],   // gpt-5.4-pro
-  ["balanced", undefined, 0.244171],   // gpt-5.5
-  ["reasoning", undefined, 0.243655],  // opus-5
-  ["coding", undefined, 0.243655],     // claude-opus-5
-  ["fast", undefined, 0.073951],       // gemini-3.5-flash
-  ["glm", undefined, 0.049346],        // glm-5.x
-  ["cheap", undefined, 0.064790],      // deepseek-v4-pro
+  ["powerful", undefined, 1.707040],   // gpt-5.4-pro
+  ["balanced", undefined, 0.285340],   // gpt-5.5
+  ["reasoning", undefined, 0.279964],  // opus-5
+  ["coding", undefined, 0.279964],     // claude-opus-5
+  ["fast", undefined, 0.086302],       // gemini-3.5-flash
+  ["glm", undefined, 0.076315],        // glm-5.x
+  ["cheap", undefined, 0.071808],      // deepseek-v4-pro
 ];
 
-test("estimateChatCost never reserves less than the gateway charges (live 402, refreshed 2026-09-02)", () => {
+test("estimateChatCost never reserves less than the gateway charges (live 402, refreshed 2026-11-23)", () => {
   for (const [mode, model, charged] of LIVE_CHARGE_100K) {
     const reserved = estimateChatCost(1024, mode, model, undefined, 100_000);
     assert.ok(
@@ -276,16 +289,22 @@ test("omitting promptChars keeps the previous reserve (no silent inflation)", ()
 // settled amount and nothing failed.
 //
 // Expected values are live unpaid 402 quotes (exact) on /v1/messages,
-// 2026-11-03, factor 1 (blockrun#954).
+// 2026-11-23, factor 1 (blockrun#954), with the 5% platform fee the gateway has
+// added since 2026-11-18 (PF-4 covers /v1/messages). The 2026-11-03 figures
+// predated the fee; the ledger kept booking them, ~4.5% under every native
+// settlement, and verify:prices pointed at OUTPUT_QUOTE_FACTOR instead.
 test("anthropicCallCost reconstructs the gateway's quote, not Anthropic's list price", () => {
   const CASES: Array<[string, number, number, number]> = [
     // [model, promptChars, maxTokens, quoted]
-    ["claude-opus-5", 2, 1024, 0.026685],
-    ["claude-opus-5", 2, 4096, 0.103485],
-    ["claude-opus-5", 2, 100, 0.003585],
-    ["claude-opus-5", 10_000, 1024, 0.050680],
-    ["claude-opus-5", 100_000, 1024, 0.266680],
-    ["claude-haiku-4.5", 2, 1024, 0.006137],
+    ["claude-opus-5", 2, 1024, 0.027970],
+    ["claude-opus-5", 2, 4096, 0.108610],
+    ["claude-opus-5", 2, 100, 0.003715],
+    ["claude-opus-5", 10_000, 1024, 0.053164],
+    ["claude-opus-5", 100_000, 1024, 0.279964],
+    ["claude-haiku-4.5", 2, 1024, 0.006394],
+    ["claude-haiku-4.5", 2, 100, 0.002000], // the $0.001 floor + fee
+    ["claude-sonnet-5", 100_000, 1024, 0.112586],
+    ["claude-fable-5.2", 100_000, 1024, 0.447343],
   ];
   for (const [model, chars, maxTokens, quoted] of CASES) {
     const booked = anthropicCallCost(model, chars, maxTokens);
@@ -439,13 +458,14 @@ test("gpt-6-astra and claude-fable-5.1 reserve at their live $10/$50, not the $5
   // Bare spellings ride along: BARE_TO_PREFIXED is derived from the table keys.
   for (const id of ["openai/gpt-6-astra", "anthropic/claude-fable-5.1", "gpt-6-astra", "claude-fable-5.1"]) {
     const reserved = estimateChatCost(1024, undefined, id, undefined, 100_000);
-    // 100k chars at 2 chars/token = 50k input tokens at $10/M; 1024 output at $50/M.
-    assert.equal(reserved, withTxFee((50_000 / 1e6) * 10 + (1024 / 1e6) * 50), id);
+    // 100k chars at 2 chars/token = 50k input tokens at $10/M; 1024 output at
+    // $50/M; times the platform fee, as the gateway quotes it.
+    assert.equal(reserved, withTxFee(((50_000 / 1e6) * 10 + (1024 / 1e6) * 50) * CHAT_PLATFORM_FEE_FACTOR), id);
     assert.equal(reserved, fable5, `${id} shares fable-5's $10/$50 rate`);
     assert.ok(reserved > unknown, `${id} must reserve above the unknown-model default (${reserved} vs ${unknown})`);
     // fable-5's live settle for this exact call (LIVE_CHARGE_100K above): same
     // rate, same gateway formula, so the same charge has to be covered.
-    assert.ok(reserved >= 0.486310, id);
+    assert.ok(reserved >= 0.558928, id);
   }
   // And the default itself did not move: raising it would double the reserve for
   // every genuinely unknown non-pro model and lock small budgets out.
@@ -509,7 +529,7 @@ test("anthropicCallCost normalises the gateway's echo to the catalogue key and n
   // A sibling with NO row returns null — the estimate fallback — rather than
   // borrowing its major version's rate. This is the mechanism that would have
   // let claude-fable-5.1 book fable-5's row before it had one of its own.
-  for (const unlisted of ["claude-sonnet-5-1", "claude-sonnet-5.1", "claude-fable-5-2", "claude-opus-5-6-20270101", "claude-opus-5x", "claude-does-not-exist"]) {
+  for (const unlisted of ["claude-sonnet-5-1", "claude-sonnet-5.1", "claude-fable-5-9", "claude-opus-5-6-20270101", "claude-opus-5x", "claude-does-not-exist"]) {
     assert.equal(anthropicCallCost(unlisted, 100_000, 1024), null, `${unlisted} has no row and must not borrow one`);
   }
 });
@@ -528,11 +548,12 @@ test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => 
   assert.deepEqual(CHAT_PRICE_PER_MTOKEN["anthropic/claude-sonnet-5"], { input: 2, output: 10 });
   // 100k chars -> ceil(100000/2.08)+20 = 48,097 input tokens at $2/M = $0.096194;
   // 1024 max_tokens x 1 (the full ceiling, blockrun#954) = 1024 output tokens
-  // at $10/M = $0.01024; + the $0.001 observed fee, ceiled to a micro-USDC =
-  // $0.107434. Live exact quote 2026-11-03 at factor 1: $0.107272 (+0.15%).
-  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.107434);
-  // The old $3/$15 row would book $0.160651 for the same call.
-  assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.160651 * 0.7);
+  // at $10/M = $0.01024; x 1.05 platform fee = $0.1117557; + the $0.001
+  // observed fee, ceiled to a micro-USDC = $0.112756. Live exact quote
+  // 2026-11-23: $0.112586 (+0.15%).
+  assert.equal(anthropicCallCost("claude-sonnet-5", 100_000, 1024), 0.112756);
+  // The old $3/$15 row would book $0.168634 for the same call.
+  assert.ok(anthropicCallCost("claude-sonnet-5", 100_000, 1024)! < 0.168634 * 0.7);
 });
 
 // ── free[] must route ids that answer for THEMSELVES on both chains ──

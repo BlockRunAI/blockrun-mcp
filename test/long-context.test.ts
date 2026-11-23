@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { estimateChatCost, accountLedgerUsd } from "../src/tools/chat.js";
 import {
+  CHAT_PLATFORM_FEE_FACTOR,
   CHAT_PRICE_PER_MTOKEN,
   DEFAULT_CHAT_PRICE,
   GATEWAY_CHARS_PER_TOKEN,
@@ -21,11 +22,11 @@ const MAX_TOKENS = 1024;
 /** promptChars that the estimator counts as exactly `tokens` input tokens. */
 const charsFor = (tokens: number) => tokens * GATEWAY_CHARS_PER_TOKEN;
 
-/** The reserve estimateChatCost should produce at a given rate. */
+/** The reserve estimateChatCost should produce at a given rate (platform fee before the floor). */
 function reserveAt(rate: { input: number; output: number }, tokens: number): number {
   const micro = (usd: number) => Math.round(usd * 1e6) / 1e6;
   return withTxFee(
-    Math.max(micro((tokens / 1e6) * rate.input) + micro((MAX_TOKENS / 1e6) * rate.output), 0.001),
+    Math.max((micro((tokens / 1e6) * rate.input) + micro((MAX_TOKENS / 1e6) * rate.output)) * CHAT_PLATFORM_FEE_FACTOR, 0.001),
   );
 }
 
@@ -43,9 +44,11 @@ test("exclusive threshold: one token past 272K reprices the WHOLE request at 2x 
 });
 
 test("inclusive threshold: Grok is in the 2x step at exactly 200K, not at 199,999", () => {
-  const base = CHAT_PRICE_PER_MTOKEN["xai/grok-4.7"];
-  const below = estimateChatCost(MAX_TOKENS, undefined, "xai/grok-4.7", undefined, charsFor(199_999));
-  const at = estimateChatCost(MAX_TOKENS, undefined, "xai/grok-4.7", undefined, charsFor(200_000));
+  // grok-4.6, not 4.7: 4.7 also carries a reasoning allowance on the output
+  // side (chat-quote-parity.test.ts), which is not what this pins.
+  const base = CHAT_PRICE_PER_MTOKEN["xai/grok-4.6"];
+  const below = estimateChatCost(MAX_TOKENS, undefined, "xai/grok-4.6", undefined, charsFor(199_999));
+  const at = estimateChatCost(MAX_TOKENS, undefined, "xai/grok-4.6", undefined, charsFor(200_000));
   assert.equal(below, reserveAt(base, 199_999));
   assert.equal(at, reserveAt({ input: base.input * 2, output: base.output * 2 }, 200_000));
 });
