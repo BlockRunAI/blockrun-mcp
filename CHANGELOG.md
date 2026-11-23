@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.55.13
+
+### Fixed — two free models were treated as paid
+
+`nvidia/nemotron-3.5-bolt` and `nvidia/minimax-m3.1-flash` are free on
+blockrun.ai and sol.blockrun.ai, but this server reserved the paid default for
+them. Once a budget was used up, it refused calls to them. Both are now listed as
+free, so they reserve $0 and keep working with an exhausted budget. Neither
+joins the automatic free routing tier.
+
 ## 0.55.12
 
 ### Fixed — budgets reserve what the gateways now charge
