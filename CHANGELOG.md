@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.55.12
+
+### Fixed — budgets reserve what the gateways now charge
+
+Several estimates sat below the real charge, so a budget cap or delegated
+spending limit could be passed by a few percent, more on the models below.
+
+- **Chat platform fee.** blockrun.ai and sol.blockrun.ai add a 5% platform fee
+  to per-token paid chat (since 2026-11-18), on `/v1/messages` too. Chat
+  reserves and the native Claude ledger now include it. Account (API key) calls
+  stay at list price, because that rail charges no fee.
+- **New models had no price row.** GPT-6.2 Astra and Claude Fable 5.2 ($8/$40)
+  reserved the $5/$30 default. Added, with GPT-6.2 Sol, Gemini 4 Neon, Carbon
+  and Hydrogen, the Solana-only Muse and Beam models, and GPT-6.2's long-context
+  steps.
+- **GPT-6.2 input is quoted at the cache-write rate**, so its reserve uses that
+  rate.
+- **Grok 4.7** is quoted 2,000 reasoning tokens past `max_tokens`; the reserve
+  now includes them.
+- **nano-banana-pro images** cost $0.17 (1K/2K) and $0.30 (4K) now.
+
+### Fixed — the price check no longer crashes
+
+`npm run verify:prices` stopped at a catalogue row that published its
+long-context price in a different shape, so it checked nothing after that row.
+It now reports such a row as a gap and checks the rest.
+
 ## 0.55.11
 
 ### Changed — the Kimi slot routes to Kimi K3.1 Pro
