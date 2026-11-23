@@ -89,3 +89,20 @@ export function verdict(t: Tally): Verdict {
   }
   return { code: 0, lines };
 }
+
+/** One `pricing.long_context` step as a catalogue publishes it (fields unchecked). */
+export type LongContextStep = { threshold?: unknown; inclusive?: unknown; input?: unknown; output?: unknown };
+
+/**
+ * Read a catalogue row's `pricing.long_context`. The gateway contract (blockrun
+ * CAT-040/041) is a LIST of steps. Until 2026-11-23 the Decisions entry
+ * (`openai/gpt-6-luna-decisions`) published a bare `{threshold, input}` object,
+ * and iterating it with `for…of` threw and killed the whole run. A non-list is
+ * now reported as malformed — a contract breach the caller counts as a gap —
+ * instead of crashing the sweep or being skipped silently.
+ */
+export function longContextSteps(raw: unknown): { steps: LongContextStep[]; malformed: boolean } {
+  if (raw === undefined || raw === null) return { steps: [], malformed: false };
+  if (Array.isArray(raw)) return { steps: raw as LongContextStep[], malformed: false };
+  return { steps: [], malformed: true };
+}

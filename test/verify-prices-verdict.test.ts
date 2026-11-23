@@ -14,7 +14,7 @@
 // apart, and neither may read as success.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { UNREACHABLE_FRACTION, verdict, type Tally } from "../scripts/verify-prices-verdict.js";
+import { UNREACHABLE_FRACTION, longContextSteps, verdict, type Tally } from "../scripts/verify-prices-verdict.js";
 
 const clean: Tally = {
   probes: 60, short: 0, solShort: 0, unreachable: 0,
@@ -83,4 +83,20 @@ test("zero probes is not a pass — a probe list that filtered itself empty veri
   const v = verdict({ ...clean, probes: 0 });
   assert.equal(v.code, 2);
   assert.match(v.lines.join("\n"), /0 of 0 routes could not be verified|no routes were probed/);
+});
+
+// 2026-11-23: the Decisions entry published long_context as a bare object and
+// `for (const step of …)` threw, killing the whole release gate.
+test("long_context: a list is read as steps, absence as none", () => {
+  const steps = [{ threshold: 272000, inclusive: false, input: 0.2, output: 0 }];
+  assert.deepEqual(longContextSteps(steps), { steps, malformed: false });
+  assert.deepEqual(longContextSteps(undefined), { steps: [], malformed: false });
+  assert.deepEqual(longContextSteps(null), { steps: [], malformed: false });
+});
+
+test("long_context: a bare object is malformed, not a crash and not silently skipped", () => {
+  const r = longContextSteps({ threshold: 272000, input: 0.2 });
+  assert.equal(r.malformed, true);
+  assert.deepEqual(r.steps, []);
+  assert.equal(longContextSteps("272000").malformed, true);
 });
