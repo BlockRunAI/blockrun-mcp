@@ -439,6 +439,32 @@ test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
   assert.ok(estimateChatCost(1024, undefined, "deepseek-v4-pro", undefined, 100_000) > 0);
 });
 
+// Live GET /v1/models, 2026-11-23: billing_mode "free" at $0/$0 on Base AND
+// Solana (minimax-m3.1-flash available:false on Base) and on the account
+// sheet, but in no list here — `npm run verify:prices` flagged both on all
+// three sources: an explicit call reserved the $5/$30 default, so an
+// exhausted budget refused a free call.
+test("nemotron-3.5-bolt and minimax-m3.1-flash reserve nothing, and are not routed", () => {
+  for (const id of ["nvidia/nemotron-3.5-bolt", "nvidia/minimax-m3.1-flash"]) {
+    assert.ok(FREE_CHAT_MODELS.has(id), `${id} is $0 on both gateways — FREE_CHAT_MODELS must list it`);
+    const bare = id.slice(id.indexOf("/") + 1);
+    for (const spelling of [id, bare]) {
+      assert.equal(estimateChatCost(1024, undefined, spelling, undefined, 100_000), 0, spelling);
+    }
+    // Catalogue-verified only: no POST probe has read the served `model` yet.
+    assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(id), `${id} must not join the routing order unprobed`);
+  }
+  // Their paid MiniMax neighbours keep their rows — the free mirror's bare name
+  // must not swallow a paid one.
+  assert.ok(estimateChatCost(1024, undefined, "minimax-m3", undefined, 100_000) > 0);
+  // $0 on the account sheet only (hidden, absent from both wallet catalogues):
+  // NOT free here, so they keep the default reserve.
+  for (const id of ["google/gemma-4-31b", "google/gemma-4-26b"]) {
+    assert.ok(!FREE_CHAT_MODELS.has(id), id);
+    assert.ok(estimateChatCost(1024, undefined, id, undefined, 100_000) > 0, id);
+  }
+});
+
 // ── Two flagship ids landed above the default, and nothing noticed ──
 //
 // Live GET /v1/models on BOTH gateways, 2026-09-08: openai/gpt-6-astra and
