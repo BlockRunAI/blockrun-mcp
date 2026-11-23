@@ -297,6 +297,19 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "nvidia/nemotron-3.5-lightning", // itself on sol only; super-120b on Base
   "nvidia/muse-glimmer-30b", // now listed on both; itself on sol only
   "nvidia/gemma-4-31b", // delisted on both; redirected to super-120b (gateway MODEL_REDIRECTS)
+  // Listed billing_mode:"free" at $0/$0 in GET /v1/models on BOTH gateways and
+  // on the account sheet (2026-11-23), and in no list here until verify:prices
+  // flagged them: an explicit call reserved the $5/$30 default, so an
+  // exhausted budget refused a free call. Catalogue-verified only — no POST
+  // probe has read their response `model` yet, so not routed (free[] wants a
+  // self-serving rung on both chains). minimax-m3.1-flash is available:false
+  // on Base that day (Solana omits the flag, i.e. serves it): unavailable is
+  // not paid, and the sweep keeps pricing a member even while it is retired.
+  // NOT google/gemma-4-31b or google/gemma-4-26b: $0 on the account sheet
+  // only (hidden), absent from both wallet catalogues — the gateway's dark
+  // Gemma rung — so nothing shows they are free where a wallet call lands.
+  "nvidia/nemotron-3.5-bolt",
+  "nvidia/minimax-m3.1-flash",
   // Retired/hidden NVIDIA ids the ACCOUNT rail still prices at $0
   // (blockrun.ai/api/pricing, billingMode "free", 2026-10-20) and the wallet
   // gateways redirect onto a $0 model (MODEL_REDIRECTS / fallbackModel). All
