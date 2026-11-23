@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.55.11
+
+### Changed — the Kimi slot routes to Kimi K3.1 Pro
+
+The gateway hid `moonshot/kimi-k3` from `GET /v1/models` on 2026-10-25 when
+`moonshot/kimi-k3.1-pro` ($2/$10 per million tokens, 1M context, vision) became
+the featured Kimi, but the `balanced`, `reasoning` and `coding` tiers and the
+`blockrun_chat` description still sent agents to K3 ($3/$15).
+
+- Every tier that named Kimi K3 now names Kimi K3.1 Pro, in the same position.
+- K3.1 Pro has its own price row ($2/$10). The K3 row stays: the gateway still
+  serves it, so an explicit `moonshot/kimi-k3` pin reserves its own rate.
+- The `blockrun_chat` description and the README name Kimi K3.1 Pro.
+
 ## 0.55.10
 
 ### Fixed — chat costs are final only when the response proves a settlement
