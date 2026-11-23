@@ -54,7 +54,7 @@ import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
 import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS, chatRateAt } from "../src/utils/constants.js";
-import { verdict } from "./verify-prices-verdict.js";
+import { longContextSteps, verdict } from "./verify-prices-verdict.js";
 
 // TWO gateways, and they do not agree. Base and Solana are separate deployments
 // with separate env, and TRANSACTION_FEE_USD is env-overridable in the gateway —
@@ -536,11 +536,10 @@ if (solMissing) {
 // Listed-but-unknown $0 models and unlisted free[] entries are reported, not
 // failed: the first only over-reserves, and absence from the catalogue is a
 // listing decision, not a death certificate (see the doctrine in constants.ts).
-type LiveLongContextStep = { threshold?: unknown; inclusive?: unknown; input?: unknown; output?: unknown };
 type CatalogueModel = {
   id: string;
   available?: boolean;
-  pricing?: { input?: unknown; output?: unknown; long_context?: LiveLongContextStep[] };
+  pricing?: { input?: unknown; output?: unknown; long_context?: unknown };
 };
 
 async function catalogue(host: string): Promise<CatalogueModel[] | string> {
@@ -671,7 +670,15 @@ for (const [name, read] of CATALOGUES) {
     // A step we lack, price low, or start later than the gateway is the same
     // under-reserve as a missing row, reached only by a huge prompt.
     if (!isFree) {
-      for (const step of m.pricing?.long_context ?? []) {
+      const ladder = longContextSteps(m.pricing?.long_context);
+      if (ladder.malformed) {
+        gaps++;
+        catalogueGaps.push(
+          `${name}: ${m.id} publishes pricing.long_context as ${JSON.stringify(m.pricing?.long_context)}, not a list of steps — ` +
+            "its long-context rate cannot be checked (gateway contract CAT-040/041)",
+        );
+      }
+      for (const step of ladder.steps) {
         const { threshold, inclusive, input: stepIn, output: stepOut } = step;
         if (typeof threshold !== "number" || typeof stepIn !== "number" || typeof stepOut !== "number") continue;
         const tokens = inclusive === true ? threshold : threshold + 1;
