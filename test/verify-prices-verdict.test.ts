@@ -14,7 +14,7 @@
 // apart, and neither may read as success.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { UNREACHABLE_FRACTION, longContextSteps, verdict, type Tally } from "../scripts/verify-prices-verdict.js";
+import { UNREACHABLE_FRACTION, longContextSteps, platformFeePercentOf, verdict, type Tally } from "../scripts/verify-prices-verdict.js";
 
 const clean: Tally = {
   probes: 60, short: 0, solShort: 0, unreachable: 0,
@@ -99,4 +99,24 @@ test("long_context: a bare object is malformed, not a crash and not silently ski
   assert.equal(r.malformed, true);
   assert.deepEqual(r.steps, []);
   assert.equal(longContextSteps("272000").malformed, true);
+});
+
+// The catalogue's platform fee (blockrun PF-8), read the way ClawRouter#622
+// reads it. verify:prices fails a gateway that publishes more than
+// CHAT_PLATFORM_FEE_PERCENT, so a misread here is a gate that cannot see a
+// fee change.
+test("platform fee: nested pricing value first, top-level fallback, else 0", () => {
+  assert.equal(platformFeePercentOf({ pricing: { platform_fee_percent: 5 } }), 5); // Solana's shape
+  assert.equal(platformFeePercentOf({ platform_fee_percent: 5, pricing: { platform_fee_percent: 5 } }), 5); // Base's
+  assert.equal(platformFeePercentOf({ platform_fee_percent: 7 }), 7);
+  assert.equal(platformFeePercentOf({ platform_fee_percent: 7, pricing: { platform_fee_percent: 0 } }), 0, "an explicit nested 0 wins");
+  assert.equal(platformFeePercentOf({}), 0);
+  assert.equal(platformFeePercentOf({ pricing: {} }), 0);
+});
+
+test("platform fee: a malformed value falls through rather than reading as a fee", () => {
+  for (const bad of ["5", -1, Number.NaN, Number.POSITIVE_INFINITY, null, {}]) {
+    assert.equal(platformFeePercentOf({ pricing: { platform_fee_percent: bad } }), 0, String(bad));
+    assert.equal(platformFeePercentOf({ platform_fee_percent: 3, pricing: { platform_fee_percent: bad } }), 3, `fallback past ${String(bad)}`);
+  }
 });

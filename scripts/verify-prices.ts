@@ -53,8 +53,17 @@ import { anthropicCallCost } from "../src/tools/chat-anthropic.js";
 import { estimateVideoCost } from "../src/tools/video.js";
 import { MARKETS_PRICE_USD } from "../src/tools/markets.js";
 import { withTxFee } from "../src/utils/tx-fee.js";
-import { CHAT_PRICE_PER_MTOKEN, DEFAULT_CHAT_PRICE, FREE_CHAT_MODELS, MODEL_TIERS, chatRateAt } from "../src/utils/constants.js";
-import { longContextSteps, verdict } from "./verify-prices-verdict.js";
+import {
+  CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN,
+  CHAT_PLATFORM_FEE_PERCENT,
+  CHAT_PRICE_PER_MTOKEN,
+  DEFAULT_CHAT_PRICE,
+  FREE_CHAT_MODELS,
+  MODEL_TIERS,
+  chatQuoteRateAt,
+  chatRateAt,
+} from "../src/utils/constants.js";
+import { longContextSteps, platformFeePercentOf, verdict } from "./verify-prices-verdict.js";
 
 // TWO gateways, and they do not agree. Base and Solana are separate deployments
 // with separate env, and TRANSACTION_FEE_USD is env-overridable in the gateway —
@@ -78,6 +87,11 @@ const SOL = "https://sol.blockrun.ai/api/v1/";
 // hidden-but-served SKUs that the catalogue omits, which is exactly the set
 // api.blockrun.ai settled at $0 for a week because nothing priced them (#516).
 const ACCOUNT_SHEET = "https://blockrun.ai/api/pricing";
+// The account rail's OWN catalogue. Only its `platform_fee_percent` is read:
+// the sheet above carries Base's x402 fee (chatPlatformFeePercent 5), which the
+// enterprise ledger ignores (blockrun PF-9) — this is where api.blockrun.ai
+// says what it adds, and the account-rail ledgers assume 0.
+const ACCOUNT_CATALOGUE = "https://api.blockrun.ai/v1/models";
 
 type Probe = {
   label: string;
@@ -335,7 +349,17 @@ const PROBES: Probe[] = [
   // that is exactly how gpt-6-astra and claude-fable-5.1 sat unprobed for weeks
   // after landing at $10/$50 — the catalogue sweep below is what catches the
   // next one; this list only pins the reserve for the ones already known.
-  ...(["openai/gpt-5.5-pro", "openai/gpt-5.2-pro", "openai/o1", "anthropic/claude-fable-5", "openai/gpt-6-astra", "anthropic/claude-fable-5.1"].map((model) => {
+  //
+  // Plus the ids whose QUOTE carries more than rate x tokens, which the
+  // catalogue cannot show: gpt-6.2-astra/-sol price every input token at the
+  // cache-write rate (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN) and grok-4.7 is
+  // quoted 2,000 reasoning tokens past max_tokens (Base only). gpt-6-astra
+  // above doubles as the canary for the gateway widening the cache-write set
+  // to the rest of GPT-5.6+, which publish the same 1.25x write column.
+  ...([
+    "openai/gpt-5.5-pro", "openai/gpt-5.2-pro", "openai/o1", "anthropic/claude-fable-5", "openai/gpt-6-astra", "anthropic/claude-fable-5.1",
+    "openai/gpt-6.2-astra", "anthropic/claude-fable-5.2", "openai/gpt-6.2-sol", "xai/grok-4.7",
+  ].map((model) => {
     const message = "word ".repeat(20_000);
     return {
       label: `chat explicit ${model.split("/")[1]} 100k`,
@@ -536,10 +560,25 @@ if (solMissing) {
 // Listed-but-unknown $0 models and unlisted free[] entries are reported, not
 // failed: the first only over-reserves, and absence from the catalogue is a
 // listing decision, not a death certificate (see the doctrine in constants.ts).
+//
+// Two more things the rate columns do not say, checked on Base and Solana:
+//
+//   - The platform fee (blockrun PF-8: `platform_fee_percent`, per paid row).
+//     The estimators add CHAT_PLATFORM_FEE_PERCENT; a row publishing more is
+//     a reserve short by the difference on every call, so it fails. It was
+//     5% on both gateways for five days (2026-11-18..23) before anything here
+//     read it, and the only symptom was every 402 probe going ~5% short.
+//   - The cache-write rate of the models whose quote prices input as written
+//     (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN): a live `cache_write` (base, or a
+//     long-context step's) above what chatQuoteRateAt reserves fails.
+//
+// The account rail's fee is read from its own catalogue, below the loop.
 type CatalogueModel = {
   id: string;
   available?: boolean;
-  pricing?: { input?: unknown; output?: unknown; long_context?: unknown };
+  billing_mode?: unknown;
+  platform_fee_percent?: unknown;
+  pricing?: { input?: unknown; output?: unknown; long_context?: unknown; platform_fee_percent?: unknown; cache_write?: unknown };
 };
 
 async function catalogue(host: string): Promise<CatalogueModel[] | string> {
@@ -605,7 +644,7 @@ for (const [model, chars, maxTokens] of LEDGER_PROBES) {
     continue;
   }
   if (booked < live.usd - EPSILON) {
-    console.log(`  ✗  ${label.padEnd(26)} books $${booked} < settles $${live.usd}  UNDER-BOOKS by $${(live.usd - booked).toFixed(6)} — has the gateway's OUTPUT_QUOTE_FACTOR moved? (chat-anthropic.ts)`);
+    console.log(`  ✗  ${label.padEnd(26)} books $${booked} < settles $${live.usd}  UNDER-BOOKS by $${(live.usd - booked).toFixed(6)} — has the gateway's OUTPUT_QUOTE_FACTOR (chat-anthropic.ts) or CHAT_PLATFORM_FEE_PERCENT (constants.ts) moved?`);
     short++;
   } else if (booked > live.usd * 1.01) {
     console.log(`  !  ${label.padEnd(26)} books $${booked} > settles $${live.usd}  over-books by ${(((booked / live.usd) - 1) * 100).toFixed(1)}% — caps trip early`);
@@ -635,6 +674,11 @@ for (const [name, read] of CATALOGUES) {
   let checked = 0;
   let gaps = 0;
   const listed = new Set<string>();
+  // Platform fees the gateway publishes on paid rows -> how many rows each.
+  // Not for the account sheet: its chatPlatformFeePercent is Base's x402 fee,
+  // which the account rail does not charge (see ACCOUNT_CATALOGUE).
+  const checksFee = name !== "Account (pricing sheet)";
+  const feesSeen = new Map<number, number>();
   for (const m of models) {
     const { input, output } = m.pricing ?? {};
     // Per-image, per-second and per-character products share the catalogue but
@@ -692,6 +736,41 @@ for (const [name, read] of CATALOGUES) {
         }
       }
     }
+    // `paid` rows only: the Decisions entries (billing_mode "per_token") carry
+    // token rates but no fee, by decision (blockrun PF-5, Q1).
+    if (checksFee && !isFree && (input > 0 || output > 0) && (m.billing_mode === undefined || m.billing_mode === "paid")) {
+      const fee = platformFeePercentOf(m);
+      feesSeen.set(fee, (feesSeen.get(fee) ?? 0) + 1);
+      if (fee > CHAT_PLATFORM_FEE_PERCENT) {
+        gaps++;
+        catalogueGaps.push(
+          `${name}: ${m.id} publishes a ${fee}% platform fee but the estimators add ${CHAT_PLATFORM_FEE_PERCENT}% — ` +
+            "every reserve and native ledger entry is short by the difference (CHAT_PLATFORM_FEE_PERCENT, constants.ts)",
+        );
+      }
+    }
+    if (Object.hasOwn(CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN, m.id)) {
+      // The quote prices input at the write rate; ours must cover the live one,
+      // at the base tier and at every published long-context step.
+      const writes: Array<[number, unknown]> = [[0, m.pricing?.cache_write]];
+      for (const step of longContextSteps(m.pricing?.long_context).steps) {
+        const t = (step as { threshold?: unknown; inclusive?: unknown }).threshold;
+        if (typeof t === "number") {
+          writes.push([(step as { inclusive?: unknown }).inclusive === true ? t : t + 1, (step as { cache_write?: unknown }).cache_write]);
+        }
+      }
+      for (const [tokens, live] of writes) {
+        if (typeof live !== "number") continue;
+        const ours = chatQuoteRateAt(m.id, reserve, tokens).input;
+        if (live > ours) {
+          gaps++;
+          catalogueGaps.push(
+            `${name}: ${m.id} writes its cache at $${live}/M${tokens ? ` from ${tokens} prompt tokens` : ""} and the gateway quotes input at that rate, ` +
+              `but the reserve prices input at $${ours}/M — fix CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN`,
+          );
+        }
+      }
+    }
     if (row && (input < row.input || output < row.output)) {
       if (name === "Base" && m.id.startsWith("anthropic/")) {
         // Native Anthropic is Base-only and books this row as the ledger.
@@ -717,8 +796,43 @@ for (const [name, read] of CATALOGUES) {
   }
   console.log(
     `  ${gaps ? "✗" : "✓"}  ${name.padEnd(26)} ${checked} chat models checked, ${gaps} would settle above the reserve` +
-      (unverifiedFree ? `, ${unverifiedFree} free-list members unverified (not in the catalogue)` : ""),
+      (unverifiedFree ? `, ${unverifiedFree} free-list members unverified (not in the catalogue)` : "") +
+      (checksFee
+        ? `; platform fee ${[...feesSeen].sort((a, b) => a[0] - b[0]).map(([fee, n]) => `${fee}% on ${n}`).join(", ") || "not published"} (estimators add ${CHAT_PLATFORM_FEE_PERCENT}%)`
+        : ""),
   );
+  // A paid row with no fee is the safe direction (we over-reserve by the fee)
+  // but says the gateway and this table disagree about what is charged.
+  const unfeed = feesSeen.get(0) ?? 0;
+  if (checksFee && unfeed && CHAT_PLATFORM_FEE_PERCENT > 0) {
+    catalogueNotes.push(`${name}: ${unfeed} paid chat row${unfeed === 1 ? "" : "s"} publish no platform fee — reserved ${CHAT_PLATFORM_FEE_PERCENT}% above (safe), but has the fee been removed there?`);
+  }
+}
+
+// The account rail (api.blockrun.ai) bills chat at list with no platform fee
+// (blockrun PF-9: enterprise exempt), and accountLedgerUsd /
+// anthropicAccountLedgerUsd book exactly that. A fee appearing there means
+// those ledgers book short of every account-rail call: fail.
+{
+  const name = "Account rail fee";
+  const models = await catalogue(ACCOUNT_CATALOGUE.replace(/models$/, ""));
+  if (typeof models === "string") {
+    console.log(`  ?  ${name.padEnd(26)} ${ACCOUNT_CATALOGUE}: ${models}`);
+    catalogueUnreachable++;
+  } else {
+    const paid = models.filter((m) => m.billing_mode === "paid");
+    const charging = paid.filter((m) => platformFeePercentOf(m) > 0);
+    for (const m of charging) {
+      catalogueGaps.push(
+        `${name}: api.blockrun.ai publishes a ${platformFeePercentOf(m)}% platform fee on ${m.id}, but the account-rail ledgers book list price (accountLedgerUsd, anthropicAccountLedgerUsd)`,
+      );
+    }
+    console.log(
+      `  ${charging.length ? "✗" : paid.length ? "✓" : "?"}  ${name.padEnd(26)} ${paid.length} paid chat rows on api.blockrun.ai, ` +
+        `${charging.length} with a platform fee (the account-rail ledgers assume none)`,
+    );
+    if (!paid.length) catalogueUnreachable++;
+  }
 }
 for (const g of catalogueGaps) console.log(`  ✗  ${g}`);
 for (const n of catalogueNotes) console.log(`  !  ${n}`);
@@ -740,7 +854,7 @@ const result = verdict({
   solShort,
   unreachable,
   catalogueGaps: catalogueGaps.length,
-  catalogues: CATALOGUES.length,
+  catalogues: CATALOGUES.length + 1, // + the account rail's own catalogue (fee only)
   catalogueUnreachable,
 });
 if (result.lines.length) console.log("");

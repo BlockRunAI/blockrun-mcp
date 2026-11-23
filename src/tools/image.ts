@@ -115,6 +115,14 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
 //
 // 2026-11-05: grok-imagine-image-pro $0.05 -> $0.06. xAI retired the model behind
 // it on 2026-11-02, and the gateway now requests 2.0 at `quality: "medium"`.
+//
+// 2026-11-23: nano-banana-pro $0.10 -> $0.17 (1K and 2K) and $0.15 -> $0.30 (4K).
+// The gateway repriced it on 2026-11-16 (4K) and 2026-11-19 (1K/2K, blockrun
+// fc1eef0b) after Google's $120/M image-output rate put both tiers below cost;
+// GET /v1/models now lists per_image $0.1785 (= $0.17 x 1.05). This table kept
+// the old prices, so every Pro render reserved $0.107001 against a $0.1795
+// charge (4K: $0.1595 against $0.316) — the Base ledger books the reserve, so
+// the shortfall was written to budget.spent as well.
 const GENERATE_MODEL_COST: Record<string, number> = {
   "zai/cogview-4": 0.015,
   "xai/grok-imagine-image": 0.02,
@@ -126,7 +134,7 @@ const GENERATE_MODEL_COST: Record<string, number> = {
   "openai/gpt-image-2.5-sunburst": 0.28,
   "google/nano-banana": 0.05,
   "google/nano-banana-2": 0.09,
-  "google/nano-banana-pro": 0.10,
+  "google/nano-banana-pro": 0.17,
   "bytedance/seedream-5-pro": 0.045,
 };
 
@@ -136,7 +144,7 @@ const LARGE_SIZE_COST: Record<string, number> = {
   "openai/gpt-image-2": 0.12,
   "openai/gpt-image-2.5-flare": 0.56, // 1536x1024 / 1024x1536
   "openai/gpt-image-2.5-sunburst": 0.56,
-  "google/nano-banana-pro": 0.15, // 4096x4096 tier
+  "google/nano-banana-pro": 0.30, // 4096x4096 tier
   "bytedance/seedream-5-pro": 0.09, // min(w,h) > 1024 tier — see LARGE_SIZE_MIN_DIM_MODELS
 };
 
@@ -180,9 +188,10 @@ const IMAGE_MODELS = [
 // Where each model's large tier actually starts, in max(width,height).
 //
 // This was a single >1024 rule for every model, which was wrong for
-// nano-banana-pro: probed live, it charges $0.107001 at BOTH 1024x1024 and
-// 2048x2048 and only steps to $0.159500 at 4096x4096. A 2048 render therefore
-// reserved AND booked the 4096 price — 49% over — and on the Base path the
+// nano-banana-pro: probed live, it charges the same at BOTH 1024x1024 and
+// 2048x2048 and only steps up at 4096x4096 ($0.1795 / $0.1795 / $0.316 since
+// 2026-11-19). A 2048 render therefore reserved AND booked the 4096 price —
+// 49% over at the time — and on the Base path the
 // estimate is written to the ledger verbatim as settled spend, so the
 // overstatement was permanent, not just a tight gate.
 //
@@ -193,7 +202,7 @@ const LARGE_SIZE_THRESHOLD: Record<string, number> = {
   "openai/gpt-image-2": 1024,
   "openai/gpt-image-2.5-flare": 1024,
   "openai/gpt-image-2.5-sunburst": 1024,
-  "google/nano-banana-pro": 2048, // $0.107001 through 2048; $0.159500 at 4096
+  "google/nano-banana-pro": 2048, // $0.1795 through 2048; $0.316 at 4096
 };
 
 // Seedream's large tier is keyed on the SMALLER dimension, not the larger one
@@ -220,7 +229,7 @@ function isLargerThanBase(model: string, size: string): boolean {
 // The gateway charges catalog_base x 1.05 + $0.002 — the catalog figure is NOT
 // the price. Verified against live payment-required headers:
 //   zai/cogview-4          base $0.015 -> charged $0.017751  (raw base was 15.5% short)
-//   google/nano-banana-pro base $0.100 -> charged $0.107001
+//   google/nano-banana-pro base $0.100 -> charged $0.107001  (its pre-2026-11-19 price)
 //
 // Mirror the server's arithmetic EXACTLY, float drift included. It computes the
 // whole expression in floats and then ceils to micro-USDC, and the drift is
@@ -351,7 +360,7 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - openai/gpt-image-1 ($0.02–0.04) — GPT native image generation
 - google/nano-banana ($0.05) — Gemini-family image model
 - google/nano-banana-2 ($0.09) — Gemini 3.1 Flash, pro-level quality at Flash speed (1024x1024 only)
-- google/nano-banana-pro ($0.10; $0.15 at 4096px) — up to 4K, strongest photorealism
+- google/nano-banana-pro ($0.17; $0.30 at 4096px) — up to 4K, strongest photorealism
 - xai/grok-imagine-image ($0.02) — stylized, fast
 - xai/grok-imagine-image-2.0 ($0.04) — Grok Imagine 2.0, between Grok Imagine and Pro on price
 - xai/grok-imagine-image-pro ($0.06) — Grok Imagine 2.0 at medium quality, finer detail

@@ -183,10 +183,10 @@ test("wallet rail: success books the reconstructed quote, fee included", async (
   const res = await handleAnthropicNative({ client: client as never, ...baseArgs, budget });
   assert.equal(res.isError, undefined, res.content[0].text);
   assert.ok(near(budget.spent, anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024)!), `booked ${budget.spent}`);
-  // The wallet quote formula carries the observed fee: haiku "hi" at 1024
-  // max_tokens quoted 6137 micro-USDC live on 2026-11-03 (output at the full
-  // max_tokens ceiling, blockrun#954).
-  assert.equal(anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024), 0.006141);
+  // The wallet quote formula carries the observed fee and the 5% platform fee:
+  // haiku "hi" at 1024 max_tokens quoted 6394 micro-USDC live on 2026-11-23
+  // (output at the full max_tokens ceiling, blockrun#954; fee since 2026-11-18).
+  assert.equal(anthropicCallCost("claude-haiku-4-5-20251001", 2, 1024), 0.006399);
 });
 
 // The real SDK, no network: the fetch stub answers /v1/messages with a canned

@@ -386,6 +386,13 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-6-astra": { input: 10, output: 50 },
   "anthropic/claude-fable-5.1": { input: 10, output: 50 },
   "anthropic/claude-fable-5": { input: 10, output: 50 },
+  // $8/$40 on Base, Solana and the account sheet (GET /v1/models and
+  // /api/pricing, 2026-11-23). Both sat above the default with no row, so an
+  // explicit call reserved $5/$30 — the catalogue sweep caught them.
+  // gpt-6.2-astra also quotes a cache-write premium on every input token: see
+  // CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN.
+  "openai/gpt-6.2-astra": { input: 8, output: 40 },
+  "anthropic/claude-fable-5.2": { input: 8, output: 40 },
   // Hidden from every /v1/models listing but still SERVED, and the rails do
   // not agree on what it costs: the account rail bills it from the public
   // sheet at $15/$75 (blockrun.ai/api/pricing, hidden:true, available:true —
@@ -495,6 +502,18 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87 },
   "poolside/laguna-s-2.1": { input: 0.09, output: 0.18 },
   "mistral/mistral-large-4": { input: 1.36, output: 4.18 },
+  // Listed since the 2026-10-20 sweep (GET /v1/models, 2026-11-23). Below the
+  // default, so here for the same reason as the block above. gpt-6.2-sol
+  // carries the cache-write premium too (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN).
+  "openai/gpt-6.2-sol": { input: 2, output: 10 },
+  "google/gemini-4-neon": { input: 3, output: 15 },
+  "google/gemini-4-carbon": { input: 2, output: 10 },
+  "google/gemini-4-hydrogen": { input: 1.5, output: 7.5 },
+  // Solana only: Base answers an unknown-model 400 and the account sheet does
+  // not list them.
+  "meta/muse-wonder-1.0": { input: 4, output: 20 },
+  "meta/muse-spark-1.3": { input: 1.25, output: 4.25 },
+  "reflection/beam-1.0-501b-a23b": { input: 0.25, output: 1 },
 };
 
 /**
@@ -511,6 +530,93 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
  * small-budget lockout the cheap-tier rows exist to avoid.
  */
 export const DEFAULT_CHAT_PRICE = { input: 5, output: 30 } as const;
+
+/**
+ * The platform fee blockrun.ai and sol.blockrun.ai add to every per-token paid
+ * chat quote, in percent. Mirrors CHAT_PLATFORM_FEE_PERCENT in the gateway
+ * (blockrun src/lib/chat-quote.ts, PF-1..PF-9 in its
+ * specs/2026-11-16-chat-platform-fee.md; sol §3.15 has the same rule), live
+ * since 2026-11-18.
+ *
+ * The table above stays at the vendor's list price because the gateway's
+ * published unit prices do (PF-2): the fee is a separate multiplier, applied
+ * in quoteChatPrice BEFORE the $0.001 floor and the transaction fee (PF-3),
+ * on every per-token paid chat path — /v1/chat/completions and the native
+ * /v1/messages alike (PF-4). It is not applied to free models, flat rows,
+ * search or media (PF-5); none of those reach the two places here that add it
+ * (estimateChatCost, anthropicCallCost).
+ *
+ * Until 2026-11-23 neither added it, so every paid reserve and every native
+ * ledger entry sat ~5% under what the wallet gateways settle: verify:prices
+ * found claude-opus-5 reserving $0.2776 against a $0.279964 charge, and
+ * gpt-5.4-pro $1.68632 against $1.70704.
+ *
+ * NOT on the account rail. api.blockrun.ai publishes `platform_fee_percent: 0`
+ * on every chat row (enterprise is exempt, PF-9) and bills the list rates, so
+ * accountLedgerUsd and anthropicAccountLedgerUsd stay at list. The reserve is
+ * rail-agnostic and carries the fee there too — a 5% over-reserve, the same
+ * deliberate rounding as reserving a transaction fee that rail never charges.
+ *
+ * A constant rather than a live read: the estimators are synchronous and pure,
+ * like every other price mirrored here. `npm run verify:prices` reads
+ * `platform_fee_percent` off every paid chat row on both gateways and fails if
+ * any publishes more than this (and if api.blockrun.ai publishes anything
+ * above 0), so a fee change surfaces as a failed gate, not as a short reserve.
+ */
+export const CHAT_PLATFORM_FEE_PERCENT = 5;
+
+/** 1 + CHAT_PLATFORM_FEE_PERCENT/100: what a per-token paid chat amount is multiplied by. */
+export const CHAT_PLATFORM_FEE_FACTOR = 1 + CHAT_PLATFORM_FEE_PERCENT / 100;
+
+/**
+ * Reasoning output the gateway quotes ON TOP of max_tokens, per model.
+ * Mirrors REASONING_OUTPUT_ALLOWANCE_TOKENS in the gateway's chat-quote.ts.
+ *
+ * grok-4.7 always reasons and xAI does not count that reasoning against
+ * max_tokens, so blockrun.ai quotes 2,000 extra output tokens for it
+ * (blockrun#830, 2026-10-15): a 100k-char prompt at max_tokens 1024 settles
+ * $0.120885 on Base, and the reserve without this was $0.108144 — short even
+ * after the platform fee. Solana does not add it ($0.107285), so this is the
+ * Base figure, the dearer rail, which is the one a reserve has to cover.
+ *
+ * Keyed on the catalogue id; estimateChatCost canonicalises bare spellings
+ * first. Read through reasoningAllowanceTokens (hasOwn-guarded: the model id
+ * is caller-controlled).
+ */
+export const REASONING_OUTPUT_ALLOWANCE_TOKENS: Readonly<Record<string, number>> = {
+  "xai/grok-4.7": 2000,
+};
+
+export function reasoningAllowanceTokens(model: string): number {
+  return Object.hasOwn(REASONING_OUTPUT_ALLOWANCE_TOKENS, model) ? REASONING_OUTPUT_ALLOWANCE_TOKENS[model] : 0;
+}
+
+/**
+ * The cache-WRITE rate ($/M, base tier) of every model whose quote prices the
+ * whole estimated prompt as a cache write. Mirrors the gateway's
+ * CACHE_WRITE_QUOTED_MODELS (blockrun src/lib/chat-quote.ts, G62-015, owner
+ * decision 2026-11-17): GPT-6.2 writes a prompt cache by default, OpenAI bills
+ * the write at 1.25x input, so the gateway quotes every estimated input token
+ * at the write rate — input + (write − input), times the platform fee.
+ *
+ * Live, 100k-char prompt, max_tokens 1024, 2026-11-23: gpt-6.2-astra settles
+ * $0.548176, not the $0.447342 its $8 input rate implies — a $10/M input bill.
+ * The `input` in CHAT_PRICE_PER_MTOKEN stays the published list rate (the
+ * catalogue sweep compares it against `pricing.input`); chatQuoteRateAt raises
+ * the reserved input rate to this.
+ *
+ * The rate is the catalogue's `pricing.cache_write`. Past a long-context step
+ * the write rate scales with that step's input rate, as the gateway's
+ * cacheRatesAt does ($20 at astra's $16 step; Base publishes the same figure
+ * as `long_context[].cache_write`). verify:prices checks both against the live
+ * catalogue. The gateway widens this set "one family at a time" — the rest of
+ * GPT-5.6+ has the same default write — so a widening shows up first as a
+ * failed 402 probe on gpt-6-astra, which verify:prices probes explicitly.
+ */
+export const CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN: Readonly<Record<string, number>> = {
+  "openai/gpt-6.2-astra": 10,
+  "openai/gpt-6.2-sol": 2.5,
+};
 
 /**
  * One long-context price step, per 1M tokens: once the prompt crosses
@@ -530,7 +636,8 @@ export interface LongContextStep {
  * Long-context steps, copied from `pricing.long_context` in GET /v1/models
  * (blockrun.ai and sol.blockrun.ai agree; the Qwen steps are on Base only and
  * are kept because a reserve has to cover the dearer rail). Read 2026-10-02;
- * re-read 2026-10-20 (gpt-6.1-sol added — the only new step).
+ * re-read 2026-10-20 (gpt-6.1-sol added — the only new step) and 2026-11-23
+ * (the GPT-6.2 pair).
  *
  * Without this the gate reserved base rates for every prompt, and the gateway
  * quotes the step: a 300K-token prompt to gpt-6-astra reserved $10/M input
@@ -554,6 +661,8 @@ const XAI_200K = (input: number, output: number): readonly LongContextStep[] =>
 
 export const LONG_CONTEXT_PRICE_PER_MTOKEN: Record<string, readonly LongContextStep[]> = {
   // OpenAI GPT-6 and GPT-5.4+: 2x input / 1.5x output above 272K.
+  "openai/gpt-6.2-astra": OPENAI_272K(16, 60),
+  "openai/gpt-6.2-sol": OPENAI_272K(4, 15),
   "openai/gpt-6-astra": OPENAI_272K(20, 75),
   "openai/gpt-6.1-sol": OPENAI_272K(4, 15),
   "openai/gpt-6-sol": OPENAI_272K(4, 15),
@@ -715,15 +824,42 @@ export function chatRateAt(
 }
 
 /**
+ * The rate a QUOTE prices a call at, which is what a reserve has to cover:
+ * chatRateAt (list rate, raised to the long-context step), with the input rate
+ * raised once more to the cache-write rate for the models whose quote carries
+ * the write premium (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN), scaled to the step
+ * the prompt reaches. Never lowers either component. `model` must already be
+ * canonical. The platform fee is NOT in here; it multiplies the total.
+ *
+ * The ledgers keep chatRateAt: the account rail bills reported usage, and no
+ * write-quoted model is served on the native /v1/messages path.
+ */
+export function chatQuoteRateAt(
+  model: string,
+  base: { input: number; output: number },
+  inputTokens: number,
+): { input: number; output: number } {
+  const rate = chatRateAt(model, base, inputTokens);
+  if (!Object.hasOwn(CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN, model)) return rate;
+  const listInput = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, model) ? CHAT_PRICE_PER_MTOKEN[model].input : 0;
+  if (!(listInput > 0)) return rate;
+  const step = longContextStep(model, inputTokens);
+  const tierInput = step ? step.input : listInput;
+  const write = CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN[model] * (tierInput / listInput);
+  return { input: Math.max(rate.input, write), output: rate.output };
+}
+
+/**
  * TIER_WORST_PRICE at a given prompt size: the most expensive rate any member
- * of the tier can settle at once long-context steps apply. Equal to
- * TIER_WORST_PRICE[mode] below every member's threshold.
+ * of the tier can settle at once long-context steps (and any quoted cache-write
+ * premium, chatQuoteRateAt) apply. Equal to TIER_WORST_PRICE[mode] below every
+ * member's threshold while no member is cache-write quoted.
  */
 export function tierWorstPriceAt(mode: RoutingMode, inputTokens: number): { input: number; output: number } {
   const rates = MODEL_TIERS[mode].map((id: string) => {
     if (FREE_CHAT_MODELS.has(id) && !Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id)) return { input: 0, output: 0 };
     const base = Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id) ? CHAT_PRICE_PER_MTOKEN[id] : DEFAULT_CHAT_PRICE;
-    return chatRateAt(id, base, inputTokens);
+    return chatQuoteRateAt(id, base, inputTokens);
   });
   return {
     input: Math.max(...rates.map((r) => r.input)),

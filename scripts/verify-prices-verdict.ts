@@ -106,3 +106,19 @@ export function longContextSteps(raw: unknown): { steps: LongContextStep[]; malf
   if (Array.isArray(raw)) return { steps: raw as LongContextStep[], malformed: false };
   return { steps: [], malformed: true };
 }
+
+/**
+ * The chat platform fee a catalogue row publishes, in percent (blockrun PF-8):
+ * `pricing.platform_fee_percent` (both gateways), else the row's top-level
+ * `platform_fee_percent` (Base also puts it there), else 0. Only a finite,
+ * non-negative number counts; anything else falls through, the same reading as
+ * ClawRouter's platformFeePercentOf (ClawRouter#622). A nested value wins even
+ * when it is 0.
+ */
+export function platformFeePercentOf(row: { platform_fee_percent?: unknown; pricing?: { platform_fee_percent?: unknown } }): number {
+  const valid = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  const nested = row.pricing?.platform_fee_percent;
+  if (valid(nested)) return nested;
+  const top = row.platform_fee_percent;
+  return valid(top) ? top : 0;
+}
