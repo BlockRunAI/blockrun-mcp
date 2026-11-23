@@ -466,20 +466,20 @@ export function registerChatTool(server: McpServer, budget: BudgetState): void {
 
 Notable modes:
 - mode:"powerful" → Claude Opus 5, Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
-- mode:"reasoning" → Claude Opus 5, GPT-5.6-sol, Kimi K3, Grok 4.3, deepseek-v4-pro
-- mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3, Grok Build, GLM-5.2
+- mode:"reasoning" → Claude Opus 5, GPT-5.6-sol, Kimi K3.1 Pro, Grok 4.3, deepseek-v4-pro
+- mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3.1 Pro, Grok Build, GLM-5.2
 - mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Gemini 2.5 Flash, DeepSeek Chat / V4.1 Flash
 - mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
 - mode:"free" → free models (no cost)
 
-Pick directly: model:"anthropic/claude-opus-5.5", model:"openai/gpt-6-sol", model:"xai/grok-4.7", model:"moonshot/kimi-k3", model:"nvidia/gpt-oss-120b" (free).
+Pick directly: model:"anthropic/claude-opus-5.5", model:"openai/gpt-6-sol", model:"xai/grok-4.7", model:"moonshot/kimi-k3.1-pro", model:"nvidia/gpt-oss-120b" (free).
 
 Run blockrun_models to see all available models with pricing.`,
       annotations: TOOL_ANNOTATIONS.generative,
       inputSchema: {
         message: z.string().describe("Your message to the AI"),
         model: z.string().optional().describe("Specific model ID (e.g., 'openai/gpt-6-sol', 'anthropic/claude-sonnet-5.5', 'zai/glm-5')"),
-        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = $0 models (ignored if model specified)"),
+        mode: z.enum(["fast", "balanced", "powerful", "cheap", "reasoning", "free", "coding", "glm"]).optional().describe("Routing mode: powerful/reasoning = frontier models (Opus 5, GPT-5.6-sol, Kimi K3.1 Pro), coding = code-specialized, glm = Zhipu GLM (great for coding), cheap = budget models, free = $0 models (ignored if model specified)"),
         system: z.string().optional().describe("Optional system prompt"),
         max_tokens: z.number().optional().default(1024).describe("Max tokens in response"),
         temperature: z.number().optional().default(1).describe("Creativity 0-2"),

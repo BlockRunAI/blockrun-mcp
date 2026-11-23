@@ -84,7 +84,10 @@ export const BASE_RPC_URLS = [
 //   repriced by the gateway and re-probed 2026-09-02),
 //   deepseek-chat, deepseek-reasoner ($0.14/$0.28 on Base since DeepSeek's
 //   2026-08-07 cut; sol still quotes $0.2/$0.4 — see the drift note above)
-// Moonshot (1): kimi-k3 ($3/$15, 1M, vision + reasoning + coding)
+// Moonshot (1): kimi-k3.1-pro ($2/$10, 1M, vision + reasoning + coding).
+//   kimi-k3 ($3/$15) was HIDDEN from GET /v1/models on 2026-10-25 when
+//   k3.1-pro became the featured Kimi; it is still served (unpaid 402 quote
+//   2026-11-23), so its price row stays for explicit pins, but it leaves every tier.
 // ZAI (6): glm-5.3 ($1.4/$4.4), glm-5.3-flash ($0.15/$0.5, vision),
 //   glm-5.2 ($1.4/$4.4, 1M), glm-5.1 ($1.4/$4.4), glm-5 ($1/$3.2 —
 //   Z.AI RAISED the list rate; still the cheapest ZAI, but no longer a
@@ -141,10 +144,10 @@ export const BASE_RPC_URLS = [
 //   realistic-prompt POST probe reads their response `model` field.
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
-  balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
+  balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3.1-pro", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
   cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
-  reasoning: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-reasoner"],
+  reasoning: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3.1-pro", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-reasoner"],
   // 2026-08-12 sweep (both chains, realistic prompt). Order matters: free[0]
   // is what every mode:"free" call tries first, and a slow primary stalls the
   // whole routing loop before it can fall through. Changes this sweep:
@@ -236,7 +239,7 @@ export const MODEL_TIERS = {
     "nvidia/gpt-oss-20b", "nvidia/nemotron-3-super-120b", "nvidia/llama-3.2-11b-vision",
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   ],
-  coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
+  coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3.1-pro", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
 } as const;
 
@@ -430,6 +433,9 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "google/gemini-3-flash-preview": { input: 0.5, output: 3 },
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
+  "moonshot/kimi-k3.1-pro": { input: 2, output: 10 },
+  // Hidden since 2026-10-25 (superseded by k3.1-pro) but still served at
+  // $3/$15 — kept so an explicit pin reserves its own rate.
   "moonshot/kimi-k3": { input: 3, output: 15 },
   "xai/grok-4.7": { input: 2, output: 6 },
   "xai/grok-4.6": { input: 2, output: 6 },
