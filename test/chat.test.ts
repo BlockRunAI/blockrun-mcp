@@ -63,6 +63,7 @@ const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> 
   [undefined, "anthropic/claude-opus-5", 0.279964],
   [undefined, "openai/gpt-5.6-terra", 0.114736],
   [undefined, "google/gemini-3.5-flash", 0.086302],
+  [undefined, "google/gemini-3.6-flash", 0.042845],   // fast[0] since 2026-11-24
   [undefined, "zai/glm-5", 0.054858],
   [undefined, "deepseek/deepseek-v4-pro", 0.071808],
   [undefined, "openai/gpt-6-astra", 0.558928],
@@ -84,7 +85,7 @@ const LIVE_CHARGE_100K: Array<[string | undefined, string | undefined, number]> 
   ["balanced", undefined, 0.285340],   // gpt-5.5
   ["reasoning", undefined, 0.279964],  // opus-5
   ["coding", undefined, 0.279964],     // claude-opus-5
-  ["fast", undefined, 0.086302],       // gemini-3.5-flash
+  ["fast", undefined, 0.042845],       // gemini-3.6-flash (gemini-3.5-flash, $0.086302, until 2026-11-24)
   ["glm", undefined, 0.076315],        // glm-5.x
   ["cheap", undefined, 0.071808],      // deepseek-v4-pro
 ];

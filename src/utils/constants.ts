@@ -57,7 +57,8 @@ export const BASE_RPC_URLS = [
 //   gpt-5.4 ($2.5/$15), gpt-5.4-pro ($30/$180), gpt-5.2 /
 //   gpt-5.3-codex ($1.75/$14) (gpt-5.3 is hidden + available:false), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
-//   o1 ($15/$60), o3 ($2/$8), o3-mini, o4-mini
+//   o3 ($2/$8). o1 ($15/$60), o3-mini and o4-mini are RETIRED (2026-11-24,
+//   redirected to gpt-5.4-mini — see the note above MODEL_TIERS)
 // Anthropic (12): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
 //   the default, so it carries a price row), claude-opus-5.5 ($4/$20, 1M, 128k
 //   out — newest Opus, cheaper than Opus 5, thinking always on),
@@ -73,7 +74,8 @@ export const BASE_RPC_URLS = [
 //   long-context tier, unlike 3.1 Pro — priced only, in no routing tier),
 //   gemini-3.1-pro ($2/$12), gemini-3.8-flash and gemini-3.6-flash
 //   ($0.75/$3.75 each — 3.6 was $1.5/$7.5 when first listed), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
-//   file recorded in July), gemini-3-flash-preview ($0.5/$3),
+//   file recorded in July; RETIRED 2026-11-24, redirected to 3.6 Flash),
+//   gemini-3-flash-preview ($0.5/$3),
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
 //   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro, gemini-2.5-flash,
 //   gemini-2.5-flash-lite — all 1M context
@@ -142,8 +144,18 @@ export const BASE_RPC_URLS = [
 //   the rule above that is NOT a death certificate (gpt-oss-120b has been
 //   hidden-alive since July). They stay routed at the tail of free[] until a
 //   realistic-prompt POST probe reads their response `model` field.
+//
+// 2026-11-24 RETIREMENTS (owner-approved; the gateways redirect each id and
+// quote the SUCCESSOR's price — the redirect runs before pricing):
+//   google/gemini-3.5-flash -> google/gemini-3.6-flash. Google has served 3.6
+//     Flash under the 3.5 name since ~2026-10-10 while the catalogue billed
+//     $1.5/$9 for it; 3.6 is $0.75/$3.75. fast[0] now names the model that
+//     answers, in the same position.
+//   openai/o1, openai/o3-mini, openai/o4-mini (and o1-mini, which redirected
+//     onto o4-mini) -> openai/gpt-5.4-mini. Dead at OpenAI since 2026-10-23
+//     and on Azure since 2026-11-19. None was in a tier; see their price rows.
 export const MODEL_TIERS = {
-  fast: ["google/gemini-3.5-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
+  fast: ["google/gemini-3.6-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3.1-pro", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
   cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
@@ -427,7 +439,7 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
  *   anthropic/claude-fable-5      $0.486310             $0.147480      3.30x
  *   openai/gpt-5.6-sol            $0.244171             $0.147480      1.66x
  *   anthropic/claude-opus-5       $0.243655             $0.147480      1.65x   <- powerful[0]
- *   google/gemini-3.5-flash       $0.073951             $0.030072      2.46x   <- fast[0]
+ *   google/gemini-3.5-flash       $0.073951             $0.030072      2.46x   <- fast[0] (to 2026-11-24)
  *   zai/glm-5                     $0.049346             $0.030072      1.64x   <- glm[0]
  *
  * (Live unpaid 402 quotes, 2026-08-13. Every frontier model was under-reserved,
@@ -456,6 +468,13 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-5.4-pro": { input: 30, output: 180 },
   "openai/gpt-5.5-pro": { input: 30, output: 180 },
   "openai/gpt-5.2-pro": { input: 21, output: 168 },
+  // RETIRED 2026-11-24: the gateways redirect it to gpt-5.4-mini ($0.75/$4.5)
+  // and quote that. The row stays because a reserve has to cover EVERY rail in
+  // EVERY deploy order: until each gateway ships the redirect, GET /v1/models
+  // still prices o1 at $15/$60, and with no row an explicit call would reserve
+  // the $5/$30 default under that — the catalogue sweep would fail on it. The
+  // row over-covers the redirect target, which is the safe side. Drop it once
+  // no catalogue lists o1 at this price.
   "openai/o1": { input: 15, output: 60 },
   "openai/gpt-6-astra": { input: 10, output: 50 },
   "anthropic/claude-fable-5.1": { input: 10, output: 50 },
@@ -510,6 +529,11 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-6-luna": { input: 0.1, output: 0.5 },
   "openai/gpt-5.4-nano": { input: 0.2, output: 1.25 },
   "google/gemini-3.1-pro": { input: 2, output: 12 },
+  // RETIRED from fast[0] 2026-11-24: redirected to gemini-3.6-flash
+  // ($0.75/$3.75), which is what Google has served under this name since
+  // ~10-10. Still callable as an explicit pin, so the row stays at the rate the
+  // catalogues list today: it covers the redirect target and any rail that has
+  // not shipped the redirect yet (the claude-opus-4 rule — the dearer rail).
   "google/gemini-3.5-flash": { input: 1.5, output: 9 },
   "google/gemini-3-flash-preview": { input: 0.5, output: 3 },
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
@@ -555,8 +579,11 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-4o": { input: 2.5, output: 10 },
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
   "openai/o3": { input: 2, output: 8 },
-  "openai/o3-mini": { input: 1.1, output: 4.4 },
-  "openai/o4-mini": { input: 1.1, output: 4.4 },
+  // NOT openai/o3-mini or openai/o4-mini: RETIRED 2026-11-24 and redirected to
+  // gpt-5.4-mini, whose $4.5/M output is ABOVE their $1.1/$4.4 rows, so a kept
+  // row would under-reserve a redirected call's output. Unlisted, they reserve the
+  // $5/$30 default, which covers both the redirect target and the $1.1/$4.4
+  // the catalogues still list until the redirect ships (the hy3 precedent).
   "google/gemini-3.8-flash": { input: 0.75, output: 3.75 },
   // ⏰ 2026-12-01: Google moves Argon to $4/$20 — re-price this row.
   "google/gemini-4-argon": { input: 2, output: 10 },

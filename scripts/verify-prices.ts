@@ -338,7 +338,7 @@ const PROBES: Probe[] = [
     ["powerful", "openai/gpt-5.4-pro"],
     ["reasoning", "anthropic/claude-opus-5"], // gpt-5.6-sol cut to $4/$20 2026-08-21
     ["coding", "anthropic/claude-opus-5"],
-    ["fast", "google/gemini-3.5-flash"],
+    ["fast", "google/gemini-3.6-flash"], // gemini-3.5-flash until its 2026-11-24 retirement
     ["glm", "zai/glm-5.2"],
     ["cheap", "deepseek/deepseek-v4-pro"],
   ] as Array<[string, string]>).map(([mode, worstMember]) => {
