@@ -373,8 +373,8 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   // hidden). Absent from GET /v1/models on both gateways, and both answered
   // 200 with no payment header on Base AND Solana on 2026-11-02, serving
   // themselves. Still 200 unpaid on both on 2026-11-23, but lightning-nim now
-  // answers as nemotron-3.5-lightning (Base) / super-120b (Solana, after three
-  // capacity 429s) and ultra-550b-nim as nemotron-3-ultra-550b on both. Not
+  // answers as nemotron-3.5-lightning (Base) / super-120b (Solana, after four
+  // capacity 429s across two passes) and ultra-550b-nim as nemotron-3-ultra-550b on both. Not
   // routed, same as the seventeen above.
   "nvidia/nemotron-3.5-lightning-nim",
   "nvidia/nemotron-3-ultra-550b-nim",
