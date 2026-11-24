@@ -444,16 +444,18 @@ test("account-sheet $0 NVIDIA ids reserve nothing, and are not routed", () => {
 // sheet, but in no list here — `npm run verify:prices` flagged both on all
 // three sources: an explicit call reserved the $5/$30 default, so an
 // exhausted budget refused a free call.
-test("nemotron-3.5-bolt and minimax-m3.1-flash reserve nothing, and are not routed", () => {
+test("nemotron-3.5-bolt and minimax-m3.1-flash reserve nothing; only the probed one is routed", () => {
   for (const id of ["nvidia/nemotron-3.5-bolt", "nvidia/minimax-m3.1-flash"]) {
     assert.ok(FREE_CHAT_MODELS.has(id), `${id} is $0 on both gateways — FREE_CHAT_MODELS must list it`);
     const bare = id.slice(id.indexOf("/") + 1);
     for (const spelling of [id, bare]) {
       assert.equal(estimateChatCost(1024, undefined, spelling, undefined, 100_000), 0, spelling);
     }
-    // Catalogue-verified only: no POST probe has read the served `model` yet.
-    assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(id), `${id} must not join the routing order unprobed`);
   }
+  // bolt served itself on both chains in the 2026-11-23 POST probe, so it is a
+  // rung now. minimax-m3.1-flash is still catalogue-verified only.
+  assert.ok((MODEL_TIERS.free as readonly string[]).includes("nvidia/nemotron-3.5-bolt"));
+  assert.ok(!(MODEL_TIERS.free as readonly string[]).includes("nvidia/minimax-m3.1-flash"), "must not join the routing order unprobed");
   // Their paid MiniMax neighbours keep their rows — the free mirror's bare name
   // must not swallow a paid one.
   assert.ok(estimateChatCost(1024, undefined, "minimax-m3", undefined, 100_000) > 0);
@@ -599,16 +601,24 @@ test("claude-sonnet-5 books at the gateway's $2/$10, not the old $3/$15", () => 
 // 2026-10-20 re-probe (same shape): every $0 id still answers 200 unpaid on
 // both chains, but north-mini-code and laguna-xs-2.1 now answer as
 // nemotron-3-super-120b on BOTH — out of the tier, still in FREE_CHAT_MODELS.
-test("free[] is the self-serving set from the 2026-10-20 probe, fastest first", () => {
+// 2026-11-23 re-probe (same shape, three passes): gpt-oss-20b and
+// llama-3.2-11b-vision (free[0] and free[2]) answered as nemotron-3-super-120b
+// on both chains every time, the rung already in the tier, so they leave it.
+// nano-omni served itself on both chains every pass, so it leads.
+// nemotron-3-ultra-550b (aliased on 09-13) and nemotron-3.5-bolt (catalogue-
+// verified only until now) served themselves on both chains in two passes and
+// join at the tail.
+test("free[] is the self-serving set from the 2026-11-23 probe, fastest first", () => {
   assert.deepEqual([...MODEL_TIERS.free], [
-    "nvidia/gpt-oss-20b",                              // itself on both, 0.8-1.1s
-    "nvidia/nemotron-3-super-120b",                    // itself on both, 1.0-1.2s (the redirect target)
-    "nvidia/llama-3.2-11b-vision",                     // itself on both, 1.1-6.6s
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",   // itself on base once, aliased in the re-probe — last
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",   // itself on both, every pass, 0.4-0.9s
+    "nvidia/nemotron-3-super-120b",                    // itself on sol; Base fell back to nano-omni 2 of 3
+    "nvidia/nemotron-3-ultra-550b",                    // itself on both, two passes, 1.0-2.7s; re-admitted
+    "nvidia/nemotron-3.5-bolt",                        // itself on both, two passes, 0.6-0.7s; newly probed
   ]);
   for (const aliased of [
-    "nvidia/gpt-oss-120b", "nvidia/nemotron-3-ultra-550b", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron",
+    "nvidia/gpt-oss-120b", "nvidia/step-3.7-flash", "nvidia/mistral-nemotron",
     "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2", "cohere/north-mini-code", "poolside/laguna-xs-2.1",
+    "nvidia/gpt-oss-20b", "nvidia/llama-3.2-11b-vision",
   ]) {
     assert.ok(FREE_CHAT_MODELS.has(aliased), `${aliased} is still $0 — an explicit call must reserve nothing`);
     assert.ok(!(MODEL_TIERS.free as readonly string[]).includes(aliased), `${aliased} answers as another model on both chains — not a fallback rung`);

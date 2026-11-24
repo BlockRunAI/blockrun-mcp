@@ -376,7 +376,7 @@ test("D55: an aliased id is reported under the id that actually answered", async
 
 test("D55: the routing loop's header names the served model when it differs", async () => {
   chain = "base";
-  const free0 = "nvidia/gpt-oss-20b";
+  const free0 = MODEL_TIERS.free[0];
   script = new Map([[free0, { settleUsd: 0, fail: false, served: "nvidia/nemotron-3-super-120b", text: "free reply" }]]);
   attempts = [];
   const { call } = makeHarness();

@@ -236,8 +236,28 @@ export const MODEL_TIERS = {
   // BOTH chains (and are available:false in the Base catalogue), so by this
   // list's rule they leave the tier and stay in FREE_CHAT_MODELS.
   free: [
-    "nvidia/gpt-oss-20b", "nvidia/nemotron-3-super-120b", "nvidia/llama-3.2-11b-vision",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    // 2026-11-23 SWEEP (same probe shape, three passes, both gateways):
+    // gpt-oss-20b and llama-3.2-11b-vision, free[0] and free[2] since 10-20,
+    // never answered as themselves on either chain. Both came back as
+    // nemotron-3-super-120b (or nano-omni via X-Fallback on Base), and both
+    // gateways now redirect them there statically. That is the rung already
+    // in this list, so the loop retried one backend under three names. Out of
+    // the tier by its rule; both stay in FREE_CHAT_MODELS at $0.
+    // What served ITSELF, fastest first:
+    //   nemotron-3-nano-omni  itself on both, every pass (0.4-0.9s), so free[0]
+    //   nemotron-3-super-120b itself on sol every pass (0.9-6.6s); on Base itself
+    //                         once, X-Fallback to nano-omni twice: kept for its
+    //                         own breaker, behind the rung it falls back to
+    //   nemotron-3-ultra-550b itself on both, two passes (1.0-2.7s). Re-admitted:
+    //                         aliased on 09-13, a distinct backend again today
+    //   nemotron-3.5-bolt     itself on both, two passes (0.6-0.7s). Catalogue-
+    //                         verified only until this probe read its `model`
+    // The two newcomers go last, so a relapse costs the loop time at the tail;
+    // ultra before bolt because a 550B rung answers better than a 4B one. Four
+    // rungs, not two: FREE_TIER_DEADLINE_MS (150s) fits three 60s attempts, and
+    // the tier should be longer than what the deadline lets the loop try.
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-super-120b",
+    "nvidia/nemotron-3-ultra-550b", "nvidia/nemotron-3.5-bolt",
   ],
   coding: ["anthropic/claude-opus-5", "openai/gpt-5.3-codex", "moonshot/kimi-k3.1-pro", "xai/grok-build-0.1", "zai/glm-5.2", "qwen/qwen3.7-max", "anthropic/claude-sonnet-5"],
   glm: ["zai/glm-5", "zai/glm-5.2", "zai/glm-5.1", "zai/glm-5-turbo"],
@@ -293,6 +313,10 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "nvidia/mistral-nemotron",
   "nvidia/nemotron-nano-12b-v2-vl",
   "nvidia/nemotron-nano-9b-v2",
+  // Pulled from the routing tier 2026-11-23 for the same reason: both answer
+  // as nemotron-3-super-120b on both chains (see the free[] note).
+  "nvidia/gpt-oss-20b",
+  "nvidia/llama-3.2-11b-vision",
   // Live billing_mode:"free" but deliberately not routed (2026-10-20 probe).
   "nvidia/nemotron-3.5-lightning", // itself on sol only; super-120b on Base
   "nvidia/muse-glimmer-30b", // now listed on both; itself on sol only
@@ -302,7 +326,8 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   // flagged them: an explicit call reserved the $5/$30 default, so an
   // exhausted budget refused a free call. Catalogue-verified only — no POST
   // probe has read their response `model` yet, so not routed (free[] wants a
-  // self-serving rung on both chains). minimax-m3.1-flash is available:false
+  // self-serving rung on both chains). bolt has since been probed and routed
+  // (2026-11-23, see free[]); minimax-m3.1-flash has not. It is available:false
   // on Base that day (Solana omits the flag, i.e. serves it): unavailable is
   // not paid, and the sweep keeps pricing a member even while it is retired.
   // NOT google/gemma-4-31b or google/gemma-4-26b: $0 on the account sheet
