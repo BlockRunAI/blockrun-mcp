@@ -1,29 +1,41 @@
 // Run with: npm test  (tsx --test)
 //
-// Since 2026-09-05 the gateway answers every stocks/{market}/price|history call
-// with a pre-payment 501 ("We do not currently serve equity prices"). The tool
-// says so itself, before the chain guard and before any network call — on the
-// default Solana chain the Base-only guard used to fire first and tell the user
-// to switch chains to pay for a route that cannot succeed.
-//
-// This file pins the WORDING of that answer. The ordering — that the handler
-// returns it before baseOnlyMessage, reserveBudget, confirmSpend and the
-// client — is a handler-level property and lives in test/price-behaviour.test.ts.
+// Since 2026-11-23 the gateways serve the on-chain US stock PRICE again (blockrun
+// spec OCS): blockrun.ai prices Base, sol.blockrun.ai prices Solana. US history
+// and every non-US price/history still answer a pre-payment 501, and the tool
+// says so itself before any network call. This file pins the routing decision
+// and the wording; handler ordering lives in test/price-behaviour.test.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { equityNotServedMessage } from "../src/tools/price.js";
+import { equityNotServedMessage, isOnchainStockPrice, ONCHAIN_STOCK_BASE_USD } from "../src/tools/price.js";
+import { withTxFee } from "../src/utils/tx-fee.js";
 
-test("equity pre-flight names the withdrawal, the free catalog and the contact", () => {
+test("only a US price goes on-chain; history and other markets do not", () => {
+  assert.equal(isOnchainStockPrice("price", "stocks", "us"), true);
+  assert.equal(isOnchainStockPrice("price", "stocks", undefined), true);
+  assert.equal(isOnchainStockPrice("price", "usstock", undefined), true);
+  assert.equal(isOnchainStockPrice("history", "stocks", "us"), false);
+  assert.equal(isOnchainStockPrice("price", "stocks", "hk"), false);
+  assert.equal(isOnchainStockPrice("price", "crypto", undefined), false);
+  assert.equal(isOnchainStockPrice("list", "stocks", "us"), false);
+});
+
+test("the reserve covers the $0.005 the caller signs", () => {
+  assert.ok(withTxFee(ONCHAIN_STOCK_BASE_USD) >= 0.005);
+});
+
+test("the 501 answer points at what IS served and the free catalog", () => {
   const out = equityNotServedMessage("price", "stocks", "hk");
-  assert.match(out, /2026-09-05/);
+  assert.match(out, /market "hk"/);
   assert.match(out, /nothing was charged/);
+  assert.match(out, /action: "price", category: "stocks", market: "us"/);
   assert.match(out, /action: "list", category: "stocks", market: "hk"/);
   assert.match(out, /hello@blockrun\.ai/);
   assert.doesNotMatch(out, /switch/i);
-  assert.doesNotMatch(out, /temporary API issue/);
 });
 
-test("usstock alias defaults the catalog hint to the US market", () => {
-  assert.match(equityNotServedMessage("history", "usstock", undefined), /market: "us"/);
-  assert.match(equityNotServedMessage("history", "usstock", undefined), /Equity history/);
+test("usstock history names history and defaults the catalog hint to US", () => {
+  const out = equityNotServedMessage("history", "usstock", undefined);
+  assert.match(out, /Equity history is not served/);
+  assert.match(out, /market: "us"/);
 });
