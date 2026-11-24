@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.56.0
+
+### Added — on-chain US stock prices in `blockrun_price`
+
+`action: "price"` with `category: "stocks"` and market `us` (or omitted), or
+`category: "usstock"`, now buys the on-chain US stock price for $0.005 on your
+**active chain**: Base reads Coinbase Tokenized Stocks via blockrun.ai, Solana
+reads xStocks via sol.blockrun.ai. The answer carries the price, every pool
+with its liquidity, the dividend multiplier, the US market session and SEC
+company facts. It is budget-gated and confirm-gated like the other paid data
+tools. A ticker with no on-chain market on your chain is refused before payment
+and nothing is booked; the answer's `otherChains` says whether the other chain
+has it. US history and every non-US price/history still answer before any
+network call, now pointing at the route that is served.
+
+Spec: BlockRunAI/blockrun `specs/2026-11-23-onchain-stock-prices.md`.
+
 ## 0.55.14
 
 ### Changed — the free tier tries models that answer as themselves
