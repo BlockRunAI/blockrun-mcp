@@ -32,6 +32,8 @@ doubles the price ($0.064 → $0.127). Ask for `1536x1024` only when you need it
 | Clean product / UI mockup | `openai/gpt-image-2` | generate | `1024x1024` |
 | Photoreal / fashion / editorial | `openai/gpt-image-2` or `google/nano-banana-pro` | generate | `1024x1024` |
 | Pro-level photoreal at Flash speed | `google/nano-banana-2` | generate | `1024x1024` (only size) |
+| Newer Flash tier, thinks before it draws | `google/nano-banana-2.1` | generate | `1024x1024` (only size) |
+| Cheapest Nano Banana 2 drafts | `google/nano-banana-2-lite` | generate | `1024x1024` (only size) |
 | Artistic / stylized / fast | `google/nano-banana` | generate | `1024x1024` |
 | Cheapest usable draft | `zai/cogview-4` | generate | `1024x1024` |
 | Widescreen / banner on a budget | `bytedance/seedream-5-pro` | generate | `2048x1024` or `1280x720` |
@@ -314,4 +316,4 @@ CONSTRAINTS:
 
 ## Reference
 
-BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-2`, `google/nano-banana-pro`, `openai/gpt-image-2.5-flare`, `openai/gpt-image-2.5-sunburst`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-2.0`, `xai/grok-imagine-image-pro`, `bytedance/seedream-5-pro`
+BlockRun image models: `openai/gpt-image-2`, `openai/gpt-image-1`, `google/nano-banana`, `google/nano-banana-2`, `google/nano-banana-2-lite`, `google/nano-banana-2.1`, `google/nano-banana-pro`, `openai/gpt-image-2.5-flare`, `openai/gpt-image-2.5-sunburst`, `zai/cogview-4`, `xai/grok-imagine-image`, `xai/grok-imagine-image-2.0`, `xai/grok-imagine-image-pro`, `bytedance/seedream-5-pro`

@@ -44,7 +44,7 @@ claude mcp add blockrun -s user -- npx -y @blockrun/mcp@latest
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/context-cost-dark.svg">
-    <img src="assets/context-cost.svg" width="620" alt="Context cost: 14.4K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 61% less.">
+    <img src="assets/context-cost.svg" width="620" alt="Context cost: 14.5K tokens, 7% of a 200K context window, charged every turn whether or not you call a tool. 5.6K with --profile trading, 61% less.">
   </picture>
 </div>
 
@@ -252,9 +252,9 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,425 |
+| `full` *(default)* | 19 | 14,533 |
 | `trading` | 8 | 5,619 |
-| `media` | 7 | 7,016 |
+| `media` | 7 | 7,124 |
 | `research` | 5 | 2,819 |
 | `chat` | 3 | 2,167 |
 
@@ -370,7 +370,7 @@ npx -y @blockrun/mcp@latest skills install --to ~/.codex/skills
 | Tool | Data source | Cost |
 |------|-------------|------|
 | `blockrun_chat` | <!-- br:models.chatVisible -->91<!-- /br:models.chatVisible --> LLMs (GPT, Claude, Gemini, DeepSeek, Kimi K3.1 Pro, GLM, NVIDIA free tier, …) with `mode` tier routing | per token |
-| `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.15 |
+| `blockrun_image` | Generate: openai/gpt-image-2, gpt-image-1, google/nano-banana(-2/-2-lite/-2.1/-pro), xai/grok-imagine-image(-pro), zai/cogview-4, bytedance/seedream-5-pro. Edit: img2img, inpaint, fusion. | $0.015–0.56 |
 | `blockrun_video` | xAI Grok Imagine Video 1.0/1.5 + ByteDance Seedance 1.5/2.0-mini/2.0-fast/2.0/2.5 (720p + audio; 4K on 2.0, up to 30s on 2.5); RealFace asset → real-person video; [reference images, video and audio](docs/seedance-capabilities.md) on the account rail | $0.053–0.32/sec charged; reference clips billed at the model's ceiling (15.2s on 2.0, 30.2s on 2.5) |
 | `blockrun_realface` | Enroll a real person (phone liveness) or AI character (Virtual Portrait) as a `ta_xxxx` asset for Seedance 2.0 / 2.0-fast / 2.0-mini video (not 2.5) | free; $0.01 to enroll |
 | `blockrun_music` | MiniMax music generation | per track |

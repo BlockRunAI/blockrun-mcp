@@ -202,6 +202,15 @@ const PROBES: Probe[] = [
   // nano-banana-2 is 1024-only upstream (the gateway 400s any other size), so a
   // single probe covers its whole price surface.
   { label: "image nano-banana-2 1024", path: "images/generations", body: { model: "google/nano-banana-2", prompt: "a cube", size: "1024x1024" }, expected: estimateImageCost("google/nano-banana-2", "1024x1024") },
+  // Added 2026-11-24 with their rows. Same shape as nano-banana-2: 1024-only
+  // (every other size is a 400 before any payment), so one probe each is the
+  // whole price surface. Edits quote the same figure on /images/image2image.
+  ...(["google/nano-banana-2-lite", "google/nano-banana-2.1"] as const).map((model) => ({
+    label: `image ${model.slice(model.indexOf("/") + 1)} 1024`,
+    path: "images/generations",
+    body: { model, prompt: "a cube", size: "1024x1024" },
+    expected: estimateImageCost(model, "1024x1024"),
+  })),
   // Added 2026-10-20 with their rows: the 2.5 pair at both size tiers (flat
   // across quality, $0.28 / $0.56), Grok Imagine 2.0, and the Pro row that
   // had sat at $0.07 for six weeks after the gateway cut it to $0.05.
