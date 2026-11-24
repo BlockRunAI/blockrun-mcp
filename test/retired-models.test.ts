@@ -36,6 +36,13 @@ const REDIRECTED: Record<string, [string, Rate | null]> = {
   // 2026-12-01: Google retires Gemini 2.5.
   "google/gemini-2.5-flash": ["google/gemini-3.5-flash-lite", { input: 0.3, output: 2.5 }],
   "google/gemini-2.5-pro": ["google/gemini-3.8-flash", { input: 1.25, output: 10 }],
+  // 2026-12-11: OpenAI shuts down o3, gpt-5-mini and gpt-5-nano.
+  "openai/o3": ["openai/gpt-5.4-mini", { input: 2, output: 8 }],
+  "openai/gpt-5-mini": ["openai/gpt-5.6-luna", { input: 0.25, output: 2 }],
+  "openai/gpt-5-nano": ["openai/gpt-6-luna", { input: 0.05, output: 0.4 }],
+  // Base's target (it pointed at gpt-5-nano). Solana's, gpt-4.1-mini, is
+  // asserted separately below.
+  "openai/gpt-4.1-nano": ["openai/gpt-6-luna", { input: 0.1, output: 0.4 }],
 };
 
 const bare = (id: string) => id.slice(id.indexOf("/") + 1);
@@ -114,5 +121,32 @@ test("o3-mini and o4-mini carry no row: theirs would under-reserve gpt-5.4-mini'
   for (const id of ["openai/o3-mini", "openai/o4-mini"]) {
     assert.equal(Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id), false, id);
     assert.deepEqual(rateFor(id), DEFAULT_CHAT_PRICE, id);
+  }
+});
+
+test("gpt-5-mini leaves fast without moving any other member (gpt-5.6-luna already precedes it)", () => {
+  // From 2026-12-11 the gateway answers gpt-5-mini with gpt-5.6-luna, which
+  // fast already tried one slot earlier, so the served order is unchanged.
+  assert.deepEqual(MODEL_TIERS.fast.slice(0, 4), [
+    "google/gemini-3.6-flash",
+    "google/gemini-3.5-flash-lite",
+    "openai/gpt-5.6-luna",
+    "deepseek/deepseek-chat",
+  ]);
+});
+
+test("gpt-4.1-nano carries no row: $0.1/$0.4 under-reserves every rail that redirects it", () => {
+  // Base -> gpt-6-luna ($0.1/$0.5) from 2026-12-11; Solana -> gpt-4.1-mini
+  // ($0.4/$1.6) since 2026-11-03. The default covers both.
+  assert.equal(Object.hasOwn(CHAT_PRICE_PER_MTOKEN, "openai/gpt-4.1-nano"), false);
+  for (const target of ["openai/gpt-6-luna", "openai/gpt-4.1-mini"]) {
+    const t = CHAT_PRICE_PER_MTOKEN[target];
+    const r = rateFor("openai/gpt-4.1-nano");
+    assert.ok(r.input >= t.input && r.output >= t.output, `gpt-4.1-nano under-reserves ${target}`);
+    for (const chars of [1_000, 100_000, 700_000]) {
+      const pinned = estimateChatCost(1024, undefined, "openai/gpt-4.1-nano", undefined, chars);
+      const served = estimateChatCost(1024, undefined, target, undefined, chars);
+      assert.ok(pinned >= served, `gpt-4.1-nano at ${chars} chars reserves ${pinned} < ${served} for ${target}`);
+    }
   }
 });
