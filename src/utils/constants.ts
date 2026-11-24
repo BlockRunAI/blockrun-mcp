@@ -58,8 +58,9 @@ export const BASE_RPC_URLS = [
 //   gpt-5.3-codex ($1.75/$14) (gpt-5.3 is hidden + available:false), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
 //   o3 ($2/$8). o1 ($15/$60), o3-mini and o4-mini are RETIRED (2026-11-24,
-//   redirected to gpt-5.4-mini — see the note above MODEL_TIERS). o3,
-//   gpt-5-mini and gpt-5-nano (hidden) RETIRE 2026-12-11 (same note).
+//   redirected to gpt-5.4-mini — see the note above MODEL_TIERS). o3 and
+//   gpt-5-mini RETIRE 2026-12-11 (same note); gpt-5-nano (hidden) stays
+//   served from Azure at its own price until 2027-02-09.
 // Anthropic (12): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
 //   the default, so it carries a price row), claude-opus-5.5 ($4/$20, 1M, 128k
 //   out — newest Opus, cheaper than Opus 5, thinking always on),
@@ -167,18 +168,20 @@ export const BASE_RPC_URLS = [
 //
 // 2026-12-11 RETIREMENTS (OpenAI shuts down o3, gpt-5-mini and gpt-5-nano —
 // developers.openai.com/api/docs/deprecations, notice 2026-06-11; the
-// gateways redirect each, quoted at the successor's price):
+// gateways redirect o3 and gpt-5-mini, quoted at the successor's price):
 //   openai/gpt-5-mini -> openai/gpt-5.6-luna ($0.25/$2 -> $0.2/$1.2). fast
 //     already listed gpt-5.6-luna one slot earlier, so from 12-11 the tier
 //     would have tried the same model twice; gpt-5-mini's slot is removed and
 //     the order of every other member holds.
 //   openai/o3 -> openai/gpt-5.4-mini ($2/$8 -> $0.75/$4.5). In no tier.
-//   openai/gpt-5-nano -> openai/gpt-6-luna ($0.05/$0.4 -> $0.1/$0.5). In no
-//     tier, no price row.
-//   openai/gpt-4.1-nano: base redirected it to gpt-5-nano, and from 12-11 to
-//     gpt-6-luna ($0.1/$0.5); Solana has sent it to gpt-4.1-mini ($0.4/$1.6)
-//     since 2026-11-03; arc still serves it at $0.1/$0.4. In no tier; see its
-//     (removed) price row.
+//   openai/gpt-5-nano is NOT redirected (owner decision 2026-11-24): every
+//     gateway keeps serving it from Azure at its own $0.05/$0.4 until
+//     2027-02-09, when it retires. In no tier, no price row (the default
+//     covers it).
+//   openai/gpt-4.1-nano: base redirects it to gpt-5-nano ($0.05/$0.4) until
+//     then; Solana has sent it to gpt-4.1-mini ($0.4/$1.6) since 2026-11-03;
+//     arc still serves it at $0.1/$0.4. In no tier; see its (removed) price
+//     row.
 export const MODEL_TIERS = {
   fast: ["google/gemini-3.6-flash", "google/gemini-3.5-flash-lite", "openai/gpt-5.6-luna", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3.1-pro", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
@@ -605,10 +608,10 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-5.2": { input: 1.75, output: 14 },
   "openai/gpt-4.1": { input: 2, output: 8 },
   "openai/gpt-4.1-mini": { input: 0.4, output: 1.6 },
-  // NOT openai/gpt-4.1-nano: from 2026-12-11 base redirects it to gpt-6-luna
-  // ($0.1/$0.5), and Solana has sent it to gpt-4.1-mini ($0.4/$1.6) since
-  // 2026-11-03, so its old $0.1/$0.4 row under-reserves both (arc still serves
-  // it at $0.1/$0.4). Unlisted, it reserves the $5/$30 default, which covers
+  // NOT openai/gpt-4.1-nano: Solana has sent it to gpt-4.1-mini ($0.4/$1.6)
+  // since 2026-11-03, so its old $0.1/$0.4 row under-reserves that rail (base
+  // sends it to gpt-5-nano at $0.05/$0.4 until 2027-02-09; arc still serves it
+  // at $0.1/$0.4). Unlisted, it reserves the $5/$30 default, which covers
   // every rail (the o3-mini rule).
   "openai/gpt-4o": { input: 2.5, output: 10 },
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },

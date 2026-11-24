@@ -36,13 +36,10 @@ const REDIRECTED: Record<string, [string, Rate | null]> = {
   // 2026-12-01: Google retires Gemini 2.5.
   "google/gemini-2.5-flash": ["google/gemini-3.5-flash-lite", { input: 0.3, output: 2.5 }],
   "google/gemini-2.5-pro": ["google/gemini-3.8-flash", { input: 1.25, output: 10 }],
-  // 2026-12-11: OpenAI shuts down o3, gpt-5-mini and gpt-5-nano.
+  // 2026-12-11: OpenAI shuts down o3 and gpt-5-mini. (gpt-5-nano too, but
+  // the gateways keep serving it from Azure until 2027-02-09; see below.)
   "openai/o3": ["openai/gpt-5.4-mini", { input: 2, output: 8 }],
   "openai/gpt-5-mini": ["openai/gpt-5.6-luna", { input: 0.25, output: 2 }],
-  "openai/gpt-5-nano": ["openai/gpt-6-luna", { input: 0.05, output: 0.4 }],
-  // Base's target (it pointed at gpt-5-nano). Solana's, gpt-4.1-mini, is
-  // asserted separately below.
-  "openai/gpt-4.1-nano": ["openai/gpt-6-luna", { input: 0.1, output: 0.4 }],
 };
 
 const bare = (id: string) => id.slice(id.indexOf("/") + 1);
@@ -135,12 +132,23 @@ test("gpt-5-mini leaves fast without moving any other member (gpt-5.6-luna alrea
   ]);
 });
 
-test("gpt-4.1-nano carries no row: $0.1/$0.4 under-reserves every rail that redirects it", () => {
-  // Base -> gpt-6-luna ($0.1/$0.5) from 2026-12-11; Solana -> gpt-4.1-mini
-  // ($0.4/$1.6) since 2026-11-03. The default covers both.
+test("gpt-5-nano is not redirected before 2027-02-09: in no tier, and the reserve covers its own price", () => {
+  // Owner decision 2026-11-24: the gateways serve it from Azure at
+  // $0.05/$0.4 until 2027-02-09 instead of redirecting it to gpt-6-luna.
+  for (const [mode, ids] of Object.entries(MODEL_TIERS)) {
+    assert.ok(!(ids as readonly string[]).includes("openai/gpt-5-nano"), `${mode} routes to gpt-5-nano`);
+  }
+  const r = rateFor("openai/gpt-5-nano");
+  assert.ok(r.input >= 0.05 && r.output >= 0.4, `gpt-5-nano reserves $${r.input}/$${r.output}`);
+});
+
+test("gpt-4.1-nano carries no row: $0.1/$0.4 under-reserves Solana's redirect", () => {
+  // Base -> gpt-5-nano ($0.05/$0.4) until 2027-02-09; Solana -> gpt-4.1-mini
+  // ($0.4/$1.6) since 2026-11-03; arc serves it at $0.1/$0.4. The default
+  // covers every rail.
   assert.equal(Object.hasOwn(CHAT_PRICE_PER_MTOKEN, "openai/gpt-4.1-nano"), false);
-  for (const target of ["openai/gpt-6-luna", "openai/gpt-4.1-mini"]) {
-    const t = CHAT_PRICE_PER_MTOKEN[target];
+  for (const target of ["openai/gpt-5-nano", "openai/gpt-4.1-mini"]) {
+    const t = rateFor(target);
     const r = rateFor("openai/gpt-4.1-nano");
     assert.ok(r.input >= t.input && r.output >= t.output, `gpt-4.1-nano under-reserves ${target}`);
     for (const chars of [1_000, 100_000, 700_000]) {
