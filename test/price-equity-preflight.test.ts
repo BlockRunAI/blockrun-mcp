@@ -17,6 +17,7 @@ test("only a US price goes on-chain; history and other markets do not", () => {
   assert.equal(isOnchainStockPrice("history", "stocks", "us"), false);
   assert.equal(isOnchainStockPrice("price", "stocks", "hk"), false);
   assert.equal(isOnchainStockPrice("price", "crypto", undefined), false);
+  assert.equal(isOnchainStockPrice("price", "usstock", "hk"), false, "usstock with another market is that market, not US");
   assert.equal(isOnchainStockPrice("list", "stocks", "us"), false);
 });
 

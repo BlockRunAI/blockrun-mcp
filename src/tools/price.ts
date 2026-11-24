@@ -48,10 +48,15 @@ function isPaidPriceCall(action: "price" | "history" | "list", category: string)
 
 /** The one equity call the gateways serve: a US price, on-chain (OCS). */
 export function isOnchainStockPrice(action: string, category: string, market?: string): boolean {
-  return action === "price" && (category === "usstock" || (category === "stocks" && (market ?? "us") === "us"));
+  // usstock is the US alias, but a caller who also names another market asked for that market (GLM review).
+  return action === "price" && (category === "usstock" || category === "stocks") && (market ?? "us") === "us";
 }
 
-/** Base price of an on-chain stock price; the gateway adds its tx fee (withTxFee reserves it). */
+/**
+ * Base price of an on-chain stock price; the gateway adds its tx fee. withTxFee
+ * reserves base + $0.002 = $0.006 for a call that settles at $0.005 (the safe
+ * direction, see utils/tx-fee.ts); recordActualSpend books what actually settled.
+ */
 export const ONCHAIN_STOCK_BASE_USD = 0.004;
 
 /**

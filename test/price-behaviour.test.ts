@@ -60,10 +60,13 @@ let priceClientRequests: boolean[] = [];
 const SWITCH_CHAINS = "Paid stock price/history calls need Base — switch chains with blockrun_wallet action:\"chain\".";
 // The on-chain stock price goes through rawGet on a fresh client (OCS, 2026-11-23).
 const rawCalls: string[] = [];
+// Set per test to make rawGet throw like the SDK does on a gateway error.
+let rawError: (Error & { statusCode?: number }) | null = null;
 mock.module("../src/utils/raw-call.js", {
   namedExports: {
     rawGet: async (_client: unknown, path: string) => {
       rawCalls.push(path);
+      if (rawError) throw rawError;
       return { data: { symbol: "NVDA", chain: "solana", price: 164.08, pools: [] }, paidUsd: 0.005 };
     },
     ledgerFallback: (x: number) => x,
@@ -113,6 +116,7 @@ function harness(limit: number | null = null, approve = false) {
   assert.ok(handler, "blockrun_price did not register a handler");
   networkCalls = 0;
   rawCalls.length = 0;
+  rawError = null;
   clientCalls.length = 0;
   priceClientRequests = [];
   return {
@@ -145,6 +149,24 @@ test("US stocks price goes on-chain on the ACTIVE chain: no chain guard, one pai
   assert.equal(clientCalls.length, 0, "the Pyth-era PriceClient must not be used for the on-chain price");
   assert.equal(h.budget.calls, 1, "a paid call is booked");
   assert.equal(h.elicits(), 1, "a paid call asks before signing when confirm-spend is on");
+});
+
+test("a ticker with no on-chain market (404 before payment) books nothing and says so (GLM review)", async () => {
+  const h = harness(null, true);
+  rawError = Object.assign(new Error("API error: 404 no_onchain_market — No on-chain market for IBM on Solana. Nothing was charged."), { statusCode: 404 });
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "IBM", market: "us" });
+  assert.equal(res.isError, true);
+  assert.match(text, /no_onchain_market|No on-chain market/);
+  assert.doesNotMatch(text, /booked against your budget/);
+  assert.equal(h.budget.spent, 0, "a pre-payment 404 must not be booked");
+});
+
+test("a 503 not_charged after payment books nothing", async () => {
+  const h = harness(null, true);
+  rawError = Object.assign(new Error("API error after payment: 503 source_unavailable — payment_status not_charged. Nothing was charged."), { statusCode: 503 });
+  const { res } = await h.call({ action: "price", category: "stocks", symbol: "NVDA", market: "us" });
+  assert.equal(res.isError, true);
+  assert.equal(h.budget.spent, 0, "an explicitly uncharged 503 must not be booked");
 });
 
 test("a declined confirm sends nothing", async () => {
