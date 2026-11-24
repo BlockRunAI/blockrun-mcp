@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.56.1
+
+### Added — two more image models
+
+`blockrun_image` now offers `google/nano-banana-2-lite` (about $0.05 an image)
+and `google/nano-banana-2.1` (about $0.07). Both generate at 1024x1024 and both
+support image editing. Each reserve covers the gateway's live charge, and
+`verify:prices` now checks both models.
+
+The README's price range for `blockrun_image` was wrong ($0.015–0.15). It now
+reads $0.015–0.56, and a test keeps it matched to the price table.
+
 ## 0.56.0
 
 ### Added — on-chain US stock prices in `blockrun_price`
