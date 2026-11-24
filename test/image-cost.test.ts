@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { z } from "zod";
 import type { BudgetState } from "../src/types.js";
 
 // Pin the RAIL before anything can load utils/auth.ts. image.ts asks
@@ -83,13 +84,26 @@ test("the suite runs on the wallet rail whatever the developer's account setup",
 // Minimal McpServer stub: capture the handler registerImageTool installs.
 function makeHarness() {
   let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
+  let shape: z.ZodRawShape | undefined;
+  let description = "";
   const server = {
-    registerTool: (_name: string, _cfg: unknown, h: any) => { handler = h; },
+    registerTool: (_name: string, cfg: { inputSchema: z.ZodRawShape; description: string }, h: any) => {
+      handler = h;
+      shape = cfg.inputSchema;
+      description = cfg.description;
+    },
     server: { getClientCapabilities: () => ({}) },
   } as any;
   const budget: BudgetState = { limit: null, spent: 0, calls: 0, agents: new Map() };
   registerImageTool(server, budget);
-  return { call: (args: Record<string, unknown>) => handler!(args), budget };
+  return {
+    call: (args: Record<string, unknown>) => handler!(args),
+    // The schema the MCP client validates against before the handler runs —
+    // a model missing from the enum is refused here, not in the handler.
+    parse: (args: Record<string, unknown>) => z.object(shape!).parse(args) as Record<string, unknown>,
+    description,
+    budget,
+  };
 }
 
 // The Cost footer and the ledger must report what the user is CHARGED, not the
@@ -222,6 +236,61 @@ test("nano-banana-2 bills its flat 1024 price and is accepted for edits", async 
     image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   });
   assert.equal(edit.isError, undefined);
+});
+
+// nano-banana-2-lite and nano-banana-2.1: the gateway's 2026-11-16 rows
+// (blockrun #1080 and its sol port), $0.05 and $0.07 catalog, 1024x1024 only —
+// every other size is a 400 before any payment exists, so one price is each
+// model's whole surface. LIVE below is the unpaid 402 quote, probed 2026-11-24,
+// on /v1/images/generations and /v1/images/image2image alike (edits quote the
+// same figure). Base adds its $0.001 fee; Solana adds none. The reserve is
+// catalog x 1.05 + the $0.002 reserved fee, ceiled with the gateway's float
+// drift (+1 micro, see estimateCost); Base books reserve - $0.001.
+const NB2_FAMILY_LIVE: Array<{ model: string; base: number; solana: number; reserve: number; booked: number }> = [
+  { model: "google/nano-banana-2-lite", base: 0.0535, solana: 0.0525, reserve: 0.054501, booked: 0.053501 },
+  { model: "google/nano-banana-2.1", base: 0.0745, solana: 0.0735, reserve: 0.075501, booked: 0.074501 },
+];
+
+test("nano-banana-2-lite and nano-banana-2.1 are in the model enum and the description", () => {
+  const { parse, description } = makeHarness();
+  for (const { model } of NB2_FAMILY_LIVE) {
+    assert.equal(parse({ prompt: "a pear", model }).model, model);
+    assert.ok(description.includes(`- ${model} (`), `${model} has no generate line in the tool description`);
+    assert.match(description, new RegExp(`Edit \\(img2img\\) models:[^\\n]*${model.replace(/[.]/g, "\\.")}[,\\n]`), `${model} missing from the edit list`);
+  }
+  // Mirrors the gateway's catalog; a typo'd id must still be refused by the schema.
+  assert.throws(() => parse({ prompt: "a pear", model: "google/nano-banana-2-light" }));
+});
+
+test("nano-banana-2-lite and nano-banana-2.1 reserve at least the live charge on both chains", () => {
+  for (const { model, base, solana, reserve } of NB2_FAMILY_LIVE) {
+    const reserved = estimateCost(model, "1024x1024");
+    assert.equal(reserved, reserve, `${model}: reserve moved`);
+    for (const [chain, charged] of [["base", base], ["solana", solana]] as const) {
+      assert.ok(reserved >= charged, `${model} ${chain}: reserved ${reserved} < charged ${charged}`);
+      assert.ok(reserved <= charged + 0.002 + 1e-6, `${model} ${chain}: reserved ${reserved} sits more than the reserved-fee cushion above ${charged}`);
+    }
+  }
+});
+
+test("nano-banana-2-lite and nano-banana-2.1 book the Base charge and are accepted for edits", async () => {
+  for (const { model, base, booked } of NB2_FAMILY_LIVE) {
+    const { call, budget } = makeHarness();
+    const res = await call({ prompt: "a pear", model });
+    assert.equal(res.isError, undefined, `${model} generate failed`);
+    assert.equal(res.structuredContent.cost_usd, booked, `${model}: booked ${res.structuredContent.cost_usd}`);
+    assert.ok(booked >= base, `${model}: booked ${booked} below the live Base charge ${base}`);
+    assert.equal(budget.spent, res.structuredContent.cost_usd);
+    // The gateway's EDIT_SUPPORTED_MODELS lists both on Base and Solana, so the
+    // local gate must not refuse them before the paid call.
+    const edit = await call({
+      prompt: "make it red",
+      action: "edit",
+      model,
+      image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    });
+    assert.equal(edit.isError, undefined, `${model} edit was refused locally`);
+  }
 });
 
 // Seedream's large tier is keyed on min(w,h), probed live: 2048x1024 and

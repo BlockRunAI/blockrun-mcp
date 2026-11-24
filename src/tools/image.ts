@@ -123,6 +123,12 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
 // the old prices, so every Pro render reserved $0.107001 against a $0.1795
 // charge (4K: $0.1595 against $0.316) — the Base ledger books the reserve, so
 // the shortfall was written to budget.spent as well.
+//
+// 2026-11-24: added nano-banana-2-lite ($0.05) and nano-banana-2.1 ($0.07), the
+// gateway's rows from 2026-11-16 (blockrun #1080, sol port). Both are
+// 1024x1024 only: the gateway 400s every other size before a payment exists,
+// so one base price is their whole surface. Unpaid 402 quotes the same day:
+// Base $0.0535 / $0.0745, Solana $0.0525 / $0.0735, generate and edit alike.
 const GENERATE_MODEL_COST: Record<string, number> = {
   "zai/cogview-4": 0.015,
   "xai/grok-imagine-image": 0.02,
@@ -134,6 +140,8 @@ const GENERATE_MODEL_COST: Record<string, number> = {
   "openai/gpt-image-2.5-sunburst": 0.28,
   "google/nano-banana": 0.05,
   "google/nano-banana-2": 0.09,
+  "google/nano-banana-2-lite": 0.05,
+  "google/nano-banana-2.1": 0.07,
   "google/nano-banana-pro": 0.17,
   "bytedance/seedream-5-pro": 0.045,
 };
@@ -156,6 +164,8 @@ const EDIT_MODELS = new Set([
   "openai/gpt-image-2.5-sunburst",
   "google/nano-banana",
   "google/nano-banana-2",
+  "google/nano-banana-2-lite",
+  "google/nano-banana-2.1",
   "google/nano-banana-pro",
 ]);
 
@@ -174,6 +184,8 @@ const IMAGE_MODELS = [
   "zai/cogview-4",
   "google/nano-banana",
   "google/nano-banana-2",
+  "google/nano-banana-2-lite",
+  "google/nano-banana-2.1",
   "google/nano-banana-pro",
   "openai/gpt-image-1",
   "openai/gpt-image-2",
@@ -360,6 +372,8 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - openai/gpt-image-1 ($0.02–0.04) — GPT native image generation
 - google/nano-banana ($0.05) — Gemini-family image model
 - google/nano-banana-2 ($0.09) — Gemini 3.1 Flash, pro-level quality at Flash speed (1024x1024 only)
+- google/nano-banana-2-lite ($0.05) — Gemini 3.1 Flash Lite, lowest-cost Nano Banana 2 (1024x1024 only)
+- google/nano-banana-2.1 ($0.07) — newer Flash-tier Nano Banana with thinking (1024x1024 only)
 - google/nano-banana-pro ($0.17; $0.30 at 4096px) — up to 4K, strongest photorealism
 - xai/grok-imagine-image ($0.02) — stylized, fast
 - xai/grok-imagine-image-2.0 ($0.04) — Grok Imagine 2.0, between Grok Imagine and Pro on price
@@ -367,7 +381,7 @@ Generation models (1024x1024 base price; larger sizes cost more on gpt-image-*):
 - zai/cogview-4 ($0.015) — cheapest, photorealistic detailed scenes
 - bytedance/seedream-5-pro ($0.045; $0.09 when both dimensions exceed 1024) — Seedream 5.0 Pro; cheap widescreen at 1280x720 / 2048x1024, large formats up to 2848x1600
 
-Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-2.5-sunburst, openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-pro
+Edit (img2img) models: openai/gpt-image-2 (default), openai/gpt-image-2.5-sunburst, openai/gpt-image-1, google/nano-banana, google/nano-banana-2, google/nano-banana-2-lite, google/nano-banana-2.1, google/nano-banana-pro
 Multi-image edit: pass an array of 2–4 source images to "image" to fuse them in one render (openai/* up to 4, google/* up to 3) — e.g. a subject plus a sprite layout guide, or a reference plus a brand logo.
 Source images and masks accept a base64 data URI, an http(s) URL, or a local file path (auto-encoded). Inpaint mask (openai/gpt-image-* only) via "mask"; not combinable with multiple source images.`,
       annotations: TOOL_ANNOTATIONS.generative,
