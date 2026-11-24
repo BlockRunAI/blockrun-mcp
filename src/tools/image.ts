@@ -129,7 +129,7 @@ export async function resolveImageRef(ref: string): Promise<ResolvedImageRef> {
 // 1024x1024 only: the gateway 400s every other size before a payment exists,
 // so one base price is their whole surface. Unpaid 402 quotes the same day:
 // Base $0.0535 / $0.0745, Solana $0.0525 / $0.0735, generate and edit alike.
-const GENERATE_MODEL_COST: Record<string, number> = {
+export const GENERATE_MODEL_COST: Record<string, number> = {
   "zai/cogview-4": 0.015,
   "xai/grok-imagine-image": 0.02,
   "xai/grok-imagine-image-2.0": 0.04,
@@ -147,7 +147,9 @@ const GENERATE_MODEL_COST: Record<string, number> = {
 };
 
 // Non-square / oversized renders cost more on these models (live catalog).
-const LARGE_SIZE_COST: Record<string, number> = {
+// Both tables are exported for test/readme-image-price.test.ts, which derives
+// the README's blockrun_image price range from them.
+export const LARGE_SIZE_COST: Record<string, number> = {
   "openai/gpt-image-1": 0.04,
   "openai/gpt-image-2": 0.12,
   "openai/gpt-image-2.5-flare": 0.56, // 1536x1024 / 1024x1536
