@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.55.14
+
+### Changed — the free tier tries models that answer as themselves
+
+`mode: "free"` used to try `nvidia/gpt-oss-20b` first and also tried
+`nvidia/llama-3.2-11b-vision`. A probe on 2026-11-23 found that neither
+answers as itself on blockrun.ai or sol.blockrun.ai: both are redirected to
+other free models. The tier now tries Nemotron 3 Nano Omni, Nemotron 3 Super,
+Nemotron 3 Ultra and Nemotron 3.5 Bolt, all of which answered as themselves on
+both chains. The two old ids stay in the free list, so explicitly calling them
+still reserves $0.
+
 ## 0.55.13
 
 ### Fixed — two free models were treated as paid
