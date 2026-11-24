@@ -77,7 +77,8 @@ export const BASE_RPC_URLS = [
 //   file recorded in July; RETIRED 2026-11-24, redirected to 3.6 Flash),
 //   gemini-3-flash-preview ($0.5/$3),
 //   gemini-3.5-flash-lite ($0.3/$2.5, live-probed 2026-08-12),
-//   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro, gemini-2.5-flash,
+//   gemini-3.1-flash-lite ($0.25/$1.5), gemini-2.5-pro and gemini-2.5-flash
+//   (both RETIRED 2026-12-01: redirected to 3.8 Flash and 3.5 Flash-Lite),
 //   gemini-2.5-flash-lite — all 1M context
 // DeepSeek (5): deepseek-v4.1-flash ($0.14/$0.28, 1M, reasoning + coding —
 //   listed on Base 2026-10-20, same price as deepseek-chat; NOT on Solana yet:
@@ -154,11 +155,19 @@ export const BASE_RPC_URLS = [
 //   openai/o1, openai/o3-mini, openai/o4-mini (and o1-mini, which redirected
 //     onto o4-mini) -> openai/gpt-5.4-mini. Dead at OpenAI since 2026-10-23
 //     and on Azure since 2026-11-19. None was in a tier; see their price rows.
+//
+// 2026-12-01 RETIREMENTS (Google retires Gemini 2.5; the gateways redirect):
+//   google/gemini-2.5-flash -> google/gemini-3.5-flash-lite (same $0.3/$2.5).
+//     Written in place in fast and cheap. fast already listed 3.5-flash-lite
+//     further down; from 12-01 the gateway answered the 2.5 name with it, so
+//     the tier was already trying it second — that second slot now says so,
+//     and the later duplicate is gone. The order of every other member holds.
+//   google/gemini-2.5-pro -> google/gemini-3.8-flash. In no tier.
 export const MODEL_TIERS = {
-  fast: ["google/gemini-3.6-flash", "google/gemini-2.5-flash", "openai/gpt-5.6-luna", "google/gemini-3.5-flash-lite", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
+  fast: ["google/gemini-3.6-flash", "google/gemini-3.5-flash-lite", "openai/gpt-5.6-luna", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3.1-pro", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
-  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-2.5-flash", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
+  cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-3.5-flash-lite", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
   reasoning: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "moonshot/kimi-k3.1-pro", "xai/grok-4.3", "deepseek/deepseek-v4-pro", "deepseek/deepseek-reasoner"],
   // 2026-08-12 sweep (both chains, realistic prompt). Order matters: free[0]
   // is what every mode:"free" call tries first, and a slow primary stalls the
@@ -536,6 +545,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // not shipped the redirect yet (the claude-opus-4 rule — the dearer rail).
   "google/gemini-3.5-flash": { input: 1.5, output: 9 },
   "google/gemini-3-flash-preview": { input: 0.5, output: 3 },
+  // RETIRED from fast and cheap 2026-12-01: redirected to gemini-3.5-flash-lite
+  // at the same $0.3/$2.5, so the row is exact on every rail. Kept for pins.
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "moonshot/kimi-k3.1-pro": { input: 2, output: 10 },
@@ -588,6 +599,9 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // ⏰ 2026-12-01: Google moves Argon to $4/$20 — re-price this row.
   "google/gemini-4-argon": { input: 2, output: 10 },
   "google/gemini-3.6-flash": { input: 0.75, output: 3.75 },
+  // RETIRED 2026-12-01: redirected to gemini-3.8-flash ($0.75/$3.75). The row
+  // (and its 200K step) over-covers the redirect target and still covers any
+  // rail that bills 2.5 Pro until it ships the redirect. Kept for pins.
   "google/gemini-2.5-pro": { input: 1.25, output: 10 },
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5 },
   "google/gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },

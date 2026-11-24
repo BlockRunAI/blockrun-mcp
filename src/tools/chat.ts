@@ -488,7 +488,7 @@ Notable modes:
 - mode:"powerful" → Claude Opus 5, Claude Opus 4.8, GPT-5.6-sol, Claude Fable 5 (frontier, 1M context)
 - mode:"reasoning" → Claude Opus 5, GPT-5.6-sol, Kimi K3.1 Pro, Grok 4.3, deepseek-v4-pro
 - mode:"coding" → Claude Opus 5, GPT-5.3-codex, Kimi K3.1 Pro, Grok Build, GLM-5.2
-- mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Gemini 2.5 Flash, DeepSeek Chat / V4.1 Flash
+- mode:"cheap" → deepseek-v4-pro, Qwen3.7 Flash, MiniMax M3, Gemini 3.5 Flash-Lite, DeepSeek Chat / V4.1 Flash
 - mode:"glm" → Zhipu GLM-5 / 5.2 / 5.1 / 5-Turbo (strong at coding)
 - mode:"free" → free models (no cost)
 

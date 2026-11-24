@@ -252,11 +252,11 @@ Package managers have shown install size for decades. Almost no MCP server shows
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,533 |
+| `full` *(default)* | 19 | 14,535 |
 | `trading` | 8 | 5,619 |
 | `media` | 7 | 7,124 |
-| `research` | 5 | 2,819 |
-| `chat` | 3 | 2,167 |
+| `research` | 5 | 2,821 |
+| `chat` | 3 | 2,169 |
 
 Running `--profile trading` instead of the default costs **61% less context** for the same trading
 workflow. If you only ever ask about markets, that is the single cheapest change you can make.
