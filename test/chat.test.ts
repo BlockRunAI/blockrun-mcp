@@ -465,6 +465,34 @@ test("nemotron-3.5-bolt and minimax-m3.1-flash reserve nothing, and are not rout
   }
 });
 
+// The twenty-five members GET /v1/models lists on neither gateway — the ones
+// `npm run verify:prices` can only name as UNVERIFIED. Settled 2026-11-23 by an
+// unpaid realistic-prompt POST to both chains: every one answered 200 with no
+// payment header on Base AND Solana (none 402, none an unknown-model 400/410),
+// so every one stays $0. None served itself — they answer as
+// nemotron-3-super-120b / nano-omni / the -nim twin's model, via the gateways'
+// redirect maps and fallbacks — which is a routing fact, not a price one.
+// A member that ever answers 402 must leave this set (it would reserve $0 for
+// a paid call); so must one that answers unknown-model on both chains.
+const PROBED_FREE_2026_11_23 = [
+  "nvidia/gpt-oss-20b", "nvidia/llama-3.2-11b-vision", "nvidia/gpt-oss-120b", "nvidia/step-3.7-flash",
+  "nvidia/mistral-nemotron", "nvidia/nemotron-nano-12b-v2-vl", "nvidia/nemotron-nano-9b-v2", "nvidia/gemma-4-31b",
+  "nvidia/nemotron-3-super-120b-a12b-free", "nvidia/qwen3.5-397b-a17b", "nvidia/nemotron-ultra-253b",
+  "nvidia/nemotron-super-49b", "nvidia/deepseek-v3.2", "nvidia/nemotron-3-nano-omni-nim",
+  "nvidia/mistral-large-3-675b", "nvidia/qwen3-coder-480b", "nvidia/devstral-2-123b", "nvidia/glm-4.7",
+  "nvidia/llama-4-maverick", "nvidia/qwen3-next-80b-a3b-instruct", "nvidia/qwen3.5-122b-a10b",
+  "nvidia/seed-oss-36b", "nvidia/mistral-small-4-119b", "nvidia/nemotron-3.5-lightning-nim",
+  "nvidia/nemotron-3-ultra-550b-nim",
+] as const;
+
+test("the 25 catalogue-absent free members answered $0 on both chains (2026-11-23 probe) — all stay", () => {
+  assert.equal(new Set(PROBED_FREE_2026_11_23).size, 25);
+  for (const id of PROBED_FREE_2026_11_23) {
+    assert.ok(FREE_CHAT_MODELS.has(id), `${id} answered 200 unpaid on Base and Solana — FREE_CHAT_MODELS must keep it`);
+    assert.equal(estimateChatCost(1024, undefined, id, undefined, 100_000), 0, id);
+  }
+});
+
 // ── Two flagship ids landed above the default, and nothing noticed ──
 //
 // Live GET /v1/models on BOTH gateways, 2026-09-08: openai/gpt-6-astra and

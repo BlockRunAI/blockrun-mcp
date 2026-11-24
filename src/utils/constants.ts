@@ -235,6 +235,17 @@ export const MODEL_TIERS = {
   // north-mini-code and laguna-xs-2.1 now answer as nemotron-3-super-120b on
   // BOTH chains (and are available:false in the Base catalogue), so by this
   // list's rule they leave the tier and stay in FREE_CHAT_MODELS.
+  //
+  // 2026-11-23 (the FREE_CHAT_MODELS probe, two passes): gpt-oss-20b and
+  // llama-3.2-11b-vision no longer serve themselves on EITHER chain — both
+  // answered as nemotron-3-super-120b (or nano-omni via X-Fallback on Base),
+  // and llama-3.2-11b-vision is now in both gateways' static redirect maps
+  // (onto super-120b, which has no vision). By this list's rule they would
+  // leave the tier. That routing change was left out of the probe's PR, which
+  // was scoped to the $0 set; both are still $0, so routing them costs time,
+  // never money. nemotron-3-super-120b and nano-omni served themselves on both
+  // chains in the same run's control probe (super-120b fell back to nano-omni
+  // once on Base).
   free: [
     "nvidia/gpt-oss-20b", "nvidia/nemotron-3-super-120b", "nvidia/llama-3.2-11b-vision",
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -265,12 +276,32 @@ export type RoutingMode = keyof typeof MODEL_TIERS;
  * promise "still free when it returns".
  *
  * What that check cannot cover, and does not pretend to: a member the catalogue
- * does not list at all. Twenty-five of these are in that state on both gateways today,
- * and delisting is not death — gpt-oss-120b is the gateway's own free fallback
- * and answers for itself while absent from GET /v1/models. The sweep names each
- * one as UNVERIFIED rather than counting it as checked; the only way to settle
- * one is a realistic POST, which costs a call and so is a human's decision. A Set needs no
- * hasOwn guard — there are no prototype keys to leak through `.has`.
+ * does not list at all. Twenty-five of these are in that state on both gateways
+ * (2026-11-23), and delisting is not death — gpt-oss-120b, absent from GET
+ * /v1/models since July, still answers $0 on both. The sweep names each one as
+ * UNVERIFIED rather than counting it as checked; the only way to settle one is
+ * a realistic POST, which costs a call and so is a human's decision. A Set needs
+ * no hasOwn guard — there are no prototype keys to leak through `.has`.
+ *
+ * 2026-11-23 PROBE of all twenty-five — the same shape as the 09-13 and 10-20
+ * sweeps: ~3,000 characters, max_tokens 32, NO payment header, POST to both
+ * gateways, the response `model` and X-Fallback-* / X-Served-Model read on
+ * every 200. Every one answered 200 unpaid on Base AND Solana. None answered
+ * 402 (a paid model quotes before it routes, so that is the signal this set
+ * exists to catch), none answered an unknown-model 400 or a 410: all
+ * twenty-five STAY. None served itself either — every answer came from
+ * nemotron-3-super-120b, nemotron-3-nano-omni-30b-a3b-reasoning (the nano-*,
+ * omni-nim, and on Base several fallbacks) or, for two -nim twins, the model
+ * each is a direct path to (nemotron-3.5-lightning on Base;
+ * nemotron-3-ultra-550b on both). Both gateways' static
+ * redirect maps (base MODEL_REDIRECTS, sol FREE_DEAD_REDIRECTS) carry most of
+ * these ids onto nemotron-3-super-120b, so that is a standing alias, not a bad
+ * day; the rest reach a $0 model through fallbackModel or the free-health gate.
+ * Solana answered `429 Free model capacity exhausted` to seven of them on the
+ * first pass — the free cascade's capacity answer, which the control probe of
+ * nemotron-3-super-120b itself also got minutes earlier — and 200 on retry. A
+ * 429 there is not death and not a price: it is the free path refusing for
+ * capacity, after it has already decided not to ask for payment.
  *
  * Not every member is routed: MODEL_TIERS.free wants a both-chain, latency-
  * ordered list (see its notes); this set only says what is free.
@@ -282,7 +313,8 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   "cohere/north-mini-code",
   "poolside/laguna-xs-2.1",
   // Still $0 on both gateways (200 without a payment header, 2026-09-13 and
-  // again 2026-10-20 — every one now answers as nemotron-3-super-120b, or
+  // again 2026-10-20 and 2026-11-23 — every one now answers as
+  // nemotron-3-super-120b or nano-omni (11-23), earlier as super-120b or
   // llama-3.2-11b-vision for the two nano-* ids on Base, via the gateway's
   // MODEL_REDIRECTS, all of whose free targets are $0) but
   // answering as ANOTHER model — pulled from the routing tier, kept here so an
@@ -315,7 +347,8 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   // gateways redirect onto a $0 model (MODEL_REDIRECTS / fallbackModel). All
   // fifteen kept here answered 200 with no payment header on BOTH chains on
   // 2026-10-20, served by nemotron-3-super-120b, gpt-oss-20b, nano-omni or
-  // llama-3.2-11b-vision. Not routed — an explicit call just reserves $0
+  // llama-3.2-11b-vision — and again on 2026-11-23, served by super-120b or
+  // nano-omni (see the probe note above). Not routed — an explicit call just reserves $0
   // instead of the $5/$30 default (verify:prices flagged each one).
   "nvidia/nemotron-3-super-120b-a12b-free",
   "nvidia/qwen3.5-397b-a17b",
@@ -339,7 +372,10 @@ export const FREE_CHAT_MODELS: ReadonlySet<string> = new Set<string>([
   // Two more NIM-direct ids the account sheet added at $0 (billingMode "free",
   // hidden). Absent from GET /v1/models on both gateways, and both answered
   // 200 with no payment header on Base AND Solana on 2026-11-02, serving
-  // themselves. Not routed, same as the seventeen above.
+  // themselves. Still 200 unpaid on both on 2026-11-23, but lightning-nim now
+  // answers as nemotron-3.5-lightning (Base) / super-120b (Solana, after four
+  // capacity 429s across two passes) and ultra-550b-nim as nemotron-3-ultra-550b on both. Not
+  // routed, same as the seventeen above.
   "nvidia/nemotron-3.5-lightning-nim",
   "nvidia/nemotron-3-ultra-550b-nim",
 ]);
