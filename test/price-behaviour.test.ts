@@ -58,6 +58,22 @@ const fakePriceClient = {
 let priceClientRequests: boolean[] = [];
 
 const SWITCH_CHAINS = "Paid stock price/history calls need Base — switch chains with blockrun_wallet action:\"chain\".";
+// The on-chain stock price goes through rawGet on a fresh client (OCS, 2026-11-23).
+const rawCalls: string[] = [];
+// Set per test to make rawGet throw like the SDK does on a gateway error.
+let rawError: (Error & { statusCode?: number }) | null = null;
+mock.module("../src/utils/raw-call.js", {
+  namedExports: {
+    rawGet: async (_client: unknown, path: string) => {
+      rawCalls.push(path);
+      if (rawError) throw rawError;
+      return { data: { symbol: "NVDA", chain: "solana", price: 164.08, pools: [] }, paidUsd: 0.005 };
+    },
+    ledgerFallback: (x: number) => x,
+    RawCallSettledError: class extends Error {},
+  },
+});
+
 mock.module("../src/utils/wallet.js", {
   namedExports: {
     getApiBase: () => "https://sol.blockrun.ai/api",
@@ -71,6 +87,7 @@ mock.module("../src/utils/wallet.js", {
     baseOnlyMessage: () => SWITCH_CHAINS,
     getPriceClient: (paid: boolean) => { priceClientRequests.push(paid); return fakePriceClient; },
     getClient: () => new Proxy({}, { get: () => boom }),
+    buildClient: () => ({}),
     getOrCreateWalletKey: () => { throw new Error("price tests must not touch a wallet key"); },
     getWalletInfo: async () => ({ address: "0xTEST" }),
     resolveSolanaKey: () => undefined,
@@ -84,20 +101,22 @@ const { registerPriceTool } = await import("../src/tools/price.js");
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }>;
 
-function harness(limit: number | null = null) {
+function harness(limit: number | null = null, approve = false) {
   let handler: Handler | undefined;
   let elicitCalls = 0;
   const server = {
     registerTool: (_n: string, _c: unknown, h: Handler) => { handler = h; },
     server: {
       getClientCapabilities: () => ({ elicitation: {} }),
-      elicitInput: async () => { elicitCalls++; return { action: "decline" }; },
+      elicitInput: async () => { elicitCalls++; return approve ? { action: "accept", content: {} } : { action: "decline" }; },
     },
   };
   const budget: BudgetState = { limit, spent: 0, calls: 0, agents: new Map() };
   registerPriceTool(server as never, budget);
   assert.ok(handler, "blockrun_price did not register a handler");
   networkCalls = 0;
+  rawCalls.length = 0;
+  rawError = null;
   clientCalls.length = 0;
   priceClientRequests = [];
   return {
@@ -120,45 +139,91 @@ function assertNothingReached(h: ReturnType<typeof harness>, label: string) {
 }
 
 // Lowercase "us": MARKET is a lowercase z.enum, and the harness bypasses zod.
-test("stocks price: the 501 pre-flight answers before the Solana chain guard, the budget gate and the confirm dialog", async () => {
-  const h = harness();
-  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "AAPL", market: "us" });
-  assert.equal(res.isError, true);
-  assert.match(text, /2026-09-05/);
-  assert.match(text, /nothing was charged/);
-  assert.match(text, /market: "us"/);
-  assert.doesNotMatch(text, /switch/i, "the chain guard spoke first — the pre-flight must beat it");
-  assertNothingReached(h, "stocks price");
+test("US stocks price goes on-chain on the ACTIVE chain: no chain guard, one paid GET, booked", async () => {
+  const h = harness(null, true);
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "NVDA", market: "us" });
+  assert.notEqual(res.isError, true, text);
+  assert.doesNotMatch(text, /switch/i, "the chain guard spoke: each gateway prices its own chain, Solana included");
+  assert.deepEqual(rawCalls, ["/v1/stocks/us/price/NVDA"], text);
+  assert.match(text, /"chain": "solana"/);
+  assert.equal(clientCalls.length, 0, "the Pyth-era PriceClient must not be used for the on-chain price");
+  assert.equal(h.budget.calls, 1, "a paid call is booked");
+  assert.equal(h.elicits(), 1, "a paid call asks before signing when confirm-spend is on");
 });
 
-test("usstock history: same pre-flight, same ordering", async () => {
+test("a ticker with no on-chain market (404 before payment) books nothing and says so (GLM review)", async () => {
+  const h = harness(null, true);
+  rawError = Object.assign(new Error("API error: 404 no_onchain_market — No on-chain market for IBM on Solana. Nothing was charged."), { statusCode: 404 });
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "IBM", market: "us" });
+  assert.equal(res.isError, true);
+  assert.match(text, /no_onchain_market|No on-chain market/);
+  assert.doesNotMatch(text, /booked against your budget/);
+  assert.equal(h.budget.spent, 0, "a pre-payment 404 must not be booked");
+});
+
+test("a 503 not_charged after payment books nothing", async () => {
+  const h = harness(null, true);
+  rawError = Object.assign(new Error("API error after payment: 503 source_unavailable — payment_status not_charged. Nothing was charged."), { statusCode: 503 });
+  const { res } = await h.call({ action: "price", category: "stocks", symbol: "NVDA", market: "us" });
+  assert.equal(res.isError, true);
+  assert.equal(h.budget.spent, 0, "an explicitly uncharged 503 must not be booked");
+});
+
+test("a declined confirm sends nothing", async () => {
+  const h = harness();
+  const { text } = await h.call({ action: "price", category: "stocks", symbol: "NVDA", market: "us" });
+  assert.match(text, /declined|cancel/i);
+  assert.deepEqual(rawCalls, []);
+  assert.equal(h.budget.calls, 0);
+});
+
+test("a stocks quote with no market is the US on-chain price", async () => {
+  const h = harness(null, true);
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "NVDA" });
+  assert.notEqual(res.isError, true, text);
+  assert.deepEqual(rawCalls, ["/v1/stocks/us/price/NVDA"]);
+});
+
+test("usstock price is the same on-chain route; the symbol is encoded", async () => {
+  const h = harness(null, true);
+  await h.call({ action: "price", category: "usstock", symbol: "BRK/B" });
+  assert.deepEqual(rawCalls, ["/v1/stocks/us/price/BRK%2FB"]);
+});
+
+test("a budget cap below the on-chain price refuses before any request", async () => {
+  const h = harness(0.001);
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "NVDA", market: "us" });
+  assert.equal(res.isError, true);
+  assert.match(text, /budget|limit/i);
+  assert.deepEqual(rawCalls, []);
+});
+
+test("usstock history: 501 pre-flight before anything, and it names what IS served", async () => {
   const h = harness();
   const { res, text } = await h.call({ action: "history", category: "usstock", symbol: "AAPL", from: 1 });
   assert.equal(res.isError, true);
-  assert.match(text, /Equity history/);
-  assert.match(text, /2026-09-05/);
+  assert.match(text, /Equity history is not served/);
+  assert.match(text, /action: "price", category: "stocks", market: "us"/);
   assert.doesNotMatch(text, /switch/i);
+  assert.deepEqual(rawCalls, []);
   assertNothingReached(h, "usstock history");
 });
 
-test("the pre-flight beats reserveBudget: a cap too small for the paid estimate still gets the 501 text, not the budget refusal", async () => {
-  // The paid equity estimate is withTxFee(0.001) = $0.003; a $0.001 cap would
-  // deny it at reserveBudget. If the handler reserved first, the user would be
-  // told about the budget — a message about money for a route that cannot
-  // take money.
+test("a non-US price: 501 pre-flight beats reserveBudget, even under a tiny cap", async () => {
   const h = harness(0.001);
-  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "AAPL", market: "us" });
+  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "0700-HK", market: "hk" });
   assert.equal(res.isError, true);
-  assert.match(text, /2026-09-05/);
+  assert.match(text, /market "hk"/);
   assert.doesNotMatch(text, /budget/i, "reserveBudget ran before the pre-flight");
-  assertNothingReached(h, "capped stocks price");
+  assert.deepEqual(rawCalls, []);
+  assertNothingReached(h, "hk stocks price");
 });
 
 test("stocks list is free and still reaches the client, on the Solana default, with no confirm dialog", async () => {
   const h = harness();
   const { res, text } = await h.call({ action: "list", category: "stocks", market: "us", query: "app" });
   assert.notEqual(res.isError, true, text);
-  assert.doesNotMatch(text, /2026-09-05|switch/i);
+  assert.doesNotMatch(text, /not served|switch/i);
   assert.deepEqual(clientCalls.map((c) => c.method), ["listSymbols"]);
   assert.deepEqual(clientCalls[0].args, ["stocks", { market: "us", query: "app", limit: undefined }]);
   assert.deepEqual(priceClientRequests, [false], "list is not a paid call");
@@ -171,7 +236,7 @@ test("a crypto quote reaches the client for free — the pre-flight is equity-on
   const h = harness(0.001); // even under a tiny cap: $0 reserves clear it
   const { res, text } = await h.call({ action: "price", category: "crypto", symbol: "BTC-USD" });
   assert.notEqual(res.isError, true, text);
-  assert.doesNotMatch(text, /2026-09-05|switch/i);
+  assert.doesNotMatch(text, /not served|switch/i);
   assert.deepEqual(clientCalls.map((c) => c.method), ["price"]);
   assert.equal(clientCalls[0].args[1], "BTC-USD");
   assert.deepEqual(priceClientRequests, [false]);
@@ -179,19 +244,6 @@ test("a crypto quote reaches the client for free — the pre-flight is equity-on
   assert.equal(networkCalls, 0);
   assert.equal(h.budget.spent, 0);
   assert.equal(h.budget.calls, 0, "a free call is not booked");
-});
-
-test("a stocks quote with no market gets the real answer, not a validation error for a route that is not served", async () => {
-  // The most natural stocks call omits the market. Since the pre-flight moved
-  // above the market-required throw, that call learns in one round trip that
-  // equity is withdrawn — and the catalog hint defaults to the US market.
-  const h = harness();
-  const { res, text } = await h.call({ action: "price", category: "stocks", symbol: "AAPL" });
-  assert.equal(res.isError, true);
-  assert.match(text, /2026-09-05/);
-  assert.match(text, /market: "us"/);
-  assert.doesNotMatch(text, /market is required/);
-  assertNothingReached(h, "stocks quote without market");
 });
 
 test("the free stocks catalog still requires a market, before the client is asked", async () => {

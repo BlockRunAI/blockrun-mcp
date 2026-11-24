@@ -16,13 +16,13 @@ Written 2026-09-01, verified against `@modelcontextprotocol/sdk` 1.29.0. Numbers
 
 | Profile | Tools | Context |
 |---------|-------|---------|
-| `full` *(default)* | 19 | 14,277 |
-| `trading` | 8 | 5,471 |
+| `full` *(default)* | 19 | 14,425 |
+| `trading` | 8 | 5,619 |
 | `media` | 7 | 7,016 |
 | `research` | 5 | 2,819 |
 | `chat` | 3 | 2,167 |
 
-Descriptions are ~54% of it, input schemas ~42%. `--profile trading` costs 62% less than the
+Descriptions are ~55% of it, input schemas ~41%. `--profile trading` costs 61% less than the
 default for the same workflow.
 
 These figures move with every description edit, so they are not the source of truth — the README
