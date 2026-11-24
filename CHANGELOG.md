@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.56.2
+
+### Changed — retired models leave the routing tiers
+
+Several provider models were retired or silently swapped upstream.
+
+- `google/gemini-3.5-flash` led the `fast` tier, but Google has served Gemini
+  3.6 Flash under that name since October, and the gateways now redirect it.
+  The tier asks for `google/gemini-3.6-flash` directly, which costs less.
+- The `openai/o3-mini` and `openai/o4-mini` price rows are gone. Both models
+  are retired and the gateways redirect them to `openai/gpt-5.4-mini`, which
+  costs slightly more on output, so the paid default now covers them.
+
 ## 0.56.1
 
 ### Added — two more image models
