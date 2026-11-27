@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.56.3
+
+### Fixed — pinned `gpt-4.1-nano` reserves enough on Solana
+
+- The `openai/gpt-4.1-nano` price row is gone. Since 2026-11-03 the Solana
+  gateway has answered that model with `openai/gpt-4.1-mini`, which costs
+  about 4x more, so a pinned call reserved too little there. Base answers it
+  with `openai/gpt-5-nano`, and arc still serves it. The paid default now
+  covers all three.
+
+## 0.56.2
+
+### Changed — retired models leave the routing tiers
+
+Several provider models were retired or silently swapped upstream.
+
+- `google/gemini-3.5-flash` led the `fast` tier, but Google has served Gemini
+  3.6 Flash under that name since October, and the gateways now redirect it.
+  The tier asks for `google/gemini-3.6-flash` directly, which costs less.
+- The `openai/o3-mini` and `openai/o4-mini` price rows are gone. Both models
+  are retired and the gateways redirect them to `openai/gpt-5.4-mini`, which
+  costs slightly more on output, so the paid default now covers them.
+
+## 0.56.1
+
+### Added — two more image models
+
+`blockrun_image` now offers `google/nano-banana-2-lite` (about $0.05 an image)
+and `google/nano-banana-2.1` (about $0.07). Both generate at 1024x1024 and both
+support image editing. Each reserve covers the gateway's live charge, and
+`verify:prices` now checks both models.
+
+The README's price range for `blockrun_image` was wrong ($0.015–0.15). It now
+reads $0.015–0.56, and a test keeps it matched to the price table.
+
 ## 0.56.0
 
 ### Added — on-chain US stock prices in `blockrun_price`
