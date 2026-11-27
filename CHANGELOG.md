@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.56.3
+
+### Fixed — pinned `gpt-4.1-nano` reserves enough on Solana
+
+- The `openai/gpt-4.1-nano` price row is gone. Since 2026-11-03 the Solana
+  gateway has answered that model with `openai/gpt-4.1-mini`, which costs
+  about 4x more, so a pinned call reserved too little there. Base answers it
+  with `openai/gpt-5-nano`, and arc still serves it. The paid default now
+  covers all three.
+
 ## 0.56.2
 
 ### Changed — retired models leave the routing tiers
