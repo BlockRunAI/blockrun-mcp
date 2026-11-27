@@ -586,7 +586,11 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-5.2": { input: 1.75, output: 14 },
   "openai/gpt-4.1": { input: 2, output: 8 },
   "openai/gpt-4.1-mini": { input: 0.4, output: 1.6 },
-  "openai/gpt-4.1-nano": { input: 0.1, output: 0.4 },
+  // NOT openai/gpt-4.1-nano: Solana has sent it to gpt-4.1-mini ($0.4/$1.6)
+  // since 2026-11-03, so its old $0.1/$0.4 row under-reserves that rail (base
+  // sends it to gpt-5-nano at $0.05/$0.4 until 2027-02-09; arc still serves it
+  // at $0.1/$0.4). Unlisted, it reserves the $5/$30 default, which covers
+  // every rail (the o3-mini rule).
   "openai/gpt-4o": { input: 2.5, output: 10 },
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
   "openai/o3": { input: 2, output: 8 },
