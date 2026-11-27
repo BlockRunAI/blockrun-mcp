@@ -33,6 +33,9 @@ const REDIRECTED: Record<string, [string, Rate | null]> = {
   "openai/o3-mini": ["openai/gpt-5.4-mini", { input: 1.1, output: 4.4 }],
   "openai/o4-mini": ["openai/gpt-5.4-mini", { input: 1.1, output: 4.4 }],
   "google/gemini-3.5-flash": ["google/gemini-3.6-flash", { input: 1.5, output: 9 }],
+  // 2026-12-01: Google retires Gemini 2.5.
+  "google/gemini-2.5-flash": ["google/gemini-3.5-flash-lite", { input: 0.3, output: 2.5 }],
+  "google/gemini-2.5-pro": ["google/gemini-3.8-flash", { input: 1.25, output: 10 }],
 };
 
 const bare = (id: string) => id.slice(id.indexOf("/") + 1);
@@ -56,6 +59,17 @@ test("no routing tier names a retired, redirected model", () => {
 test("fast[0] names the model Google serves, in the position its old name held", () => {
   assert.equal(MODEL_TIERS.fast[0], "google/gemini-3.6-flash");
   assert.deepEqual(CHAT_PRICE_PER_MTOKEN["google/gemini-3.6-flash"], { input: 0.75, output: 3.75 });
+});
+
+test("gemini-3.5-flash-lite holds gemini-2.5-flash's slot in fast and cheap, once each", () => {
+  // From 2026-12-01 the gateway answers the 2.5 name with 3.5 Flash-Lite, so
+  // the served order is unchanged: fast tried it second already (and again,
+  // as a duplicate, fourth); cheap tried it fourth.
+  assert.equal(MODEL_TIERS.fast[1], "google/gemini-3.5-flash-lite");
+  assert.equal(MODEL_TIERS.cheap[3], "google/gemini-3.5-flash-lite");
+  for (const [mode, ids] of Object.entries(MODEL_TIERS)) {
+    assert.equal(new Set(ids).size, ids.length, `${mode} lists a model twice`);
+  }
 });
 
 test("every redirect target has its own price row (a tier or a pin lands on it)", () => {
