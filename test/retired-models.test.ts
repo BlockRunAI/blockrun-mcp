@@ -102,3 +102,20 @@ test("o3-mini and o4-mini carry no row: theirs would under-reserve gpt-5.4-mini'
     assert.deepEqual(rateFor(id), DEFAULT_CHAT_PRICE, id);
   }
 });
+
+test("gpt-4.1-nano carries no row: $0.1/$0.4 under-reserves Solana's redirect", () => {
+  // Base -> gpt-5-nano ($0.05/$0.4) until 2027-02-09; Solana -> gpt-4.1-mini
+  // ($0.4/$1.6) since 2026-11-03; arc serves it at $0.1/$0.4. The default
+  // covers every rail.
+  assert.equal(Object.hasOwn(CHAT_PRICE_PER_MTOKEN, "openai/gpt-4.1-nano"), false);
+  for (const target of ["openai/gpt-5-nano", "openai/gpt-4.1-mini"]) {
+    const t = rateFor(target);
+    const r = rateFor("openai/gpt-4.1-nano");
+    assert.ok(r.input >= t.input && r.output >= t.output, `gpt-4.1-nano under-reserves ${target}`);
+    for (const chars of [1_000, 100_000, 700_000]) {
+      const pinned = estimateChatCost(1024, undefined, "openai/gpt-4.1-nano", undefined, chars);
+      const served = estimateChatCost(1024, undefined, target, undefined, chars);
+      assert.ok(pinned >= served, `gpt-4.1-nano at ${chars} chars reserves ${pinned} < ${served} for ${target}`);
+    }
+  }
+});
