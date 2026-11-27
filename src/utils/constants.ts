@@ -58,7 +58,9 @@ export const BASE_RPC_URLS = [
 //   gpt-5.3-codex ($1.75/$14) (gpt-5.3 is hidden + available:false), gpt-5.2-pro ($21/$168), gpt-5.4-mini,
 //   gpt-5-mini, gpt-5.4-nano, gpt-4.1{,-mini,-nano}, gpt-4o{,-mini},
 //   o3 ($2/$8). o1 ($15/$60), o3-mini and o4-mini are RETIRED (2026-11-24,
-//   redirected to gpt-5.4-mini — see the note above MODEL_TIERS)
+//   redirected to gpt-5.4-mini — see the note above MODEL_TIERS). o3 and
+//   gpt-5-mini RETIRE 2026-12-11 (same note); gpt-5-nano (hidden) stays
+//   served from Azure at its own price until 2027-02-09.
 // Anthropic (12): claude-fable-5.1 ($10/$50, 1M — listed by 2026-09-08 ABOVE
 //   the default, so it carries a price row), claude-opus-5.5 ($4/$20, 1M, 128k
 //   out — newest Opus, cheaper than Opus 5, thinking always on),
@@ -163,8 +165,25 @@ export const BASE_RPC_URLS = [
 //     the tier was already trying it second — that second slot now says so,
 //     and the later duplicate is gone. The order of every other member holds.
 //   google/gemini-2.5-pro -> google/gemini-3.8-flash. In no tier.
+//
+// 2026-12-11 RETIREMENTS (OpenAI shuts down o3, gpt-5-mini and gpt-5-nano —
+// developers.openai.com/api/docs/deprecations, notice 2026-06-11; the
+// gateways redirect o3 and gpt-5-mini, quoted at the successor's price):
+//   openai/gpt-5-mini -> openai/gpt-5.6-luna ($0.25/$2 -> $0.2/$1.2). fast
+//     already listed gpt-5.6-luna one slot earlier, so from 12-11 the tier
+//     would have tried the same model twice; gpt-5-mini's slot is removed and
+//     the order of every other member holds.
+//   openai/o3 -> openai/gpt-5.4-mini ($2/$8 -> $0.75/$4.5). In no tier.
+//   openai/gpt-5-nano is NOT redirected (owner decision 2026-11-24): every
+//     gateway keeps serving it from Azure at its own $0.05/$0.4 until
+//     2027-02-09, when it retires. In no tier, no price row (the default
+//     covers it).
+//   openai/gpt-4.1-nano: base redirects it to gpt-5-nano ($0.05/$0.4) until
+//     then; Solana has sent it to gpt-4.1-mini ($0.4/$1.6) since 2026-11-03;
+//     arc still serves it at $0.1/$0.4. In no tier; see its (removed) price
+//     row.
 export const MODEL_TIERS = {
-  fast: ["google/gemini-3.6-flash", "google/gemini-3.5-flash-lite", "openai/gpt-5.6-luna", "openai/gpt-5-mini", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
+  fast: ["google/gemini-3.6-flash", "google/gemini-3.5-flash-lite", "openai/gpt-5.6-luna", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "google/gemini-3-flash-preview"],
   balanced: ["openai/gpt-5.6-terra", "anthropic/claude-sonnet-5", "moonshot/kimi-k3.1-pro", "google/gemini-3.1-pro", "xai/grok-4.5", "openai/gpt-5.5"],
   powerful: ["anthropic/claude-opus-5", "anthropic/claude-opus-4.8", "openai/gpt-5.6-sol", "anthropic/claude-fable-5", "openai/gpt-5.4-pro", "openai/gpt-5.2-pro"],
   cheap: ["deepseek/deepseek-v4-pro", "qwen/qwen3.7-flash", "minimax/minimax-m3", "google/gemini-3.5-flash-lite", "deepseek/deepseek-chat", "deepseek/deepseek-v4.1-flash", "openai/gpt-5.4-nano"],
@@ -533,6 +552,9 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   "openai/gpt-6-sol": { input: 2, output: 10 },
   "openai/gpt-5.1": { input: 1.25, output: 10 },
   "openai/gpt-5.3-codex": { input: 1.75, output: 14 },
+  // RETIRES 2026-12-11: redirected to gpt-5.6-luna ($0.2/$1.2), out of the fast
+  // tier. Kept for pins: it over-covers the successor on both axes and still
+  // covers any rail that bills gpt-5-mini until it ships the redirect.
   "openai/gpt-5-mini": { input: 0.25, output: 2 },
   "openai/gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "openai/gpt-6-luna": { input: 0.1, output: 0.5 },
@@ -593,6 +615,9 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // every rail (the o3-mini rule).
   "openai/gpt-4o": { input: 2.5, output: 10 },
   "openai/gpt-4o-mini": { input: 0.15, output: 0.6 },
+  // RETIRES 2026-12-11: redirected to gpt-5.4-mini ($0.75/$4.5). Kept for
+  // pins: it over-covers the successor and still covers any rail that bills
+  // o3 until it ships the redirect.
   "openai/o3": { input: 2, output: 8 },
   // NOT openai/o3-mini or openai/o4-mini: RETIRED 2026-11-24 and redirected to
   // gpt-5.4-mini, whose $4.5/M output is ABOVE their $1.1/$4.4 rows, so a kept
@@ -792,6 +817,12 @@ export const LONG_CONTEXT_PRICE_PER_MTOKEN: Record<string, readonly LongContextS
   "openai/gpt-5.6-sol-pro": OPENAI_272K(8, 30),
   "openai/gpt-5.6-terra-pro": OPENAI_272K(4, 18),
   "openai/gpt-5.6-luna-pro": OPENAI_272K(0.4, 1.8),
+  // gpt-5-mini has a 200K window and no published step: it never reaches 272K.
+  // From 2026-12-11 the gateways answer it with gpt-5.6-luna (1M window), which
+  // bills $0.4/$1.8 above 272K, so a pinned gpt-5-mini can now send a prompt
+  // that big and be quoted luna's step. This is gpt-5-mini's own row at
+  // OpenAI's 2x/1.5x, which covers luna's step on both axes.
+  "openai/gpt-5-mini": OPENAI_272K(0.5, 3),
   "openai/gpt-5.5": OPENAI_272K(10, 45),
   "openai/gpt-5.5-pro": OPENAI_272K(60, 270),
   "openai/gpt-5.4": OPENAI_272K(5, 22.5),

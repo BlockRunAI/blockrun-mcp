@@ -36,6 +36,10 @@ const REDIRECTED: Record<string, [string, Rate | null]> = {
   // 2026-12-01: Google retires Gemini 2.5.
   "google/gemini-2.5-flash": ["google/gemini-3.5-flash-lite", { input: 0.3, output: 2.5 }],
   "google/gemini-2.5-pro": ["google/gemini-3.8-flash", { input: 1.25, output: 10 }],
+  // 2026-12-11: OpenAI shuts down o3 and gpt-5-mini. (gpt-5-nano too, but
+  // the gateways keep serving it from Azure until 2027-02-09; see below.)
+  "openai/o3": ["openai/gpt-5.4-mini", { input: 2, output: 8 }],
+  "openai/gpt-5-mini": ["openai/gpt-5.6-luna", { input: 0.25, output: 2 }],
 };
 
 const bare = (id: string) => id.slice(id.indexOf("/") + 1);
@@ -115,6 +119,27 @@ test("o3-mini and o4-mini carry no row: theirs would under-reserve gpt-5.4-mini'
     assert.equal(Object.hasOwn(CHAT_PRICE_PER_MTOKEN, id), false, id);
     assert.deepEqual(rateFor(id), DEFAULT_CHAT_PRICE, id);
   }
+});
+
+test("gpt-5-mini leaves fast without moving any other member (gpt-5.6-luna already precedes it)", () => {
+  // From 2026-12-11 the gateway answers gpt-5-mini with gpt-5.6-luna, which
+  // fast already tried one slot earlier, so the served order is unchanged.
+  assert.deepEqual(MODEL_TIERS.fast.slice(0, 4), [
+    "google/gemini-3.6-flash",
+    "google/gemini-3.5-flash-lite",
+    "openai/gpt-5.6-luna",
+    "deepseek/deepseek-chat",
+  ]);
+});
+
+test("gpt-5-nano is not redirected before 2027-02-09: in no tier, and the reserve covers its own price", () => {
+  // Owner decision 2026-11-24: the gateways serve it from Azure at
+  // $0.05/$0.4 until 2027-02-09 instead of redirecting it to gpt-6-luna.
+  for (const [mode, ids] of Object.entries(MODEL_TIERS)) {
+    assert.ok(!(ids as readonly string[]).includes("openai/gpt-5-nano"), `${mode} routes to gpt-5-nano`);
+  }
+  const r = rateFor("openai/gpt-5-nano");
+  assert.ok(r.input >= 0.05 && r.output >= 0.4, `gpt-5-nano reserves $${r.input}/$${r.output}`);
 });
 
 test("gpt-4.1-nano carries no row: $0.1/$0.4 under-reserves Solana's redirect", () => {
