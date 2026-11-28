@@ -69,8 +69,8 @@ export const BASE_RPC_URLS = [
 //   $3/$15; both gateways 2026-09-08. On the native path the price row IS the
 //   ledger, so the stale row over-booked every sonnet-5 call 1.5x),
 //   claude-opus-4.5, claude-sonnet-4.6, claude-sonnet-4.5, claude-haiku-4.5
-// Google (11): gemini-4-argon ($2/$10, 1M, 65,536 out — live 2026-10-20 on
-//   both chains; Google's rate through 2026-11-30, $4/$20 from 2026-12-01; NO
+// Google (11): gemini-4-argon ($4/$20 since 2026-12-01, when Google's $2/$10
+//   intro rate ended; 1M, 65,536 out — live 2026-10-20 on both chains; NO
 //   long-context tier, unlike 3.1 Pro — priced only, in no routing tier),
 //   gemini-3.1-pro ($2/$12), gemini-3.8-flash and gemini-3.6-flash
 //   ($0.75/$3.75 each — 3.6 was $1.5/$7.5 when first listed), gemini-3.5-flash ($1.5/$9 — REPRICED from the $0.5/$3 this
@@ -589,8 +589,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // $5/$30 default, which covers both the redirect target and the $1.1/$4.4
   // the catalogues still list until the redirect ships (the hy3 precedent).
   "google/gemini-3.8-flash": { input: 0.75, output: 3.75 },
-  // ⏰ 2026-12-01: Google moves Argon to $4/$20 — re-price this row.
-  "google/gemini-4-argon": { input: 2, output: 10 },
+  // $4/$20 since 2026-12-01 (Google's $2/$10 intro rate ended 2026-11-30).
+  "google/gemini-4-argon": { input: 4, output: 20 },
   "google/gemini-3.6-flash": { input: 0.75, output: 3.75 },
   "google/gemini-2.5-pro": { input: 1.25, output: 10 },
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5 },
@@ -612,7 +612,8 @@ export const CHAT_PRICE_PER_MTOKEN: Record<string, { input: number; output: numb
   // carries the cache-write premium too (CACHE_WRITE_QUOTED_PRICE_PER_MTOKEN).
   "openai/gpt-6.2-sol": { input: 2, output: 10 },
   "google/gemini-4-neon": { input: 3, output: 15 },
-  "google/gemini-4-carbon": { input: 2, output: 10 },
+  // $4/$20 since 2026-12-01, with Argon (intro $2/$10 ended 2026-11-30).
+  "google/gemini-4-carbon": { input: 4, output: 20 },
   "google/gemini-4-hydrogen": { input: 1.5, output: 7.5 },
   // Solana only: Base answers an unknown-model 400 and the account sheet does
   // not list them.
