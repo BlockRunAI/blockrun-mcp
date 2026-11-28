@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.56.4
+
+### Fixed — Gemini 4 Argon and Carbon reserve at $4/$20
+
+- Google's $2/$10 intro rate for `google/gemini-4-argon` and
+  `google/gemini-4-carbon` ended 2026-11-30, and the gateways charge $4/$20
+  per 1M from 2026-12-01. Both price rows now reserve $4/$20, so a pinned call
+  no longer reserves half of what it is billed.
+
 ## 0.56.3
 
 ### Fixed — pinned `gpt-4.1-nano` reserves enough on Solana
